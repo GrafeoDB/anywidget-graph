@@ -218,7 +218,7 @@ graph.to_json("graph.json")
 
 - [anywidget](https://anywidget.dev/) — Custom Jupyter widgets made easy
 - [Grafeo](https://github.com/GrafeoDB/grafeo) — Embeddable graph database
-- [grafeo-wasm](https://github.com/GrafeoDB/grafeo-wasm) — Grafeo in the browser
+- [grafeo-web](https://github.com/GrafeoDB/grafeo-web) — Grafeo in the browser
 
 ## License
 
