@@ -1,0 +1,87 @@
+[project]
+name = "anywidget-graph"
+version = "0.1.0"
+description = "Interactive graph visualization for Python notebooks using anywidget"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+authors = [{ name = "S.T. Grond", email = "widget@grafeo.dev" }]
+keywords = ["anywidget", "graph", "visualization", "jupyter", "marimo", "cypher", "neo4j"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Jupyter",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+
+dependencies = [
+    "anywidget>=0.9.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "prek>=0.3.1",
+    "pytest>=9.0.2",
+    "ruff>=0.14.14",
+    "ty>=0.0.14",
+    "marimo>=0.19.7",
+]
+networkx = ["networkx>=3.0"]
+pandas = ["pandas>=2.0"]
+
+[project.urls]
+Homepage = "https://grafeo.dev/"
+Repository = "https://github.com/GrafeoDB/anywidget-graph"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anywidget_graph"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "FA",
+    "Q",
+]
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "double"
+docstring-quotes = "double"
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"
+
+[tool.prek]
+repos = [
+    { repo = "ruff", hooks = [
+        { id = "ruff-check", args = ["--fix", "--exit-non-zero-on-fix"] },
+        { id = "ruff-format" },
+    ]},
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=9.0.2",
+    "ruff>=0.14.14",
+]
