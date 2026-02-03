@@ -110,12 +110,14 @@ class SPARQLConverter:
                         "label": labels.get(obj, self._extract_local_name(obj)),
                         "uri": obj,
                     }
-                edges.append({
-                    "source": subj,
-                    "target": obj,
-                    "label": self._extract_local_name(pred),
-                    "predicate": pred,
-                })
+                edges.append(
+                    {
+                        "source": subj,
+                        "target": obj,
+                        "label": self._extract_local_name(pred),
+                        "predicate": pred,
+                    }
+                )
             elif obj:
                 # Literal value - add as node property
                 prop_name = self._extract_local_name(pred)

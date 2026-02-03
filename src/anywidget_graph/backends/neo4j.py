@@ -111,10 +111,7 @@ class Neo4jBackend:
             for record in labels_result:
                 label = record[0]
                 # Get properties for this label
-                props_result = session.run(
-                    f"MATCH (n:`{label}`) UNWIND keys(n) AS key "
-                    "RETURN DISTINCT key LIMIT 20"
-                )
+                props_result = session.run(f"MATCH (n:`{label}`) UNWIND keys(n) AS key RETURN DISTINCT key LIMIT 20")
                 properties = [r[0] for r in props_result]
                 node_types.append({"label": label, "properties": properties})
 
@@ -124,8 +121,7 @@ class Neo4jBackend:
                 rel_type = record[0]
                 # Get properties for this type
                 props_result = session.run(
-                    f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS key "
-                    "RETURN DISTINCT key LIMIT 20"
+                    f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS key RETURN DISTINCT key LIMIT 20"
                 )
                 properties = [r[0] for r in props_result]
                 edge_types.append({"type": rel_type, "properties": properties})

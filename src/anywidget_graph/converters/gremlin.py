@@ -82,12 +82,7 @@ class GremlinConverter:
     def _is_vertex(self, obj: Any) -> bool:
         """Check if object is a Gremlin Vertex."""
         # Vertex has id and label but not outV/inV
-        return (
-            hasattr(obj, "id")
-            and hasattr(obj, "label")
-            and not hasattr(obj, "outV")
-            and not hasattr(obj, "inV")
-        )
+        return hasattr(obj, "id") and hasattr(obj, "label") and not hasattr(obj, "outV") and not hasattr(obj, "inV")
 
     def _is_edge(self, obj: Any) -> bool:
         """Check if object is a Gremlin Edge."""

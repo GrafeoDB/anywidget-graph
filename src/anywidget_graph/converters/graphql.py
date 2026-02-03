@@ -164,11 +164,13 @@ class GraphQLConverter:
 
                 # Create edge from parent
                 if parent_id and parent_id != node["id"]:
-                    edges.append({
-                        "source": parent_id,
-                        "target": node["id"],
-                        "label": "contains",
-                    })
+                    edges.append(
+                        {
+                            "source": parent_id,
+                            "target": node["id"],
+                            "label": "contains",
+                        }
+                    )
 
                 # Process nested references
                 for key, value in data.items():
@@ -176,22 +178,26 @@ class GraphQLConverter:
                         # Direct reference to another node
                         ref_node = self._item_to_node(value)
                         nodes[ref_node["id"]] = ref_node
-                        edges.append({
-                            "source": node["id"],
-                            "target": ref_node["id"],
-                            "label": key,
-                        })
+                        edges.append(
+                            {
+                                "source": node["id"],
+                                "target": ref_node["id"],
+                                "label": key,
+                            }
+                        )
                     elif isinstance(value, list):
                         # List of possible references
                         for item in value:
                             if isinstance(item, dict) and self.id_field in item:
                                 ref_node = self._item_to_node(item)
                                 nodes[ref_node["id"]] = ref_node
-                                edges.append({
-                                    "source": node["id"],
-                                    "target": ref_node["id"],
-                                    "label": key,
-                                })
+                                edges.append(
+                                    {
+                                        "source": node["id"],
+                                        "target": ref_node["id"],
+                                        "label": key,
+                                    }
+                                )
             else:
                 # Not a node, recurse into values
                 for value in data.values():
