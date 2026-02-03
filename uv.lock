@@ -38,10 +38,11 @@ wheels = [
 
 [[package]]
 name = "anywidget-graph"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "anywidget" },
+    { name = "marimo" },
 ]
 
 [package.optional-dependencies]
@@ -68,6 +69,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anywidget", specifier = ">=0.9.21" },
+    { name = "marimo", specifier = ">=0.19.7" },
     { name = "marimo", marker = "extra == 'dev'", specifier = ">=0.19.7" },
     { name = "networkx", marker = "extra == 'networkx'", specifier = ">=3.0" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.0" },

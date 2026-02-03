@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.1.0"
+version = "0.2.1"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -22,13 +22,14 @@ classifiers = [
 
 dependencies = [
     "anywidget>=0.9.21",
+    "marimo>=0.19.7",
 ]
 
 [project.optional-dependencies]
 dev = [
     "prek>=0.3.1",
     "pytest>=9.0.2",
-    "ruff>=0.14.14",
+    "ruff>=0.15.0",
     "ty>=0.0.14",
     "marimo>=0.19.7",
 ]
