@@ -6,12 +6,12 @@ Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidg
 
 ## Features
 
-- **Universal** — One widget, every notebook environment
-- **Backend-agnostic** — Grafeo, Neo4j, NetworkX, pandas, or raw dicts
-- **Interactive** — Pan, zoom, click, expand neighbors, select paths
-- **Customizable** — Colors, sizes, shapes, layouts
-- **Performant** — Virtualized rendering for large graphs
-- **Exportable** — PNG, SVG, JSON
+- **Universal**: One widget, every notebook environment
+- **Backend-agnostic**: Grafeo, Neo4j, NetworkX, pandas, or raw dicts
+- **Interactive**: Pan, zoom, click, expand neighbors, select paths
+- **Customizable**: Colors, sizes, shapes, layouts
+- **Performant**: Virtualized rendering for large graphs
+- **Exportable**: PNG, SVG, JSON
 
 ## Installation
 
@@ -216,9 +216,9 @@ graph.to_json("graph.json")
 
 ## Related
 
-- [anywidget](https://anywidget.dev/) — Custom Jupyter widgets made easy
-- [Grafeo](https://github.com/GrafeoDB/grafeo) — Embeddable graph database
-- [grafeo-web](https://github.com/GrafeoDB/grafeo-web) — Grafeo in the browser
+- [anywidget](https://anywidget.dev/), custom Jupyter widgets made easy
+- [Grafeo](https://github.com/GrafeoDB/grafeo), embeddable graph database
+- [grafeo-web](https://github.com/GrafeoDB/grafeo-web), Grafeo in the browser
 
 ## License
 
