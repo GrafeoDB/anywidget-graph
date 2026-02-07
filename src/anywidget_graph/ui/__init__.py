@@ -92,6 +92,8 @@ import neo4j from "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/
 
 // === Main Entry ===
 {_resolve_neo4j_namespace(index_js)}
+
+export {{ render }};
 """
 
 
