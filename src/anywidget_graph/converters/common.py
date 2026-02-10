@@ -11,9 +11,7 @@ def is_node(obj: Any) -> bool:
         return True
     if hasattr(obj, "labels") and hasattr(obj, "properties"):
         return True
-    if isinstance(obj, dict) and "id" in obj:
-        return True
-    return False
+    return isinstance(obj, dict) and "id" in obj
 
 
 def is_relationship(obj: Any) -> bool:
@@ -22,9 +20,7 @@ def is_relationship(obj: Any) -> bool:
         return True
     if hasattr(obj, "type") and hasattr(obj, "source") and hasattr(obj, "target"):
         return True
-    if isinstance(obj, dict) and "source" in obj and "target" in obj:
-        return True
-    return False
+    return isinstance(obj, dict) and "source" in obj and "target" in obj
 
 
 def get_node_id(node: Any) -> str:

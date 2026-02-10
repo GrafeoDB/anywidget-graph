@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["get_esm", "get_css"]
+__all__ = ["get_css", "get_esm"]
 
 _UI_DIR = Path(__file__).parent
 

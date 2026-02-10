@@ -10,16 +10,13 @@ from anywidget_graph.backends.ladybug import LadybugBackend
 from anywidget_graph.backends.neo4j import Neo4jBackend
 
 __all__ = [
-    # Protocol
-    "DatabaseBackend",
-    # Backends
+    "BACKENDS",
+    "QUERY_LANGUAGES",
     "ArangoBackend",
+    "DatabaseBackend",
     "GrafeoBackend",
     "LadybugBackend",
     "Neo4jBackend",
-    # Registries
-    "BACKENDS",
-    "QUERY_LANGUAGES",
 ]
 
 

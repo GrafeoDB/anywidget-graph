@@ -48,7 +48,7 @@ class GrafeoBackend:
 
         for record in records:
             items = self._extract_items(record)
-            for key, value in items:
+            for _key, value in items:
                 if is_node(value):
                     node_id = get_node_id(value)
                     if node_id not in nodes:

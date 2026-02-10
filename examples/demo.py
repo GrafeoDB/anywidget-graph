@@ -43,7 +43,7 @@ def _(Graph):
         height=500,
     )
 
-    graph
+    graph  # noqa: B018
     return (graph,)
 
 

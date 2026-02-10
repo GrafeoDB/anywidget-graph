@@ -17,19 +17,16 @@ from anywidget_graph.converters.gremlin import GremlinConverter
 from anywidget_graph.converters.sparql import SPARQLConverter
 
 __all__ = [
-    # Base types
+    "CypherConverter",
+    "GQLConverter",
     "GraphData",
+    "GraphQLConverter",
+    "GremlinConverter",
     "ResultConverter",
-    # Common utilities
+    "SPARQLConverter",
     "get_node_id",
     "is_node",
     "is_relationship",
     "node_to_dict",
     "relationship_to_dict",
-    # Converters
-    "CypherConverter",
-    "GQLConverter",
-    "GraphQLConverter",
-    "GremlinConverter",
-    "SPARQLConverter",
 ]
