@@ -3,9 +3,9 @@ name = "anywidget-graph"
 version = "0.2.4"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 requires-python = ">=3.12"
-authors = [{ name = "S.T. Grond", email = "widget@grafeo.dev" }]
+authors = [{ name = "S.T. Grond", email = "dev@grafeo.dev" }]
 keywords = ["anywidget", "graph", "visualization", "jupyter", "marimo", "cypher", "neo4j"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -52,18 +52,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = [
-    "E",
-    "F",
-    "I",
-    "UP",
-    "FA",
-    "Q",
-]
-
-[tool.ruff.lint.flake8-quotes]
-inline-quotes = "double"
-docstring-quotes = "double"
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ty.environment]
 python-version = "3.12"
