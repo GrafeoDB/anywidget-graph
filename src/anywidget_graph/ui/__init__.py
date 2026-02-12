@@ -48,27 +48,52 @@ def _prefix_functions(code: str, prefix: str, names: list[str]) -> str:
 def _prepare_neo4j(code: str) -> str:
     """Strip imports/exports and prefix all neo4j functions (declarations + call sites)."""
     code = _strip_imports_exports(code)
-    return _prefix_functions(code, "neo4j", [
-        "fetchSchema", "executeQuery", "processRecords", "processValue",
-    ])
+    return _prefix_functions(
+        code,
+        "neo4j",
+        [
+            "fetchSchema",
+            "executeQuery",
+            "processRecords",
+            "processValue",
+        ],
+    )
 
 
 def _prepare_grafeo(code: str) -> str:
     """Strip imports/exports and prefix all grafeo server functions."""
     code = _strip_imports_exports(code)
-    return _prefix_functions(code, "grafeo", [
-        "connect", "disconnect", "isConnected",
-        "fetchSchema", "executeQuery", "processResult", "processValue",
-    ])
+    return _prefix_functions(
+        code,
+        "grafeo",
+        [
+            "connect",
+            "disconnect",
+            "isConnected",
+            "fetchSchema",
+            "executeQuery",
+            "processResult",
+            "processValue",
+        ],
+    )
 
 
 def _prepare_grafeo_embed(code: str) -> str:
     """Strip imports/exports and prefix all grafeo WASM functions."""
     code = _strip_imports_exports(code)
-    return _prefix_functions(code, "grafeoEmbed", [
-        "connect", "disconnect", "isConnected",
-        "fetchSchema", "executeQuery", "processResult", "processValue",
-    ])
+    return _prefix_functions(
+        code,
+        "grafeoEmbed",
+        [
+            "connect",
+            "disconnect",
+            "isConnected",
+            "fetchSchema",
+            "executeQuery",
+            "processResult",
+            "processValue",
+        ],
+    )
 
 
 def _resolve_namespaces(code: str) -> str:
@@ -87,19 +112,11 @@ def _resolve_namespaces(code: str) -> str:
     code = code.replace("grafeoBackend.isConnected(", "grafeoIsConnected(")
     code = code.replace("grafeoBackend.fetchSchema(", "grafeoFetchSchema(")
     # grafeoEmbedBackend.*
-    code = code.replace(
-        "grafeoEmbedBackend.executeQuery(", "grafeoEmbedExecuteQuery("
-    )
+    code = code.replace("grafeoEmbedBackend.executeQuery(", "grafeoEmbedExecuteQuery(")
     code = code.replace("grafeoEmbedBackend.connect(", "grafeoEmbedConnect(")
-    code = code.replace(
-        "grafeoEmbedBackend.disconnect(", "grafeoEmbedDisconnect("
-    )
-    code = code.replace(
-        "grafeoEmbedBackend.isConnected(", "grafeoEmbedIsConnected("
-    )
-    code = code.replace(
-        "grafeoEmbedBackend.fetchSchema(", "grafeoEmbedFetchSchema("
-    )
+    code = code.replace("grafeoEmbedBackend.disconnect(", "grafeoEmbedDisconnect(")
+    code = code.replace("grafeoEmbedBackend.isConnected(", "grafeoEmbedIsConnected(")
+    code = code.replace("grafeoEmbedBackend.fetchSchema(", "grafeoEmbedFetchSchema(")
     return code
 
 

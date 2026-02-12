@@ -51,8 +51,7 @@ class DatabaseBackend(Protocol):
 
 # Backend registry for UI
 BACKENDS = [
-    {"id": "grafeo", "name": "Grafeo", "side": "python", "language": "gql",
-     "modes": ["embedded", "server", "wasm"]},
+    {"id": "grafeo", "name": "Grafeo", "side": "python", "language": "gql", "modes": ["embedded", "server", "wasm"]},
     {"id": "neo4j", "name": "Neo4j", "side": "browser", "language": "cypher"},
     {"id": "neo4j-python", "name": "Neo4j (Python)", "side": "python", "language": "cypher"},
     {"id": "ladybug", "name": "LadybugDB", "side": "python", "language": "cypher"},
