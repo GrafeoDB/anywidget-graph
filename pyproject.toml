@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.2.4"
+version = "0.2.5"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,11 +30,15 @@ dev = [
     "prek>=0.3.2",
     "pytest>=9.0.2",
     "ruff>=0.15.0",
-    "ty>=0.0.15",
+    "ty>=0.0.16",
     "marimo>=0.19.9",
 ]
 networkx = ["networkx>=3.0"]
 pandas = ["pandas>=2.0"]
+grafeo = ["grafeo>=0.5.0"]
+cosmosdb = ["gremlinpython>=3.7"]
+embed = []  # Marker extra — WASM loads from CDN on demand
+demo = []  # Marker extra — enables demo mode with pre-populated dataset
 
 [project.urls]
 Homepage = "https://grafeo.dev/"

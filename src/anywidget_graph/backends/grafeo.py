@@ -28,15 +28,27 @@ class GrafeoBackend:
         """Get the underlying database instance."""
         return self._db
 
-    def execute(self, query: str) -> tuple[list[dict], list[dict]]:
-        """Execute a Cypher query and return (nodes, edges)."""
+    def execute(self, query: str, *, language: str = "cypher") -> tuple[list[dict], list[dict]]:
+        """Execute a query in the specified language and return (nodes, edges)."""
         result = self._db.execute(query)
         return self._process_result(result)
 
     def fetch_schema(self) -> tuple[list[dict], list[dict]]:
         """Fetch schema from Grafeo database."""
-        # Grafeo schema fetching would be implemented here
-        # For now, return empty schema
+        if hasattr(self._db, "schema"):
+            try:
+                schema = self._db.schema()
+                node_types = [
+                    {"label": label, "properties": []}
+                    for label in (schema.get("labels") if isinstance(schema, dict) else []) or []
+                ]
+                edge_types = [
+                    {"type": t, "properties": []}
+                    for t in (schema.get("edge_types") if isinstance(schema, dict) else []) or []
+                ]
+                return node_types, edge_types
+            except Exception:
+                pass
         return [], []
 
     def _process_result(self, result: Any) -> tuple[list[dict], list[dict]]:

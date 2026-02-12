@@ -2,14 +2,13 @@
  * Toolbar component with query input and action buttons.
  */
 import { ICONS } from "./icons.js";
-import { toggleSchemaPanel } from "./schema.js";
-import { toggleSettingsPanel, updateStatusDot } from "./settings.js";
-import { togglePropertiesPanel } from "./properties.js";
+import { updateStatusDot } from "./settings.js";
 
 /**
  * Create the toolbar component.
+ * @param {object} panels - { schema, settings, properties } panel objects with toggle/close/isOpen
  */
-export function createToolbar(model, wrapper, onExecuteQuery) {
+export function createToolbar(model, onExecuteQuery, panels) {
   const toolbar = document.createElement("div");
   toolbar.className = "awg-toolbar";
 
@@ -18,7 +17,9 @@ export function createToolbar(model, wrapper, onExecuteQuery) {
   schemaBtn.className = "awg-btn";
   schemaBtn.innerHTML = ICONS.sidebar;
   schemaBtn.title = "Toggle schema browser";
-  schemaBtn.addEventListener("click", () => toggleSchemaPanel(wrapper));
+  schemaBtn.addEventListener("click", () => {
+    panels.schema?.toggle();
+  });
   toolbar.appendChild(schemaBtn);
 
   // Query container (collapsible input)
@@ -70,7 +71,7 @@ export function createToolbar(model, wrapper, onExecuteQuery) {
     toolbar.appendChild(queryContainer);
   }
 
-  // Settings button
+  // Settings button (mutual exclusion with properties)
   if (model.get("show_settings")) {
     const settingsBtn = document.createElement("button");
     settingsBtn.className = "awg-btn";
@@ -88,18 +89,28 @@ export function createToolbar(model, wrapper, onExecuteQuery) {
     });
 
     settingsBtn.addEventListener("click", () => {
-      toggleSettingsPanel(wrapper);
+      // Mutual exclusion: close properties before toggling settings
+      if (panels.properties?.isOpen()) {
+        panels.properties.close();
+      }
+      panels.settings?.toggle();
     });
 
     toolbar.appendChild(settingsBtn);
   }
 
-  // Properties panel toggle (right)
+  // Properties panel toggle (right, mutual exclusion with settings)
   const propsBtn = document.createElement("button");
   propsBtn.className = "awg-btn";
   propsBtn.innerHTML = ICONS.property;
   propsBtn.title = "Toggle properties panel";
-  propsBtn.addEventListener("click", () => togglePropertiesPanel(wrapper));
+  propsBtn.addEventListener("click", () => {
+    // Mutual exclusion: close settings before toggling properties
+    if (panels.settings?.isOpen()) {
+      panels.settings.close();
+    }
+    panels.properties?.toggle();
+  });
   toolbar.appendChild(propsBtn);
 
   return toolbar;
