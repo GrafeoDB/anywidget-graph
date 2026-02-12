@@ -39,8 +39,8 @@ class GrafeoBackend:
             try:
                 schema = self._db.schema()
                 node_types = [
-                    {"label": l, "properties": []}
-                    for l in (schema.get("labels") if isinstance(schema, dict) else []) or []
+                    {"label": label, "properties": []}
+                    for label in (schema.get("labels") if isinstance(schema, dict) else []) or []
                 ]
                 edge_types = [
                     {"type": t, "properties": []}
