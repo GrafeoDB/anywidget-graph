@@ -20,17 +20,17 @@
 
 .awg-wrapper.awg-dark {
   --awg-bg: #1a1a2e;
-  --awg-bg-secondary: #16213e;
-  --awg-bg-tertiary: #0f3460;
-  --awg-border: #2d3748;
-  --awg-text: #e2e8f0;
+  --awg-bg-secondary: #252542;
+  --awg-bg-tertiary: #3a3a5c;
+  --awg-border: #3a3a5c;
+  --awg-text: #e0e0e0;
   --awg-text-secondary: #a0aec0;
-  --awg-text-muted: #718096;
-  --awg-accent: #818cf8;
-  --awg-accent-hover: #6366f1;
-  --awg-graph-bg: #0f0f1a;
-  --awg-input-bg: #1e1e32;
-  --awg-input-border: #3d4a5c;
+  --awg-text-muted: #888;
+  --awg-accent: #6366f1;
+  --awg-accent-hover: #818cf8;
+  --awg-graph-bg: #1a1a2e;
+  --awg-input-bg: #1a1a2e;
+  --awg-input-border: #3a3a5c;
 }
 
 /* === BASE === */
@@ -581,4 +581,116 @@
   color: var(--awg-text);
   border-radius: 4px;
   border: 1px solid var(--awg-border);
+}
+
+.awg-graph-container {
+  min-width: 0;
+  min-height: 300px;
+}
+
+/* === Tablet (max-width: 1024px) === */
+@media (max-width: 1024px) {
+  .awg-schema-panel.awg-panel-open {
+    width: 180px;
+  }
+
+  .awg-settings-panel.awg-panel-open {
+    width: 220px;
+  }
+
+  .awg-properties-panel.awg-panel-open {
+    width: 220px;
+  }
+}
+
+/* === Mobile (max-width: 768px) === */
+@media (max-width: 768px) {
+  .awg-content {
+    position: relative;
+  }
+
+  .awg-schema-panel,
+  .awg-settings-panel,
+  .awg-properties-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 10;
+  }
+
+  .awg-schema-panel {
+    left: 0;
+  }
+
+  .awg-settings-panel,
+  .awg-properties-panel {
+    right: 0;
+  }
+
+  .awg-schema-panel.awg-panel-open {
+    width: 260px;
+  }
+
+  .awg-settings-panel.awg-panel-open {
+    width: 260px;
+  }
+
+  .awg-properties-panel.awg-panel-open {
+    width: 260px;
+  }
+
+  /* Compact toolbar */
+  .awg-toolbar {
+    padding: 6px 8px;
+    gap: 4px;
+  }
+
+  .awg-query-input {
+    font-size: 12px;
+    padding: 6px 8px;
+    min-width: 0;
+  }
+
+  .awg-btn {
+    min-width: 32px;
+    height: 32px;
+  }
+}
+
+/* === Small Phone (max-width: 480px) === */
+@media (max-width: 480px) {
+  .awg-schema-panel.awg-panel-open,
+  .awg-settings-panel.awg-panel-open,
+  .awg-properties-panel.awg-panel-open {
+    width: 100%;
+  }
+}
+
+/* === Touch-Friendly Targets === */
+@media (pointer: coarse) {
+  .awg-btn {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .awg-schema-item-header {
+    padding: 12px 16px;
+  }
+
+  .awg-schema-prop {
+    padding: 8px 8px;
+  }
+
+  .awg-property-item {
+    padding: 10px 16px;
+  }
+
+  .awg-toggle-slider {
+    width: 44px;
+    height: 24px;
+  }
+
+  .awg-form-group {
+    padding: 10px 16px;
+  }
 }

@@ -2,27 +2,44 @@
  * Schema browser sidebar component.
  */
 import { ICONS } from "./icons.js";
-import { fetchSchema } from "./neo4j.js";
+import { fetchSchema as neo4jFetchSchema } from "./neo4j.js";
+import { fetchSchema as grafeoFetchSchema } from "./grafeo.js";
+import { fetchSchema as grafeoEmbedFetchSchema } from "./grafeo-embed.js";
 
 /**
  * Create the schema sidebar panel.
  */
-export function createSchemaPanel(model, onExecuteQuery) {
+export function createSchemaPanel(model, onExecuteQuery, callbacks) {
   const panel = document.createElement("div");
   panel.className = "awg-schema-panel";
 
-  // Header
+  // Header with close + refresh buttons
   const header = document.createElement("div");
   header.className = "awg-panel-header";
-  header.innerHTML = `<span>Schema</span>`;
+  header.innerHTML = "<span>Schema</span>";
+
+  const headerBtns = document.createElement("div");
+  headerBtns.style.display = "flex";
+  headerBtns.style.gap = "4px";
 
   const refreshBtn = document.createElement("button");
   refreshBtn.className = "awg-btn awg-btn-icon awg-btn-sm";
   refreshBtn.innerHTML = ICONS.refresh;
   refreshBtn.title = "Refresh schema";
-  refreshBtn.addEventListener("click", () => fetchSchema(model));
-  header.appendChild(refreshBtn);
+  refreshBtn.addEventListener("click", () => refreshSchema(model));
+  headerBtns.appendChild(refreshBtn);
 
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "awg-btn awg-btn-icon awg-btn-sm";
+  closeBtn.innerHTML = ICONS.close;
+  closeBtn.title = "Close schema";
+  closeBtn.addEventListener("click", () => {
+    panel.classList.remove("awg-panel-open");
+    callbacks?.onClose?.();
+  });
+  headerBtns.appendChild(closeBtn);
+
+  header.appendChild(headerBtns);
   panel.appendChild(header);
 
   // Content
@@ -85,7 +102,34 @@ export function createSchemaPanel(model, onExecuteQuery) {
   renderSchema();
 
   panel.appendChild(content);
-  return panel;
+
+  return {
+    element: panel,
+    open: () => panel.classList.add("awg-panel-open"),
+    close: () => panel.classList.remove("awg-panel-open"),
+    toggle: () => panel.classList.toggle("awg-panel-open"),
+    isOpen: () => panel.classList.contains("awg-panel-open"),
+  };
+}
+
+/**
+ * Refresh schema based on current backend.
+ */
+function refreshSchema(model) {
+  const backend = model.get("database_backend");
+  const mode = model.get("grafeo_connection_mode");
+
+  if (backend === "neo4j") {
+    neo4jFetchSchema(model);
+  } else if (backend === "grafeo" && mode === "server") {
+    grafeoFetchSchema(model);
+  } else if (backend === "grafeo" && mode === "wasm") {
+    grafeoEmbedFetchSchema(model);
+  } else {
+    // Python-side backends: trigger via counter
+    model.set("_execute_query", model.get("_execute_query") + 1);
+    model.save_changes();
+  }
 }
 
 /**
@@ -112,12 +156,32 @@ function createSchemaItem(name, properties, type, model, onExecuteQuery) {
   // Click on name to query
   nameSpan.addEventListener("click", (e) => {
     e.stopPropagation();
+    const lang = model.get("query_language") || "cypher";
     let query;
-    if (type === "node") {
-      query = `MATCH (n:\`${name}\`) RETURN n LIMIT 25`;
+
+    if (lang === "gql") {
+      query = type === "node"
+        ? `MATCH (n:${name}) RETURN n LIMIT 25`
+        : `MATCH (a)-[r:${name}]->(b) RETURN a, r, b LIMIT 25`;
+    } else if (lang === "cypher") {
+      query = type === "node"
+        ? `MATCH (n:\`${name}\`) RETURN n LIMIT 25`
+        : `MATCH (a)-[r:\`${name}\`]->(b) RETURN a, r, b LIMIT 25`;
+    } else if (lang === "gremlin") {
+      query = type === "node"
+        ? `g.V().hasLabel('${name}').limit(25)`
+        : `g.E().hasLabel('${name}').limit(25)`;
+    } else if (lang === "sparql") {
+      query = type === "node"
+        ? `SELECT ?s ?p ?o WHERE { ?s a <${name}> ; ?p ?o } LIMIT 25`
+        : `SELECT ?s ?o WHERE { ?s <${name}> ?o } LIMIT 25`;
     } else {
-      query = `MATCH (a)-[r:\`${name}\`]->(b) RETURN a, r, b LIMIT 25`;
+      // Fallback to Cypher-like
+      query = type === "node"
+        ? `MATCH (n:\`${name}\`) RETURN n LIMIT 25`
+        : `MATCH (a)-[r:\`${name}\`]->(b) RETURN a, r, b LIMIT 25`;
     }
+
     model.set("query", query);
     model.save_changes();
     onExecuteQuery();
@@ -133,15 +197,22 @@ function createSchemaItem(name, properties, type, model, onExecuteQuery) {
       propItem.className = "awg-schema-prop";
       propItem.innerHTML = `${ICONS.property} <span>${prop}</span>`;
 
-      // Click on property to query with that property
       propItem.addEventListener("click", (e) => {
         e.stopPropagation();
+        const lang = model.get("query_language") || "cypher";
         let query;
-        if (type === "node") {
-          query = `MATCH (n:\`${name}\`) RETURN n.\`${prop}\` AS ${prop}, n LIMIT 25`;
+
+        if (lang === "gremlin") {
+          query = type === "node"
+            ? `g.V().hasLabel('${name}').values('${prop}').limit(25)`
+            : `g.E().hasLabel('${name}').values('${prop}').limit(25)`;
         } else {
-          query = `MATCH (a)-[r:\`${name}\`]->(b) RETURN r.\`${prop}\` AS ${prop}, a, r, b LIMIT 25`;
+          // Cypher / GQL
+          query = type === "node"
+            ? `MATCH (n:\`${name}\`) RETURN n.\`${prop}\` AS ${prop}, n LIMIT 25`
+            : `MATCH (a)-[r:\`${name}\`]->(b) RETURN r.\`${prop}\` AS ${prop}, a, r, b LIMIT 25`;
         }
+
         model.set("query", query);
         model.save_changes();
         onExecuteQuery();
@@ -165,14 +236,4 @@ function createSchemaItem(name, properties, type, model, onExecuteQuery) {
   });
 
   return item;
-}
-
-/**
- * Toggle schema panel visibility.
- */
-export function toggleSchemaPanel(wrapper) {
-  const panel = wrapper.querySelector(".awg-schema-panel");
-  if (panel) {
-    panel.classList.toggle("awg-panel-open");
-  }
 }

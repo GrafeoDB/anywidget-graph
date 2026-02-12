@@ -73,13 +73,17 @@ class Graph(anywidget.AnyWidget):
     dark_mode = traitlets.Bool(default_value=True).tag(sync=True)
 
     # === Database Backend ===
-    database_backend = traitlets.Unicode(default_value="neo4j").tag(sync=True)
+    database_backend = traitlets.Unicode(default_value="grafeo").tag(sync=True)
+
+    # === Grafeo Connection Mode ===
+    grafeo_connection_mode = traitlets.Unicode(default_value="embedded").tag(sync=True)
+    grafeo_server_url = traitlets.Unicode(default_value="http://localhost:7474").tag(sync=True)
 
     # === Neo4j Connection (browser-side) ===
     connection_uri = traitlets.Unicode(default_value="").tag(sync=True)
     connection_username = traitlets.Unicode(default_value="").tag(sync=True)
     connection_password = traitlets.Unicode(default_value="").tag(sync=True)
-    connection_database = traitlets.Unicode(default_value="neo4j").tag(sync=True)
+    connection_database = traitlets.Unicode(default_value="default").tag(sync=True)
 
     # === Query State ===
     query = traitlets.Unicode(default_value="").tag(sync=True)
@@ -97,6 +101,10 @@ class Graph(anywidget.AnyWidget):
     # === Query Execution Trigger (for Python backends) ===
     _execute_query = traitlets.Int(default_value=0).tag(sync=True)
 
+    # === Demo Mode (auto-populate WASM and run query) ===
+    _demo_mode = traitlets.Bool(default_value=False).tag(sync=True)
+    _demo_data = traitlets.Unicode(default_value="").tag(sync=True)
+
     def __init__(
         self,
         nodes: list[dict[str, Any]] | None = None,
@@ -111,11 +119,11 @@ class Graph(anywidget.AnyWidget):
         show_settings: bool = True,
         show_query_input: bool = True,
         dark_mode: bool = True,
-        database_backend: str = "neo4j",
+        database_backend: str = "grafeo",
         connection_uri: str = "",
         connection_username: str = "",
         connection_password: str = "",
-        connection_database: str = "neo4j",
+        connection_database: str = "default",
         grafeo_db: Any = None,
         backend: DatabaseBackend | None = None,
         **kwargs: Any,
@@ -230,7 +238,7 @@ class Graph(anywidget.AnyWidget):
         try:
             self.query_running = True
             self.query_error = ""
-            nodes, edges = self._backend.execute(self.query)
+            nodes, edges = self._backend.execute(self.query, language=self.query_language)
             self.nodes = nodes
             self.edges = edges
         except Exception as e:

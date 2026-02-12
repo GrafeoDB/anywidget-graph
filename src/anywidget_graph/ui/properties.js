@@ -6,14 +6,23 @@ import { ICONS } from "./icons.js";
 /**
  * Create the properties panel.
  */
-export function createPropertiesPanel(model) {
+export function createPropertiesPanel(model, callbacks) {
   const panel = document.createElement("div");
   panel.className = "awg-properties-panel";
 
-  // Header
+  // Header with close button
   const header = document.createElement("div");
   header.className = "awg-panel-header";
   header.innerHTML = "<span>Properties</span>";
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "awg-btn awg-btn-icon awg-btn-sm";
+  closeBtn.innerHTML = ICONS.close;
+  closeBtn.title = "Close properties";
+  closeBtn.addEventListener("click", () => {
+    panel.classList.remove("awg-panel-open");
+    callbacks?.onClose?.();
+  });
+  header.appendChild(closeBtn);
   panel.appendChild(header);
 
   // Content
@@ -48,26 +57,30 @@ export function createPropertiesPanel(model) {
   renderProperties();
 
   panel.appendChild(content);
-  return panel;
+
+  return {
+    element: panel,
+    open: () => panel.classList.add("awg-panel-open"),
+    close: () => panel.classList.remove("awg-panel-open"),
+    toggle: () => panel.classList.toggle("awg-panel-open"),
+    isOpen: () => panel.classList.contains("awg-panel-open"),
+  };
 }
 
 /**
  * Render node properties.
  */
 function renderNodeProperties(content, node) {
-  // Node header
   const nodeHeader = document.createElement("div");
   nodeHeader.className = "awg-properties-header";
   nodeHeader.innerHTML = `${ICONS.node} <span class="awg-properties-type">Node</span>`;
   content.appendChild(nodeHeader);
 
-  // Node ID
   const idItem = document.createElement("div");
   idItem.className = "awg-property-item";
   idItem.innerHTML = `<span class="awg-property-key">id</span><span class="awg-property-value">${node.id || "N/A"}</span>`;
   content.appendChild(idItem);
 
-  // Labels
   if (node.labels && node.labels.length > 0) {
     const labelsItem = document.createElement("div");
     labelsItem.className = "awg-property-item";
@@ -75,7 +88,6 @@ function renderNodeProperties(content, node) {
     content.appendChild(labelsItem);
   }
 
-  // Other properties
   Object.entries(node).forEach(([key, value]) => {
     if (["id", "labels", "label", "x", "y", "size", "color"].includes(key)) return;
     const item = document.createElement("div");
@@ -90,13 +102,11 @@ function renderNodeProperties(content, node) {
  * Render edge properties.
  */
 function renderEdgeProperties(content, edge) {
-  // Edge header
   const edgeHeader = document.createElement("div");
   edgeHeader.className = "awg-properties-header";
   edgeHeader.innerHTML = `${ICONS.edge} <span class="awg-properties-type">Relationship</span>`;
   content.appendChild(edgeHeader);
 
-  // Edge type/label
   if (edge.label) {
     const typeItem = document.createElement("div");
     typeItem.className = "awg-property-item";
@@ -104,7 +114,6 @@ function renderEdgeProperties(content, edge) {
     content.appendChild(typeItem);
   }
 
-  // Source/Target
   const sourceItem = document.createElement("div");
   sourceItem.className = "awg-property-item";
   sourceItem.innerHTML = `<span class="awg-property-key">source</span><span class="awg-property-value awg-property-truncate">${edge.source}</span>`;
@@ -115,7 +124,6 @@ function renderEdgeProperties(content, edge) {
   targetItem.innerHTML = `<span class="awg-property-key">target</span><span class="awg-property-value awg-property-truncate">${edge.target}</span>`;
   content.appendChild(targetItem);
 
-  // Other properties
   Object.entries(edge).forEach(([key, value]) => {
     if (["source", "target", "label", "size", "color"].includes(key)) return;
     const item = document.createElement("div");
@@ -124,14 +132,4 @@ function renderEdgeProperties(content, edge) {
     item.innerHTML = `<span class="awg-property-key">${key}</span><span class="awg-property-value">${displayValue}</span>`;
     content.appendChild(item);
   });
-}
-
-/**
- * Toggle properties panel visibility.
- */
-export function togglePropertiesPanel(wrapper) {
-  const panel = wrapper.querySelector(".awg-properties-panel");
-  if (panel) {
-    panel.classList.toggle("awg-panel-open");
-  }
 }

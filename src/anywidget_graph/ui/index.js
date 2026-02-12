@@ -10,13 +10,17 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import * as neo4jBackend from "./neo4j.js";
+import * as grafeoBackend from "./grafeo.js";
+import * as grafeoEmbedBackend from "./grafeo-embed.js";
 
 /**
- * Execute a query based on the current backend.
+ * Execute a query based on the current backend and connection mode.
  */
 async function executeQuery(model) {
   const backend = model.get("database_backend");
   const query = model.get("query");
+  const mode = model.get("grafeo_connection_mode");
+  const language = model.get("query_language") || "cypher";
 
   if (!query.trim()) {
     model.set("query_error", "Please enter a query");
@@ -25,19 +29,40 @@ async function executeQuery(model) {
   }
 
   if (backend === "neo4j") {
+    // Browser-side Neo4j driver
     const result = await neo4jBackend.executeQuery(
       query,
       model.get("connection_database"),
       model
     );
-
     if (result) {
       model.set("nodes", result.nodes);
       model.set("edges", result.edges);
       model.save_changes();
     }
-  } else if (backend === "grafeo") {
-    // Trigger Python-side execution
+  } else if (backend === "grafeo" && mode === "server") {
+    // Browser-side Grafeo server HTTP
+    const result = await grafeoBackend.executeQuery(
+      query,
+      language,
+      model.get("connection_database"),
+      model
+    );
+    if (result) {
+      model.set("nodes", result.nodes);
+      model.set("edges", result.edges);
+      model.save_changes();
+    }
+  } else if (backend === "grafeo" && mode === "wasm") {
+    // Browser-side Grafeo WASM
+    const result = await grafeoEmbedBackend.executeQuery(query, language, model);
+    if (result) {
+      model.set("nodes", result.nodes);
+      model.set("edges", result.edges);
+      model.save_changes();
+    }
+  } else {
+    // Python-side backends (grafeo-embedded, ladybug, arango, cosmosdb)
     model.set("_execute_query", model.get("_execute_query") + 1);
     model.save_changes();
   }
@@ -49,6 +74,7 @@ async function executeQuery(model) {
 function render({ model, el }) {
   const wrapper = document.createElement("div");
   wrapper.className = "awg-wrapper";
+  wrapper.style.width = model.get("width") + "px";
 
   // Apply dark mode
   function updateTheme() {
@@ -60,35 +86,41 @@ function render({ model, el }) {
   // Create query executor callback
   const onExecuteQuery = () => executeQuery(model);
 
+  // Create panels first (all collapsed by default)
+  const schema = createSchemaPanel(model, onExecuteQuery);
+  const properties = createPropertiesPanel(model);
+  const settings = model.get("show_settings")
+    ? createSettingsPanel(model)
+    : null;
+
+  // Panel references for mutual exclusion
+  const panels = { schema, settings, properties };
+
   // Create toolbar if enabled
   if (model.get("show_toolbar")) {
-    const toolbar = createToolbar(model, wrapper, onExecuteQuery);
+    const toolbar = createToolbar(model, onExecuteQuery, panels);
     wrapper.appendChild(toolbar);
   }
 
-  // Main content area (schema + graph + properties)
+  // Main content area (schema + graph + settings/properties)
   const content = document.createElement("div");
   content.className = "awg-content";
 
-  // Create schema sidebar (left) - collapsed by default
-  const schemaSidebar = createSchemaPanel(model, onExecuteQuery);
-  content.appendChild(schemaSidebar);
+  // Schema sidebar (left)
+  content.appendChild(schema.element);
 
-  // Create graph container
+  // Graph container (flex: 1 fills available width)
   const container = document.createElement("div");
   container.className = "awg-graph-container";
-  container.style.width = model.get("width") + "px";
   container.style.height = model.get("height") + "px";
   content.appendChild(container);
 
-  // Create properties panel (right) - collapsed by default
-  const propertiesPanel = createPropertiesPanel(model);
-  content.appendChild(propertiesPanel);
+  // Properties panel (right)
+  content.appendChild(properties.element);
 
-  // Create settings panel if enabled
-  if (model.get("show_settings")) {
-    const settingsPanel = createSettingsPanel(model);
-    content.appendChild(settingsPanel);
+  // Settings panel (right, overlaps with properties via mutual exclusion)
+  if (settings) {
+    content.appendChild(settings.element);
   }
 
   wrapper.appendChild(content);
@@ -129,6 +161,12 @@ function render({ model, el }) {
     labelSize: 12,
     labelWeight: "500",
   });
+
+  // ResizeObserver for responsive sizing
+  const resizeObserver = new ResizeObserver(() => {
+    renderer.resize();
+  });
+  resizeObserver.observe(container);
 
   // Node click handler
   renderer.on("clickNode", ({ node }) => {
@@ -190,8 +228,33 @@ function render({ model, el }) {
     renderer.refresh();
   });
 
+  // === Demo Mode: auto-init WASM and populate data ===
+  if (model.get("_demo_mode")) {
+    (async () => {
+      try {
+        const demoDataStr = model.get("_demo_data");
+        if (demoDataStr) {
+          await grafeoEmbedBackend.connect(model);
+          const statements = JSON.parse(demoDataStr);
+          for (const stmt of statements) {
+            if (stmt.trim()) {
+              try {
+                await grafeoEmbedBackend.executeQuery(stmt.trim(), "gql", model);
+              } catch (_) {
+                // Some statements may fail if data already exists
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Demo WASM init:", err.message);
+      }
+    })();
+  }
+
   // Cleanup on destroy
   return () => {
+    resizeObserver.disconnect();
     renderer.kill();
   };
 }
