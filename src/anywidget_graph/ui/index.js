@@ -307,9 +307,25 @@ function render({ model, el }) {
       case "random":
         random.assign(graph);
         break;
-      case "force":
-        forceAtlas2.assign(graph, { iterations: 50, settings: { gravity: 1, scalingRatio: 2 } });
+      case "force": {
+        const n = graph.order;
+        // Scale layout parameters to graph size for good spreading
+        const iterations = Math.min(300, Math.max(100, n * 3));
+        const gravity = n < 20 ? 0.3 : n < 100 ? 0.5 : 1;
+        const scalingRatio = n < 20 ? 20 : n < 100 ? 10 : 5;
+        forceAtlas2.assign(graph, {
+          iterations,
+          settings: {
+            gravity,
+            scalingRatio,
+            barnesHutOptimize: n > 50,
+            strongGravityMode: false,
+            adjustSizes: true,
+            slowDown: 1,
+          },
+        });
         break;
+      }
     }
 
     // Restore pinned positions after layout
@@ -677,6 +693,8 @@ function render({ model, el }) {
     rebuildGraph();
     applyLayout(model.get("layout") || "force");
     renderer.refresh();
+    // Auto-fit camera to show all nodes after layout
+    renderer.getCamera().animatedReset({ duration: 300 });
   }
 
   model.on("change:nodes", onDataOrStyleChange);
@@ -695,6 +713,7 @@ function render({ model, el }) {
   model.on("change:layout", () => {
     applyLayout(model.get("layout"));
     renderer.refresh();
+    renderer.getCamera().animatedReset({ duration: 300 });
   });
 
   // === Demo Mode: auto-init WASM and populate data ===
