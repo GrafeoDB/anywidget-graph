@@ -207,6 +207,114 @@
 .awg-graph-container {
   flex: 1;
   background: var(--awg-graph-bg);
+  position: relative;
+}
+
+/* === ZOOM CONTROLS === */
+.awg-zoom-controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 10;
+}
+
+.awg-zoom-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--awg-border);
+  background: var(--awg-bg);
+  color: var(--awg-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.awg-zoom-btn:hover {
+  background: var(--awg-bg-tertiary);
+  border-color: var(--awg-text-muted);
+}
+
+.awg-zoom-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* === SELECTION RECTANGLE === */
+.awg-selection-rect {
+  position: absolute;
+  border: 1px dashed #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+  pointer-events: none;
+  z-index: 20;
+  display: none;
+}
+
+/* === MODE BUTTONS === */
+.awg-mode-group {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  padding-bottom: 6px;
+}
+
+.awg-mode-btn.awg-mode-active {
+  background: rgba(99, 102, 241, 0.5);
+  color: #fff;
+}
+
+/* === TOOLTIP === */
+.awg-tooltip {
+  position: absolute;
+  display: none;
+  background: var(--awg-bg);
+  border: 1px solid var(--awg-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 100;
+  max-width: 220px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.awg-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
+}
+
+.awg-tooltip-key {
+  color: var(--awg-text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.awg-tooltip-value {
+  color: var(--awg-text);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.awg-layout-select {
+  padding: 4px 6px;
+  border: 1px solid var(--awg-border);
+  background: var(--awg-bg);
+  color: var(--awg-text);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-bottom: 4px;
 }
 
 /* === PANEL COMMON === */
