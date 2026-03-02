@@ -320,30 +320,18 @@ class Graph(anywidget.AnyWidget):
     def _merge_graph(self, new_nodes: list[dict], new_edges: list[dict]) -> None:
         """Merge new nodes and edges into the existing graph, deduplicating."""
         existing_node_ids = {n["id"] for n in self.nodes}
-        existing_edge_keys = {
-            (e["source"], e["target"], e.get("label", ""))
-            for e in self.edges
-        }
+        existing_edge_keys = {(e["source"], e["target"], e.get("label", "")) for e in self.edges}
 
-        merged_nodes = list(self.nodes) + [
-            n for n in new_nodes if n["id"] not in existing_node_ids
-        ]
+        merged_nodes = list(self.nodes) + [n for n in new_nodes if n["id"] not in existing_node_ids]
         merged_edges = list(self.edges) + [
-            e for e in new_edges
-            if (e["source"], e["target"], e.get("label", "")) not in existing_edge_keys
+            e for e in new_edges if (e["source"], e["target"], e.get("label", "")) not in existing_edge_keys
         ]
 
         if len(merged_nodes) > self.max_nodes:
             merged_nodes = merged_nodes[: self.max_nodes]
             kept_ids = {n["id"] for n in merged_nodes}
-            merged_edges = [
-                e for e in merged_edges
-                if e["source"] in kept_ids and e["target"] in kept_ids
-            ]
-            self.query_error = (
-                f"Graph truncated to {self.max_nodes} nodes. "
-                "Call clear() or increase max_nodes."
-            )
+            merged_edges = [e for e in merged_edges if e["source"] in kept_ids and e["target"] in kept_ids]
+            self.query_error = f"Graph truncated to {self.max_nodes} nodes. Call clear() or increase max_nodes."
 
         self.nodes = merged_nodes
         self.edges = merged_edges
@@ -662,7 +650,11 @@ class Graph(anywidget.AnyWidget):
 
         edges = []
         for u, v, data in G.edges(data=True):
-            edge = {"source": str(u), "target": str(v), **{k: v2 for k, v2 in data.items() if not isinstance(v2, (dict, list, set))}}
+            edge = {
+                "source": str(u),
+                "target": str(v),
+                **{k: v2 for k, v2 in data.items() if not isinstance(v2, (dict, list, set))},
+            }
             edges.append(edge)
 
         return cls(nodes=nodes, edges=edges, **kwargs)
@@ -728,6 +720,7 @@ class Graph(anywidget.AnyWidget):
         Callable
             The callback function (for decorator usage).
         """
+
         def observer(change: dict) -> None:
             if change["new"]:
                 callback(change["new"])
@@ -775,12 +768,30 @@ const DATA = {json_data};
 const OPTIONS = {json_options};
 
 const COLOR_SCALES = {{
-  viridis: [[0.267,0.004,0.329],[0.282,0.141,0.458],[0.253,0.265,0.530],[0.207,0.372,0.553],[0.164,0.471,0.558],[0.128,0.567,0.551],[0.134,0.658,0.517],[0.267,0.749,0.441],[0.478,0.821,0.318],[0.741,0.873,0.150],[0.993,0.906,0.144]],
-  plasma: [[0.050,0.030,0.528],[0.295,0.012,0.615],[0.492,0.012,0.658],[0.654,0.072,0.639],[0.798,0.195,0.561],[0.897,0.329,0.445],[0.963,0.480,0.314],[0.993,0.640,0.186],[0.980,0.807,0.086],[0.940,0.975,0.131],[0.940,0.975,0.131]],
-  inferno: [[0.001,0.000,0.014],[0.110,0.066,0.290],[0.280,0.086,0.470],[0.447,0.096,0.460],[0.612,0.140,0.381],[0.762,0.233,0.272],[0.882,0.370,0.170],[0.959,0.551,0.069],[0.977,0.754,0.065],[0.936,0.960,0.309],[0.988,1.000,0.644]],
-  magma: [[0.001,0.000,0.014],[0.099,0.068,0.265],[0.232,0.094,0.450],[0.383,0.107,0.520],[0.533,0.137,0.512],[0.683,0.199,0.453],[0.822,0.303,0.369],[0.925,0.452,0.293],[0.975,0.637,0.264],[0.985,0.835,0.361],[0.987,0.991,0.750]],
-  cividis: [[0.000,0.135,0.305],[0.074,0.192,0.351],[0.145,0.247,0.382],[0.228,0.302,0.390],[0.310,0.358,0.393],[0.394,0.414,0.390],[0.482,0.470,0.379],[0.575,0.530,0.358],[0.672,0.595,0.325],[0.775,0.666,0.274],[0.880,0.742,0.199]],
-  turbo: [[0.190,0.072,0.232],[0.231,0.322,0.745],[0.137,0.572,0.938],[0.069,0.773,0.800],[0.200,0.910,0.510],[0.507,0.979,0.254],[0.775,0.953,0.136],[0.953,0.804,0.098],[0.993,0.561,0.090],[0.914,0.286,0.063],[0.647,0.082,0.033]],
+  viridis: [
+    [0.267,0.004,0.329],[0.282,0.141,0.458],[0.253,0.265,0.530],[0.207,0.372,0.553],
+    [0.164,0.471,0.558],[0.128,0.567,0.551],[0.134,0.658,0.517],[0.267,0.749,0.441],
+    [0.478,0.821,0.318],[0.741,0.873,0.150],[0.993,0.906,0.144]],
+  plasma: [
+    [0.050,0.030,0.528],[0.295,0.012,0.615],[0.492,0.012,0.658],[0.654,0.072,0.639],
+    [0.798,0.195,0.561],[0.897,0.329,0.445],[0.963,0.480,0.314],[0.993,0.640,0.186],
+    [0.980,0.807,0.086],[0.940,0.975,0.131],[0.940,0.975,0.131]],
+  inferno: [
+    [0.001,0.000,0.014],[0.110,0.066,0.290],[0.280,0.086,0.470],[0.447,0.096,0.460],
+    [0.612,0.140,0.381],[0.762,0.233,0.272],[0.882,0.370,0.170],[0.959,0.551,0.069],
+    [0.977,0.754,0.065],[0.936,0.960,0.309],[0.988,1.000,0.644]],
+  magma: [
+    [0.001,0.000,0.014],[0.099,0.068,0.265],[0.232,0.094,0.450],[0.383,0.107,0.520],
+    [0.533,0.137,0.512],[0.683,0.199,0.453],[0.822,0.303,0.369],[0.925,0.452,0.293],
+    [0.975,0.637,0.264],[0.985,0.835,0.361],[0.987,0.991,0.750]],
+  cividis: [
+    [0.000,0.135,0.305],[0.074,0.192,0.351],[0.145,0.247,0.382],[0.228,0.302,0.390],
+    [0.310,0.358,0.393],[0.394,0.414,0.390],[0.482,0.470,0.379],[0.575,0.530,0.358],
+    [0.672,0.595,0.325],[0.775,0.666,0.274],[0.880,0.742,0.199]],
+  turbo: [
+    [0.190,0.072,0.232],[0.231,0.322,0.745],[0.137,0.572,0.938],[0.069,0.773,0.800],
+    [0.200,0.910,0.510],[0.507,0.979,0.254],[0.775,0.953,0.136],[0.953,0.804,0.098],
+    [0.993,0.561,0.090],[0.914,0.286,0.063],[0.647,0.082,0.033]],
 }};
 
 const CATEGORICAL_COLORS = [
@@ -974,7 +985,8 @@ renderer.on("enterEdge", ({{ edge }}) => {{
   const [source, target] = graph.extremities(edge);
   let html = `<div class="tooltip-row"><span class="tooltip-key">source:</span><span>${{source}}</span></div>`;
   html += `<div class="tooltip-row"><span class="tooltip-key">target:</span><span>${{target}}</span></div>`;
-  if (attrs.label) html += `<div class="tooltip-row"><span class="tooltip-key">label:</span><span>${{attrs.label}}</span></div>`;
+  if (attrs.label) html += `<div class="tooltip-row">` +
+    `<span class="tooltip-key">label:</span><span>${{attrs.label}}</span></div>`;
   tooltip.innerHTML = html;
   tooltip.style.display = "block";
 }});
