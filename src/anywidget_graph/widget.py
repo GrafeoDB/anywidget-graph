@@ -729,8 +729,12 @@ class Graph(anywidget.AnyWidget):
         return callback
 
     # ------------------------------------------------------------------ #
-    #  Static HTML export                                                 #
+    #  Export                                                              #
     # ------------------------------------------------------------------ #
+
+    def to_json(self) -> str:
+        """Export the graph data (nodes and edges) as a JSON string."""
+        return json.dumps({"nodes": list(self.nodes), "edges": list(self.edges)})
 
     _HTML_TEMPLATE = """\
 <!DOCTYPE html>
