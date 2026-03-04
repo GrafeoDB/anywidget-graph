@@ -7,8 +7,9 @@ import { updateStatusDot } from "./settings.js";
 /**
  * Create the toolbar component.
  * @param {object} panels - { schema, settings, properties } panel objects with toggle/close/isOpen
+ * @param {function} onSearch - callback(term) for search filtering
  */
-export function createToolbar(model, onExecuteQuery, panels) {
+export function createToolbar(model, onExecuteQuery, panels, onSearch) {
   const toolbar = document.createElement("div");
   toolbar.className = "awg-toolbar";
 
@@ -70,6 +71,37 @@ export function createToolbar(model, onExecuteQuery, panels) {
     queryContainer.appendChild(playBtn);
     toolbar.appendChild(queryContainer);
   }
+
+  // Search input (compact filter for nodes)
+  const searchWrap = document.createElement("div");
+  searchWrap.className = "awg-search-wrap";
+  const searchIcon = document.createElement("span");
+  searchIcon.className = "awg-search-icon";
+  searchIcon.innerHTML = ICONS.search;
+  searchWrap.appendChild(searchIcon);
+
+  const searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.className = "awg-search-input";
+  searchInput.placeholder = "Filter nodes...";
+  searchInput.addEventListener("input", () => {
+    onSearch?.(searchInput.value);
+  });
+  searchWrap.appendChild(searchInput);
+  toolbar.appendChild(searchWrap);
+
+  // Count badge
+  const countBadge = document.createElement("span");
+  countBadge.className = "awg-count-badge";
+  function updateCount() {
+    const nodes = model.get("nodes") || [];
+    const edges = model.get("edges") || [];
+    countBadge.textContent = `${nodes.length} nodes \u00b7 ${edges.length} edges`;
+  }
+  updateCount();
+  model.on("change:nodes", updateCount);
+  model.on("change:edges", updateCount);
+  toolbar.appendChild(countBadge);
 
   // Settings button (mutual exclusion with properties)
   if (model.get("show_settings")) {

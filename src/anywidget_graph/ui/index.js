@@ -236,9 +236,28 @@ function render({ model, el }) {
   // Panel references for mutual exclusion
   const panels = { schema, settings, properties };
 
+  // Search state (shared with nodeReducer)
+  let searchTerm = "";
+  let searchMatches = new Set();
+
+  function onSearch(term) {
+    searchTerm = (term || "").toLowerCase().trim();
+    searchMatches.clear();
+    if (searchTerm) {
+      graph.forEachNode((id, attrs) => {
+        const label = (attrs.label || "").toLowerCase();
+        const nodeId = String(id).toLowerCase();
+        if (label.includes(searchTerm) || nodeId.includes(searchTerm)) {
+          searchMatches.add(id);
+        }
+      });
+    }
+    renderer.refresh();
+  }
+
   // Create toolbar if enabled
   if (model.get("show_toolbar")) {
-    const toolbar = createToolbar(model, onExecuteQuery, panels);
+    const toolbar = createToolbar(model, onExecuteQuery, panels, onSearch);
     wrapper.appendChild(toolbar);
   }
 
@@ -351,7 +370,7 @@ function render({ model, el }) {
     labelWeight: "500",
   });
 
-  // Node reducer for selection highlighting + pinned indicator
+  // Node reducer for selection highlighting, search filtering, and pinned indicator
   renderer.setSetting("nodeReducer", (node, data) => {
     const selectedNodes = model.get("selected_nodes") || [];
     const pinnedNodes = model.get("pinned_nodes") || {};
@@ -360,6 +379,12 @@ function render({ model, el }) {
     // Dim unselected nodes when there is an active selection
     if (selectedNodes.length > 0 && !selectedNodes.includes(node)) {
       res.color = data.color + "40";
+      res.label = "";
+    }
+
+    // Dim non-matching nodes when search is active
+    if (searchTerm && !searchMatches.has(node)) {
+      res.color = data.color + "20";
       res.label = "";
     }
 
@@ -674,6 +699,41 @@ function render({ model, el }) {
     model.set("selected_nodes", []);
     model.set("selected_edges", []);
     model.save_changes();
+  });
+
+  // Keyboard shortcuts
+  wrapper.tabIndex = 0;
+  wrapper.style.outline = "none";
+  wrapper.addEventListener("keydown", (e) => {
+    const tag = e.target.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+    if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      renderer.getCamera().animatedReset({ duration: 200 });
+    } else if (e.key === "Escape") {
+      model.set("selected_node", null);
+      model.set("selected_edge", null);
+      model.set("selected_nodes", []);
+      model.set("selected_edges", []);
+      model.save_changes();
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      const selected = model.get("selected_nodes") || [];
+      if (selected.length === 0) return;
+      e.preventDefault();
+      const removeSet = new Set(selected);
+      const nodes = (model.get("nodes") || []).filter(n => !removeSet.has(n.id));
+      const edges = (model.get("edges") || []).filter(
+        edge => !removeSet.has(edge.source) && !removeSet.has(edge.target)
+      );
+      model.set("nodes", nodes);
+      model.set("edges", edges);
+      model.set("selected_node", null);
+      model.set("selected_edge", null);
+      model.set("selected_nodes", []);
+      model.set("selected_edges", []);
+      model.save_changes();
+    }
   });
 
   // Double-click node: unpin if pinned, otherwise expand (fetch neighbors)
