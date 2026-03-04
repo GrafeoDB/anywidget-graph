@@ -90,6 +90,53 @@
   color: var(--awg-text-muted);
 }
 
+/* === SEARCH INPUT === */
+.awg-search-wrap {
+  display: flex;
+  align-items: center;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.awg-search-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--awg-text-muted);
+  display: flex;
+  pointer-events: none;
+}
+
+.awg-search-input {
+  width: 140px;
+  padding: 6px 8px 6px 28px;
+  border: 1px solid var(--awg-input-border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--awg-input-bg);
+  color: var(--awg-text);
+  transition: border-color 0.15s, box-shadow 0.15s, width 0.2s;
+}
+
+.awg-search-input:focus {
+  outline: none;
+  border-color: var(--awg-accent);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  width: 180px;
+}
+
+.awg-search-input::placeholder {
+  color: var(--awg-text-muted);
+}
+
+/* === COUNT BADGE === */
+.awg-count-badge {
+  font-size: 11px;
+  color: var(--awg-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 /* === BUTTONS === */
 .awg-btn {
   display: inline-flex;
@@ -218,7 +265,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 10;
+  z-index: 25;
 }
 
 .awg-zoom-btn {
