@@ -285,6 +285,7 @@ graph.save_html("graph.html")           # Write HTML to file
 - [anywidget](https://anywidget.dev/), custom Jupyter widgets made easy
 - [Grafeo](https://github.com/GrafeoDB/grafeo), embeddable graph database
 - [grafeo-web](https://github.com/GrafeoDB/grafeo-web), Grafeo in the browser
+- [Playground](https://grafeo.ai), interactive browser playground for Grafeo
 
 ## License
 
