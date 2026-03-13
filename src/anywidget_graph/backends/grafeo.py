@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 class GrafeoBackend:
     """Backend for Grafeo database connections."""
 
+    _LANGUAGE_METHODS: dict[str, str] = {
+        "cypher": "execute_cypher",
+        "gremlin": "execute_gremlin",
+        "graphql": "execute_graphql",
+        "sparql": "execute_sparql",
+        "sql": "execute_sql",
+    }
+
     def __init__(self, db: Any) -> None:
         """Initialize with a GrafeoDB instance."""
         self._db = db
@@ -30,7 +38,11 @@ class GrafeoBackend:
 
     def execute(self, query: str, *, language: str = "cypher") -> tuple[list[dict], list[dict]]:
         """Execute a query in the specified language and return (nodes, edges)."""
-        result = self._db.execute(query)
+        method_name = self._LANGUAGE_METHODS.get(language)
+        if method_name and hasattr(self._db, method_name):
+            result = getattr(self._db, method_name)(query)
+        else:
+            result = self._db.execute(query)
         return self._process_result(result)
 
     def fetch_schema(self) -> tuple[list[dict], list[dict]]:
@@ -61,7 +73,14 @@ class GrafeoBackend:
         for record in records:
             items = self._extract_items(record)
             for _key, value in items:
-                if is_node(value):
+                if self._is_grafeo_node(value):
+                    node_dict = self._grafeo_node_to_dict(value)
+                    node_id = node_dict["id"]
+                    if node_id not in nodes:
+                        nodes[node_id] = node_dict
+                elif self._is_grafeo_relationship(value):
+                    edges.append(self._grafeo_relationship_to_dict(value))
+                elif is_node(value):
                     node_id = get_node_id(value)
                     if node_id not in nodes:
                         nodes[node_id] = node_to_dict(value)
@@ -69,6 +88,47 @@ class GrafeoBackend:
                     edges.append(relationship_to_dict(value))
 
         return list(nodes.values()), edges
+
+    @staticmethod
+    def _is_grafeo_node(obj: Any) -> bool:
+        """Check if a value is a grafeo node dict (has ``_id`` and ``_labels``)."""
+        return isinstance(obj, dict) and "_id" in obj and "_labels" in obj
+
+    @staticmethod
+    def _is_grafeo_relationship(obj: Any) -> bool:
+        """Check if a value is a grafeo relationship dict (has ``_source``, ``_target``, ``_type``)."""
+        return isinstance(obj, dict) and "_source" in obj and "_target" in obj and "_type" in obj
+
+    @staticmethod
+    def _grafeo_node_to_dict(node: dict) -> dict:
+        """Convert a grafeo node dict to the widget node format."""
+        node_id = str(node["_id"])
+        labels = node.get("_labels", [])
+        result: dict = {"id": node_id}
+        if labels:
+            result["label"] = labels[0]
+            result["labels"] = list(labels)
+        # Copy user properties (skip internal grafeo keys)
+        for key, value in node.items():
+            if not key.startswith("_"):
+                result[key] = value
+        if "label" not in result and "name" in result:
+            result["label"] = result["name"]
+        return result
+
+    @staticmethod
+    def _grafeo_relationship_to_dict(rel: dict) -> dict:
+        """Convert a grafeo relationship dict to the widget edge format."""
+        result: dict = {
+            "source": str(rel["_source"]),
+            "target": str(rel["_target"]),
+            "label": str(rel["_type"]),
+        }
+        # Copy user properties (skip internal grafeo keys)
+        for key, value in rel.items():
+            if not key.startswith("_"):
+                result[key] = value
+        return result
 
     def _extract_items(self, record: Any) -> list[tuple[str, Any]]:
         """Extract key-value items from a record."""
