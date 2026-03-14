@@ -55,6 +55,7 @@ def test_default_options():
     assert graph.selection_mode == "click"
     assert graph.database_backend == "grafeo"
     assert graph.max_nodes == 300
+    assert graph.query_time == 0.0
 
 
 def test_custom_options():
@@ -721,3 +722,16 @@ def test_grafeo_backend_process_native_dicts():
     assert edges[0]["target"] == "2"
     assert edges[0]["label"] == "KNOWS"
     assert edges[0]["since"] == 2020
+
+
+# ------------------------------------------------------------------ #
+#  Query timing                                                        #
+# ------------------------------------------------------------------ #
+
+
+def test_query_time_traitlet():
+    """query_time traitlet defaults to 0.0 and can be set."""
+    graph = Graph()
+    assert graph.query_time == 0.0
+    graph.query_time = 42.5
+    assert graph.query_time == 42.5

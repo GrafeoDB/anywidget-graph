@@ -821,6 +821,139 @@
   }
 }
 
+/* === TIMING BADGE === */
+.awg-timing-badge {
+  color: var(--awg-accent);
+  font-size: 11px;
+}
+
+/* === RESULTS DRAWER === */
+.awg-results-drawer {
+  border-top: 1px solid var(--awg-border);
+  background: var(--awg-bg-secondary);
+}
+
+.awg-results-lip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--awg-text-secondary);
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.awg-results-lip:hover {
+  background: var(--awg-bg-tertiary);
+}
+
+.awg-results-lip-icon {
+  display: flex;
+  transition: transform 0.2s;
+}
+
+.awg-results-lip-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.awg-results-lip-timing {
+  font-variant-numeric: tabular-nums;
+  color: var(--awg-text-muted);
+}
+
+.awg-results-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease;
+}
+
+.awg-results-open .awg-results-body {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.awg-results-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--awg-border);
+  padding: 0 12px;
+}
+
+.awg-results-tab {
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--awg-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.awg-results-tab:hover {
+  color: var(--awg-text);
+}
+
+.awg-results-tab-active {
+  color: var(--awg-accent);
+  border-bottom-color: var(--awg-accent);
+}
+
+.awg-results-table-wrap {
+  overflow-x: auto;
+}
+
+.awg-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.awg-results-table th {
+  position: sticky;
+  top: 0;
+  background: var(--awg-bg-tertiary);
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--awg-text-secondary);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--awg-border);
+}
+
+.awg-results-table td {
+  padding: 5px 10px;
+  color: var(--awg-text);
+  border-bottom: 1px solid var(--awg-border);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.awg-results-table tbody tr:hover {
+  background: var(--awg-bg-tertiary);
+}
+
+.awg-results-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--awg-text-muted);
+  font-size: 12px;
+}
+
 /* === Touch-Friendly Targets === */
 @media (pointer: coarse) {
   .awg-btn {
