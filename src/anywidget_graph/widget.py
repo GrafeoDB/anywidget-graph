@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
 import anywidget
@@ -115,6 +116,7 @@ class Graph(anywidget.AnyWidget):
     query = traitlets.Unicode(default_value="").tag(sync=True)
     query_language = traitlets.Unicode(default_value="cypher").tag(sync=True)
     query_running = traitlets.Bool(default_value=False).tag(sync=True)
+    query_time = traitlets.Float(default_value=0.0).tag(sync=True)
     query_error = traitlets.Unicode(default_value="").tag(sync=True)
 
     # === Connection State ===
@@ -271,7 +273,9 @@ class Graph(anywidget.AnyWidget):
         try:
             self.query_running = True
             self.query_error = ""
+            start = time.perf_counter()
             nodes, edges = self._backend.execute(self.query, language=self.query_language)
+            self.query_time = (time.perf_counter() - start) * 1000
             self.nodes = nodes
             self.edges = edges
         except Exception as e:

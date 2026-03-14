@@ -103,6 +103,22 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
   model.on("change:edges", updateCount);
   toolbar.appendChild(countBadge);
 
+  // Query timing badge
+  const timingBadge = document.createElement("span");
+  timingBadge.className = "awg-count-badge awg-timing-badge";
+  function updateTiming() {
+    const ms = model.get("query_time") || 0;
+    if (ms > 0) {
+      timingBadge.textContent = ms < 1 ? "<1 ms" : `${ms.toFixed(1)} ms`;
+      timingBadge.style.display = "";
+    } else {
+      timingBadge.style.display = "none";
+    }
+  }
+  updateTiming();
+  model.on("change:query_time", updateTiming);
+  toolbar.appendChild(timingBadge);
+
   // Settings button (mutual exclusion with properties)
   if (model.get("show_settings")) {
     const settingsBtn = document.createElement("button");

@@ -9,6 +9,7 @@ import { createToolbar } from "./toolbar.js";
 import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
+import { createResultsDrawer } from "./results.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -168,6 +169,8 @@ async function executeQuery(model) {
     return;
   }
 
+  const start = performance.now();
+
   if (backend === "neo4j") {
     // Browser-side Neo4j driver
     const result = await neo4jBackend.executeQuery(
@@ -176,6 +179,7 @@ async function executeQuery(model) {
       model
     );
     if (result) {
+      model.set("query_time", performance.now() - start);
       model.set("nodes", result.nodes);
       model.set("edges", result.edges);
       model.save_changes();
@@ -189,6 +193,7 @@ async function executeQuery(model) {
       model
     );
     if (result) {
+      model.set("query_time", performance.now() - start);
       model.set("nodes", result.nodes);
       model.set("edges", result.edges);
       model.save_changes();
@@ -197,12 +202,14 @@ async function executeQuery(model) {
     // Browser-side Grafeo WASM
     const result = await grafeoEmbedBackend.executeQuery(query, language, model);
     if (result) {
+      model.set("query_time", performance.now() - start);
       model.set("nodes", result.nodes);
       model.set("edges", result.edges);
       model.save_changes();
     }
   } else {
     // Python-side backends (grafeo-embedded, ladybug, arango, cosmosdb)
+    // Timing is handled on the Python side
     model.set("_execute_query", model.get("_execute_query") + 1);
     model.save_changes();
   }
@@ -283,6 +290,11 @@ function render({ model, el }) {
   }
 
   wrapper.appendChild(content);
+
+  // Results drawer (bottom, hidden by default with lip toggle)
+  const results = createResultsDrawer(model);
+  wrapper.appendChild(results.element);
+
   el.appendChild(wrapper);
 
   // Initialize Graphology graph
@@ -326,6 +338,52 @@ function render({ model, el }) {
       case "random":
         random.assign(graph);
         break;
+      case "cluster": {
+        // Group nodes by first label, arrange clusters in a circle
+        const nodes = model.get("nodes") || [];
+        const labelGroups = new Map();
+        nodes.forEach((node) => {
+          const label = (node.labels && node.labels[0]) || node.label || "__other";
+          if (!labelGroups.has(label)) labelGroups.set(label, []);
+          labelGroups.get(label).push(node.id);
+        });
+
+        const clusterLabels = [...labelGroups.entries()].filter(([, g]) => g.length >= 2);
+        const useClusters = clusterLabels.length >= 2;
+
+        if (!useClusters) {
+          // Not enough clusters, fall back to force
+          applyLayout("force");
+          return;
+        }
+
+        // Collect all labels (clusters with 2+ nodes first, then singles)
+        const singleNodes = [...labelGroups.entries()]
+          .filter(([, g]) => g.length < 2)
+          .flatMap(([, g]) => g);
+        const allGroups = [...clusterLabels];
+        if (singleNodes.length > 0) {
+          allGroups.push(["__other", singleNodes]);
+        }
+
+        const cx = 50, cy = 50;
+        const clusterRadius = 40;
+
+        allGroups.forEach(([, nodeIds], clusterIdx) => {
+          const clusterAngle = (2 * Math.PI * clusterIdx) / allGroups.length;
+          const clusterCx = cx + clusterRadius * Math.cos(clusterAngle);
+          const clusterCy = cy + clusterRadius * Math.sin(clusterAngle);
+          const innerRadius = Math.max(5, Math.min(20, nodeIds.length * 2));
+
+          nodeIds.forEach((nodeId, nodeIdx) => {
+            if (!graph.hasNode(nodeId)) return;
+            const innerAngle = (2 * Math.PI * nodeIdx) / nodeIds.length;
+            graph.setNodeAttribute(nodeId, "x", clusterCx + innerRadius * Math.cos(innerAngle));
+            graph.setNodeAttribute(nodeId, "y", clusterCy + innerRadius * Math.sin(innerAngle));
+          });
+        });
+        break;
+      }
       case "force": {
         const n = graph.order;
         // Scale layout parameters to graph size for good spreading
@@ -469,7 +527,7 @@ function render({ model, el }) {
   const layoutSelect = document.createElement("select");
   layoutSelect.className = "awg-layout-select";
   layoutSelect.title = "Layout algorithm";
-  [["force", "Force"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
+  [["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
     const opt = document.createElement("option");
     opt.value = val;
     opt.textContent = text;
