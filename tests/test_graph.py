@@ -587,3 +587,137 @@ def test_build_neighbor_query_aql():
     q = Graph._build_neighbor_query("doc/1", "aql")
     assert "doc/1" in q
     assert "FOR" in q
+
+
+# ------------------------------------------------------------------ #
+#  Grafeo backend: language dispatch                                   #
+# ------------------------------------------------------------------ #
+
+
+def test_grafeo_backend_language_dispatch():
+    """execute() uses the language-specific method when available."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDB:
+        def execute_cypher(self, query):
+            calls.append(("cypher", query))
+            return []
+
+        def execute(self, query):
+            calls.append(("generic", query))
+            return []
+
+    backend = GrafeoBackend(FakeDB())
+    backend.execute("MATCH (n) RETURN n", language="cypher")
+    assert calls[-1] == ("cypher", "MATCH (n) RETURN n")
+
+
+def test_grafeo_backend_language_fallback():
+    """execute() falls back to generic execute for unknown languages."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDB:
+        def execute(self, query):
+            calls.append(("generic", query))
+            return []
+
+    backend = GrafeoBackend(FakeDB())
+    backend.execute("SELECT 1", language="sql")
+    assert calls[-1] == ("generic", "SELECT 1")
+
+
+# ------------------------------------------------------------------ #
+#  Grafeo backend: native dict processing                              #
+# ------------------------------------------------------------------ #
+
+
+def test_grafeo_node_detection():
+    """_is_grafeo_node detects dicts with _id and _labels."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    assert GrafeoBackend._is_grafeo_node({"_id": 1, "_labels": ["Person"]})
+    assert not GrafeoBackend._is_grafeo_node({"id": 1, "label": "Person"})
+    assert not GrafeoBackend._is_grafeo_node({"_id": 1})
+    assert not GrafeoBackend._is_grafeo_node("not a dict")
+
+
+def test_grafeo_relationship_detection():
+    """_is_grafeo_relationship detects dicts with _source, _target, _type."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    assert GrafeoBackend._is_grafeo_relationship({"_source": 1, "_target": 2, "_type": "KNOWS"})
+    assert not GrafeoBackend._is_grafeo_relationship({"source": 1, "target": 2, "label": "KNOWS"})
+    assert not GrafeoBackend._is_grafeo_relationship({"_source": 1, "_target": 2})
+
+
+def test_grafeo_node_to_dict():
+    """_grafeo_node_to_dict converts Grafeo node format to widget format."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    node = {"_id": 42, "_labels": ["Person", "Employee"], "name": "Alice", "age": 30}
+    result = GrafeoBackend._grafeo_node_to_dict(node)
+
+    assert result["id"] == "42"
+    assert result["label"] == "Person"
+    assert result["labels"] == ["Person", "Employee"]
+    assert result["name"] == "Alice"
+    assert result["age"] == 30
+    assert "_id" not in result
+    assert "_labels" not in result
+
+
+def test_grafeo_node_to_dict_name_fallback():
+    """_grafeo_node_to_dict uses name as label when no _labels."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    node = {"_id": 1, "_labels": [], "name": "Bob"}
+    result = GrafeoBackend._grafeo_node_to_dict(node)
+    assert result["label"] == "Bob"
+
+
+def test_grafeo_relationship_to_dict():
+    """_grafeo_relationship_to_dict converts Grafeo edge format to widget format."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    rel = {"_source": 1, "_target": 2, "_type": "KNOWS", "since": 2020}
+    result = GrafeoBackend._grafeo_relationship_to_dict(rel)
+
+    assert result["source"] == "1"
+    assert result["target"] == "2"
+    assert result["label"] == "KNOWS"
+    assert result["since"] == 2020
+    assert "_source" not in result
+    assert "_type" not in result
+
+
+def test_grafeo_backend_process_native_dicts():
+    """Full round-trip: backend processes Grafeo native dict results."""
+    from anywidget_graph.backends.grafeo import GrafeoBackend
+
+    class FakeDB:
+        def execute(self, query):
+            return [
+                {
+                    "n": {"_id": 1, "_labels": ["Person"], "name": "Alice"},
+                    "r": {"_source": 1, "_target": 2, "_type": "KNOWS", "since": 2020},
+                    "m": {"_id": 2, "_labels": ["Person"], "name": "Bob"},
+                },
+            ]
+
+    backend = GrafeoBackend(FakeDB())
+    nodes, edges = backend.execute("MATCH (n)-[r]->(m) RETURN n, r, m")
+
+    assert len(nodes) == 2
+    assert len(edges) == 1
+
+    node_ids = {n["id"] for n in nodes}
+    assert node_ids == {"1", "2"}
+
+    assert edges[0]["source"] == "1"
+    assert edges[0]["target"] == "2"
+    assert edges[0]["label"] == "KNOWS"
+    assert edges[0]["since"] == 2020
