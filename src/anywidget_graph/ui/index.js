@@ -690,15 +690,15 @@ function render({ model, el }) {
           }
         });
 
-        // Configure forces
-        const linkDistance = n < 30 ? 50 : n < 100 ? 40 : 30;
-        const chargeStrength = n < 30 ? -200 : n < 100 ? -150 : -80;
+        // Configure forces: generous spacing so hub-spoke rings are clear
+        const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
+        const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
 
         const simulation = d3Force.forceSimulation(d3Nodes)
-          .force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.5))
+          .force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4))
           .force("charge", d3Force.forceManyBody().strength(chargeStrength))
           .force("center", d3Force.forceCenter(0, 0))
-          .force("collide", d3Force.forceCollide().radius((d) => d.size * 1.5 + 2).strength(0.7))
+          .force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8))
           .stop();
 
         // Run simulation synchronously
