@@ -2,35 +2,35 @@
  * Styles for anywidget-graph UI components.
  */
 
-/* === CSS VARIABLES === */
+/* === CSS VARIABLES (matches marimo theme) === */
 .awg-wrapper {
   --awg-bg: #ffffff;
   --awg-bg-secondary: #f8f9fa;
-  --awg-bg-tertiary: #f3f4f6;
-  --awg-border: #e5e7eb;
-  --awg-text: #111827;
+  --awg-bg-tertiary: #f1f5f9;
+  --awg-border: #e2e8f0;
+  --awg-text: #0f172a;
   --awg-text-secondary: #6b7280;
   --awg-text-muted: #9ca3af;
-  --awg-accent: #6366f1;
-  --awg-accent-hover: #4f46e5;
-  --awg-graph-bg: #fafafa;
+  --awg-accent: #0880ea;
+  --awg-accent-hover: #0670d0;
+  --awg-graph-bg: #ffffff;
   --awg-input-bg: #ffffff;
-  --awg-input-border: #d1d5db;
+  --awg-input-border: #e2e8f0;
 }
 
 .awg-wrapper.awg-dark {
-  --awg-bg: #1a1a2e;
-  --awg-bg-secondary: #252542;
-  --awg-bg-tertiary: #3a3a5c;
-  --awg-border: #3a3a5c;
-  --awg-text: #e0e0e0;
+  --awg-bg: #181c1a;
+  --awg-bg-secondary: #252927;
+  --awg-bg-tertiary: #2f3533;
+  --awg-border: #3b403e;
+  --awg-text: #eceeed;
   --awg-text-secondary: #a0aec0;
-  --awg-text-muted: #888;
-  --awg-accent: #6366f1;
-  --awg-accent-hover: #818cf8;
-  --awg-graph-bg: #1a1a2e;
-  --awg-input-bg: #1a1a2e;
-  --awg-input-border: #3a3a5c;
+  --awg-text-muted: #9ca3af;
+  --awg-accent: #28879f;
+  --awg-accent-hover: #1d5b6a;
+  --awg-graph-bg: #181c1a;
+  --awg-input-bg: #181c1a;
+  --awg-input-border: #3b403e;
 }
 
 /* === BASE === */
@@ -513,6 +513,11 @@
 .awg-toggle-label {
   font-size: 13px;
   color: var(--awg-text);
+}
+
+/* Hide dark mode toggle when host provides theme */
+.awg-wrapper.awg-auto-theme .awg-theme-toggle {
+  display: none;
 }
 
 /* === SCHEMA PANEL (LEFT) === */

@@ -283,15 +283,45 @@ function render({ model, el }) {
   wrapper.style.height = model.get("height") + "px";
   wrapper.style.maxHeight = model.get("height") + "px";
 
-  // Apply dark mode
-  function updateTheme() {
-    wrapper.classList.toggle("awg-dark", model.get("dark_mode"));
+  // Auto-detect host theme (marimo uses Tailwind class="dark" on <html>)
+  function detectHostDark() {
+    const html = document.documentElement;
+    if (html.classList.contains("dark")) return true;
+    if (html.dataset.theme === "dark") return true;
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
+    return false;
   }
-  updateTheme();
+
+  function updateTheme() {
+    const dark = model.get("dark_mode");
+    wrapper.classList.toggle("awg-dark", dark);
+    rendererRef?.setSetting("labelColor", { color: dark ? "#e0e0e0" : "#333" });
+    rendererRef?.refresh();
+  }
+
+  // Detect if inside a themed host (marimo, etc.)
+  const hasHostTheme = !!el.getRootNode()?.host?.tagName?.startsWith("MARIMO-");
+  if (hasHostTheme) {
+    wrapper.classList.add("awg-auto-theme");
+    model.set("dark_mode", detectHostDark());
+    model.save_changes();
+    updateTheme();
+    const themeObserver = new MutationObserver(() => {
+      const dark = detectHostDark();
+      if (model.get("dark_mode") !== dark) {
+        model.set("dark_mode", dark);
+        model.save_changes();
+        updateTheme();
+      }
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+  } else {
+    updateTheme();
+  }
+
+  // Manual toggle from settings panel still works
   model.on("change:dark_mode", () => {
     updateTheme();
-    rendererRef?.setSetting("labelColor", { color: model.get("dark_mode") ? "#e0e0e0" : "#333" });
-    rendererRef?.refresh();
   });
 
   // Create query executor callback
