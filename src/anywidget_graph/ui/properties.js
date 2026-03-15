@@ -89,7 +89,7 @@ function renderNodeProperties(content, node) {
   }
 
   Object.entries(node).forEach(([key, value]) => {
-    if (["id", "labels", "label", "x", "y", "size", "color"].includes(key)) return;
+    if (["id", "labels", "label", "x", "y", "size", "color", "nodeType"].includes(key)) return;
     const item = document.createElement("div");
     item.className = "awg-property-item";
     const displayValue = typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -107,10 +107,11 @@ function renderEdgeProperties(content, edge) {
   edgeHeader.innerHTML = `${ICONS.edge} <span class="awg-properties-type">Relationship</span>`;
   content.appendChild(edgeHeader);
 
-  if (edge.label) {
+  const edgeTypeName = edge.edgeType || edge.label || edge.type;
+  if (edgeTypeName) {
     const typeItem = document.createElement("div");
     typeItem.className = "awg-property-item";
-    typeItem.innerHTML = `<span class="awg-property-key">type</span><span class="awg-property-value"><span class="awg-edge-tag">${edge.label}</span></span>`;
+    typeItem.innerHTML = `<span class="awg-property-key">type</span><span class="awg-property-value"><span class="awg-edge-tag">${edgeTypeName}</span></span>`;
     content.appendChild(typeItem);
   }
 
@@ -125,7 +126,7 @@ function renderEdgeProperties(content, edge) {
   content.appendChild(targetItem);
 
   Object.entries(edge).forEach(([key, value]) => {
-    if (["source", "target", "label", "size", "color"].includes(key)) return;
+    if (["source", "target", "label", "size", "color", "edgeType"].includes(key)) return;
     const item = document.createElement("div");
     item.className = "awg-property-item";
     const displayValue = typeof value === "object" ? JSON.stringify(value) : String(value);

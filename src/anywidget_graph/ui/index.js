@@ -57,7 +57,12 @@ function getCategoricalColor(value) {
 
 function computeNodeColor(node, colorField, colorScale, colorDomain) {
   if (node.color) return node.color;
-  if (!colorField || node[colorField] === undefined) return "#6366f1";
+  if (!colorField || node[colorField] === undefined) {
+    // Color by node type (matches filter panel swatch colors)
+    const nodeType = (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "");
+    if (nodeType) return getCategoricalColor(nodeType);
+    return "#6366f1";
+  }
   const value = node[colorField];
   if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
   return getCategoricalColor(value);
@@ -128,6 +133,8 @@ function getStylingOpts(model, nodes, edges) {
 function buildNodeAttrs(node, opts) {
   return {
     label: autoLabel(node),
+    // Store the primary type for filtering
+    nodeType: (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "Unlabeled"),
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
     size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange),
@@ -151,7 +158,12 @@ function buildEdgeAttrs(edge, opts) {
     size = opts.edgeSizeRange[0] + t * (opts.edgeSizeRange[1] - opts.edgeSizeRange[0]);
   }
 
-  return { label: edge.label || "", size, color };
+  return {
+    label: edge.label || "",
+    edgeType: edge.type || edge.label || "unknown",
+    size,
+    color,
+  };
 }
 
 /**
@@ -222,19 +234,52 @@ function render({ model, el }) {
   const wrapper = document.createElement("div");
   wrapper.className = "awg-wrapper";
   wrapper.style.width = model.get("width") + "px";
+  wrapper.style.height = model.get("height") + "px";
+  wrapper.style.maxHeight = model.get("height") + "px";
 
   // Apply dark mode
   function updateTheme() {
     wrapper.classList.toggle("awg-dark", model.get("dark_mode"));
   }
   updateTheme();
-  model.on("change:dark_mode", updateTheme);
+  model.on("change:dark_mode", () => {
+    updateTheme();
+    rendererRef?.setSetting("labelColor", { color: model.get("dark_mode") ? "#e0e0e0" : "#333" });
+    rendererRef?.refresh();
+  });
 
   // Create query executor callback
   const onExecuteQuery = () => executeQuery(model);
 
+  // Filter state (shared with node/edge reducers)
+  let hiddenNodeTypes = new Set();
+  let hiddenEdgeTypes = new Set();
+  let typeColorOverrides = new Map(); // custom colors from filter panel
+  let rendererRef = null; // set after Sigma init
+
+  function onFilterChange(nodeTypes, edgeTypes) {
+    hiddenNodeTypes = nodeTypes;
+    hiddenEdgeTypes = edgeTypes;
+    rendererRef?.refresh();
+  }
+
+  function onColorChange(colorMap) {
+    typeColorOverrides = colorMap;
+    // Update node colors in the graph
+    graph.forEachNode((id, attrs) => {
+      const override = typeColorOverrides.get(attrs.nodeType);
+      if (override) graph.setNodeAttribute(id, "color", override);
+    });
+    // Update edge colors in the graph
+    graph.forEachEdge((id, attrs) => {
+      const override = typeColorOverrides.get(attrs.edgeType);
+      if (override) graph.setEdgeAttribute(id, "color", override);
+    });
+    rendererRef?.refresh();
+  }
+
   // Create panels first (all collapsed by default)
-  const schema = createSchemaPanel(model, onExecuteQuery);
+  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange);
   const properties = createPropertiesPanel(model);
   const settings = model.get("show_settings")
     ? createSettingsPanel(model)
@@ -243,23 +288,39 @@ function render({ model, el }) {
   // Panel references for mutual exclusion
   const panels = { schema, settings, properties };
 
-  // Search state (shared with nodeReducer)
+  // Search state (shared with nodeReducer/edgeReducer)
   let searchTerm = "";
-  let searchMatches = new Set();
+  let searchDirectMatches = new Set(); // nodes that directly match the term
+  let searchVisibleNodes = new Set();  // direct matches + first-degree neighbors
+  let searchVisibleEdges = new Set();  // edges connecting direct matches to their neighbors
 
   function onSearch(term) {
     searchTerm = (term || "").toLowerCase().trim();
-    searchMatches.clear();
+    searchDirectMatches.clear();
+    searchVisibleNodes.clear();
+    searchVisibleEdges.clear();
+
     if (searchTerm) {
+      // Find nodes that directly match the search term
       graph.forEachNode((id, attrs) => {
         const label = (attrs.label || "").toLowerCase();
         const nodeId = String(id).toLowerCase();
         if (label.includes(searchTerm) || nodeId.includes(searchTerm)) {
-          searchMatches.add(id);
+          searchDirectMatches.add(id);
+          searchVisibleNodes.add(id);
         }
       });
+
+      // Add first-degree neighbors and their connecting edges
+      searchDirectMatches.forEach((nodeId) => {
+        graph.forEachEdge(nodeId, (edgeId, edgeAttrs, source, target) => {
+          searchVisibleEdges.add(edgeId);
+          searchVisibleNodes.add(source);
+          searchVisibleNodes.add(target);
+        });
+      });
     }
-    renderer.refresh();
+    rendererRef?.refresh();
   }
 
   // Create toolbar if enabled
@@ -275,10 +336,9 @@ function render({ model, el }) {
   // Schema sidebar (left)
   content.appendChild(schema.element);
 
-  // Graph container (flex: 1 fills available width)
+  // Graph container (flex: 1 fills available space)
   const container = document.createElement("div");
   container.className = "awg-graph-container";
-  container.style.height = model.get("height") + "px";
   content.appendChild(container);
 
   // Properties panel (right)
@@ -297,8 +357,8 @@ function render({ model, el }) {
 
   el.appendChild(wrapper);
 
-  // Initialize Graphology graph
-  const graph = new Graph();
+  // Initialize Graphology graph (multi: true allows parallel edges)
+  const graph = new Graph({ multi: true });
 
   // Add initial nodes and edges with property-based styling
   function rebuildGraph() {
@@ -339,7 +399,7 @@ function render({ model, el }) {
         random.assign(graph);
         break;
       case "cluster": {
-        // Group nodes by first label, arrange clusters in a circle
+        // Step 1: Group nodes by type
         const nodes = model.get("nodes") || [];
         const labelGroups = new Map();
         nodes.forEach((node) => {
@@ -349,15 +409,11 @@ function render({ model, el }) {
         });
 
         const clusterLabels = [...labelGroups.entries()].filter(([, g]) => g.length >= 2);
-        const useClusters = clusterLabels.length >= 2;
-
-        if (!useClusters) {
-          // Not enough clusters, fall back to force
+        if (clusterLabels.length < 2) {
           applyLayout("force");
           return;
         }
 
-        // Collect all labels (clusters with 2+ nodes first, then singles)
         const singleNodes = [...labelGroups.entries()]
           .filter(([, g]) => g.length < 2)
           .flatMap(([, g]) => g);
@@ -366,20 +422,125 @@ function render({ model, el }) {
           allGroups.push(["__other", singleNodes]);
         }
 
-        const cx = 50, cy = 50;
-        const clusterRadius = 40;
+        // Step 2: Mini-force per cluster (organic internal layout)
+        // Build a subgraph for each cluster, run ForceAtlas2, store relative positions
+        const clusterLayouts = new Map(); // clusterLabel -> { nodeId: {x, y} }
+        const clusterSizes = new Map();   // clusterLabel -> nodeCount
 
-        allGroups.forEach(([, nodeIds], clusterIdx) => {
-          const clusterAngle = (2 * Math.PI * clusterIdx) / allGroups.length;
-          const clusterCx = cx + clusterRadius * Math.cos(clusterAngle);
-          const clusterCy = cy + clusterRadius * Math.sin(clusterAngle);
-          const innerRadius = Math.max(5, Math.min(20, nodeIds.length * 2));
+        allGroups.forEach(([clusterLabel, nodeIds]) => {
+          clusterSizes.set(clusterLabel, nodeIds.length);
+          const nodeSet = new Set(nodeIds);
+          const subGraph = new Graph({ multi: true });
 
-          nodeIds.forEach((nodeId, nodeIdx) => {
-            if (!graph.hasNode(nodeId)) return;
-            const innerAngle = (2 * Math.PI * nodeIdx) / nodeIds.length;
-            graph.setNodeAttribute(nodeId, "x", clusterCx + innerRadius * Math.cos(innerAngle));
-            graph.setNodeAttribute(nodeId, "y", clusterCy + innerRadius * Math.sin(innerAngle));
+          // Add cluster nodes
+          nodeIds.forEach((id) => {
+            if (graph.hasNode(id)) {
+              subGraph.addNode(id, { x: Math.random() * 10, y: Math.random() * 10, size: 1 });
+            }
+          });
+
+          // Add intra-cluster edges only
+          graph.forEachEdge((edgeId, attrs, source, target) => {
+            if (nodeSet.has(source) && nodeSet.has(target) && subGraph.hasNode(source) && subGraph.hasNode(target)) {
+              subGraph.addEdge(source, target);
+            }
+          });
+
+          // Run force on subgraph
+          if (subGraph.order > 1) {
+            forceAtlas2.assign(subGraph, {
+              iterations: Math.min(100, Math.max(30, nodeIds.length * 3)),
+              settings: {
+                gravity: 1,
+                scalingRatio: 10,
+                barnesHutOptimize: nodeIds.length > 30,
+                adjustSizes: true,
+                slowDown: 1,
+              },
+            });
+          }
+
+          // Store positions (centered at origin)
+          const positions = {};
+          let sumX = 0, sumY = 0, count = 0;
+          subGraph.forEachNode((id, attrs) => {
+            sumX += attrs.x;
+            sumY += attrs.y;
+            count++;
+          });
+          const avgX = count > 0 ? sumX / count : 0;
+          const avgY = count > 0 ? sumY / count : 0;
+          subGraph.forEachNode((id, attrs) => {
+            positions[id] = { x: attrs.x - avgX, y: attrs.y - avgY };
+          });
+          clusterLayouts.set(clusterLabel, positions);
+        });
+
+        // Step 3: Force between meta-nodes (cluster centers)
+        // Count cross-edges between cluster pairs
+        const clusterIndex = new Map(); // nodeId -> clusterLabel
+        allGroups.forEach(([clusterLabel, nodeIds]) => {
+          nodeIds.forEach((id) => clusterIndex.set(id, clusterLabel));
+        });
+
+        const crossEdges = new Map(); // "A|B" -> count
+        graph.forEachEdge((edgeId, attrs, source, target) => {
+          const cA = clusterIndex.get(source);
+          const cB = clusterIndex.get(target);
+          if (cA && cB && cA !== cB) {
+            const key = [cA, cB].sort().join("|");
+            crossEdges.set(key, (crossEdges.get(key) || 0) + 1);
+          }
+        });
+
+        // Build a meta-graph of clusters
+        const metaGraph = new Graph();
+        allGroups.forEach(([clusterLabel, nodeIds]) => {
+          const radius = Math.sqrt(nodeIds.length) * 10;
+          metaGraph.addNode(clusterLabel, {
+            x: Math.random() * 100,
+            y: Math.random() * 100,
+            size: radius,
+          });
+        });
+
+        crossEdges.forEach((weight, key) => {
+          const [a, b] = key.split("|");
+          if (metaGraph.hasNode(a) && metaGraph.hasNode(b)) {
+            metaGraph.addEdge(a, b, { weight });
+          }
+        });
+
+        // Run force on meta-graph with strong repulsion to separate clusters
+        forceAtlas2.assign(metaGraph, {
+          iterations: 300,
+          settings: {
+            gravity: 0.3,
+            scalingRatio: 100,
+            adjustSizes: true,
+            barnesHutOptimize: false,
+            strongGravityMode: false,
+            slowDown: 1,
+          },
+        });
+
+        // Step 4: Compose final positions
+        // Scale cluster internal layouts by cluster radius, offset by meta-node position
+        allGroups.forEach(([clusterLabel]) => {
+          const metaPos = {
+            x: metaGraph.getNodeAttribute(clusterLabel, "x"),
+            y: metaGraph.getNodeAttribute(clusterLabel, "y"),
+          };
+          const positions = clusterLayouts.get(clusterLabel);
+          const size = clusterSizes.get(clusterLabel);
+          // Scale factor: bigger clusters spread more
+          const scale = Math.max(1.5, Math.sqrt(size) * 1.5);
+
+          Object.entries(positions).forEach(([nodeId, pos]) => {
+            if (graph.hasNode(nodeId)) {
+              graph.setNodeAttribute(nodeId, "x", metaPos.x + pos.x * scale);
+              graph.setNodeAttribute(nodeId, "y", metaPos.y + pos.y * scale);
+            }
           });
         });
         break;
@@ -417,32 +578,53 @@ function render({ model, el }) {
   // Apply initial layout
   applyLayout(model.get("layout") || "force");
 
-  // Initialize Sigma renderer
+  // Initialize Sigma renderer with LOD settings
+  const nodeCount = graph.order;
   const renderer = new Sigma(graph, container, {
     renderLabels: model.get("show_labels"),
     renderEdgeLabels: model.get("show_edge_labels"),
     defaultNodeColor: "#6366f1",
     defaultEdgeColor: "#94a3b8",
-    labelColor: { color: "#333" },
+    labelColor: { color: model.get("dark_mode") ? "#e0e0e0" : "#333" },
     labelSize: 12,
     labelWeight: "500",
+    // LOD: only show labels for nodes above this rendered-size threshold
+    labelRenderedSizeThreshold: nodeCount > 200 ? 8 : nodeCount > 50 ? 5 : 2,
+    // Limit label density to reduce clutter on large graphs
+    labelDensity: nodeCount > 200 ? 0.5 : nodeCount > 50 ? 1 : 2,
+    // Smoother edges
+    defaultEdgeType: "line",
+    // Enable edge interaction events (click, hover)
+    enableEdgeEvents: true,
   });
+  rendererRef = renderer;
 
-  // Node reducer for selection highlighting, search filtering, and pinned indicator
+  // Node reducer for type filtering, search filtering, selection, and pinned indicator
   renderer.setSetting("nodeReducer", (node, data) => {
     const selectedNodes = model.get("selected_nodes") || [];
     const pinnedNodes = model.get("pinned_nodes") || {};
     const res = { ...data };
 
-    // Dim unselected nodes when there is an active selection
-    if (selectedNodes.length > 0 && !selectedNodes.includes(node)) {
-      res.color = data.color + "40";
-      res.label = "";
+    // Hide nodes whose type is filtered out
+    if (hiddenNodeTypes.size > 0 && hiddenNodeTypes.has(data.nodeType)) {
+      res.hidden = true;
+      return res;
     }
 
-    // Dim non-matching nodes when search is active
-    if (searchTerm && !searchMatches.has(node)) {
-      res.color = data.color + "20";
+    // Hide non-visible nodes when search is active
+    if (searchTerm && !searchVisibleNodes.has(node)) {
+      res.hidden = true;
+      return res;
+    }
+
+    // Dim first-degree neighbors (not direct matches) during search
+    if (searchTerm && searchVisibleNodes.has(node) && !searchDirectMatches.has(node)) {
+      res.color = data.color + "80";
+    }
+
+    // Dim unselected nodes when there is an active selection
+    if (selectedNodes.length > 0 && !selectedNodes.includes(node)) {
+      res.color = (res.color || data.color) + "40";
       res.label = "";
     }
 
@@ -450,6 +632,35 @@ function render({ model, el }) {
     if (pinnedNodes[node]) {
       res.borderColor = "#f59e0b";
       res.borderSize = 2;
+    }
+
+    return res;
+  });
+
+  // Edge reducer for type filtering and search filtering
+  renderer.setSetting("edgeReducer", (edge, data) => {
+    const res = { ...data };
+
+    // Hide edges whose type is filtered out
+    if (hiddenEdgeTypes.size > 0 && hiddenEdgeTypes.has(data.edgeType)) {
+      res.hidden = true;
+      return res;
+    }
+
+    // Hide edges connected to hidden node types
+    if (hiddenNodeTypes.size > 0) {
+      const [source, target] = graph.extremities(edge);
+      const sourceType = graph.getNodeAttribute(source, "nodeType");
+      const targetType = graph.getNodeAttribute(target, "nodeType");
+      if (hiddenNodeTypes.has(sourceType) || hiddenNodeTypes.has(targetType)) {
+        res.hidden = true;
+        return res;
+      }
+    }
+
+    // Hide edges not in search results
+    if (searchTerm && !searchVisibleEdges.has(edge)) {
+      res.hidden = true;
     }
 
     return res;
@@ -574,11 +785,11 @@ function render({ model, el }) {
   modeGroup.appendChild(clickModeBtn);
   modeGroup.appendChild(boxModeBtn);
 
-  zoomControls.appendChild(modeGroup);
-  zoomControls.appendChild(layoutSelect);
+  zoomControls.appendChild(zoomFitBtn);
   zoomControls.appendChild(zoomInBtn);
   zoomControls.appendChild(zoomOutBtn);
-  zoomControls.appendChild(zoomFitBtn);
+  zoomControls.appendChild(layoutSelect);
+  zoomControls.appendChild(modeGroup);
   container.appendChild(zoomControls);
 
   // Selection overlay (for box select)
@@ -718,6 +929,7 @@ function render({ model, el }) {
   // ResizeObserver for responsive sizing
   const resizeObserver = new ResizeObserver(() => {
     renderer.resize();
+    renderer.refresh();
   });
   resizeObserver.observe(container);
 
@@ -810,6 +1022,12 @@ function render({ model, el }) {
   function onDataOrStyleChange() {
     rebuildGraph();
     applyLayout(model.get("layout") || "force");
+
+    // Update LOD thresholds based on new graph size
+    const n = graph.order;
+    renderer.setSetting("labelRenderedSizeThreshold", n > 200 ? 8 : n > 50 ? 5 : 2);
+    renderer.setSetting("labelDensity", n > 200 ? 0.5 : n > 50 ? 1 : 2);
+
     renderer.refresh();
     // Auto-fit camera to show all nodes after layout
     renderer.getCamera().animatedReset({ duration: 300 });
