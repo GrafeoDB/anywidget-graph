@@ -58,9 +58,8 @@ export function createSettingsPanel(model, callbacks) {
   const form = document.createElement("div");
   form.className = "awg-panel-form";
 
-  // Dark mode toggle
-  form.appendChild(
-    createFormGroup("Theme", () => {
+  // Dark mode toggle (hidden when host provides theme)
+  const themeGroup = createFormGroup("Theme", () => {
       const toggle = document.createElement("label");
       toggle.className = "awg-toggle";
       const checkbox = document.createElement("input");
@@ -82,8 +81,9 @@ export function createSettingsPanel(model, callbacks) {
       toggle.appendChild(slider);
       toggle.appendChild(label);
       return toggle;
-    })
-  );
+    });
+  themeGroup.classList.add("awg-theme-toggle");
+  form.appendChild(themeGroup);
 
   // Backend selector
   const backendSelect = document.createElement("select");
