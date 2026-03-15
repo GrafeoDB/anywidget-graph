@@ -48,6 +48,8 @@
 .awg-content {
   display: flex;
   position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 /* === TOOLBAR === */
@@ -255,12 +257,13 @@
   flex: 1;
   background: var(--awg-graph-bg);
   position: relative;
+  overflow: hidden;
 }
 
 /* === ZOOM CONTROLS === */
 .awg-zoom-controls {
   position: absolute;
-  bottom: 12px;
+  bottom: 40px;
   right: 12px;
   display: flex;
   flex-direction: column;
@@ -632,6 +635,85 @@
 .awg-schema-prop-empty:hover {
   background: transparent;
   color: var(--awg-text-muted);
+}
+
+/* === FILTER CONTROLS === */
+.awg-filter-bulk {
+  display: flex;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--awg-border);
+}
+
+.awg-filter-checkbox {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--awg-accent);
+  flex-shrink: 0;
+}
+
+.awg-filter-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.awg-filter-color-picker {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--awg-border);
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.awg-filter-color-picker::-webkit-color-swatch-wrapper {
+  padding: 1px;
+}
+
+.awg-filter-color-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.awg-filter-count {
+  font-size: 10px;
+  color: var(--awg-text-muted);
+  background: var(--awg-bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.awg-filter-hidden .awg-schema-name,
+.awg-filter-hidden .awg-filter-swatch,
+.awg-filter-hidden .awg-filter-count {
+  opacity: 0.4;
+}
+
+.awg-filter-toggle-links {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.awg-filter-toggle-links a {
+  color: var(--awg-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.awg-filter-toggle-links a:hover {
+  text-decoration: underline;
 }
 
 /* === PROPERTIES PANEL (RIGHT) === */

@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.2.8"
+version = "0.2.9"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ dev = [
     "prek>=0.3",
     "pytest>=9.0.2",
     "ruff>=0.15",
-    "ty>=0.0.20",
+    "ty>=0.0",
     "marimo>=0.20",
 ]
 networkx = ["networkx>=3.0"]
