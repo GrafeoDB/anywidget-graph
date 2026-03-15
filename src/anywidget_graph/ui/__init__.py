@@ -151,6 +151,7 @@ import Sigma from "https://esm.sh/sigma@3.0.0";
 import circular from "https://esm.sh/graphology-layout@0.6.1/circular.js";
 import random from "https://esm.sh/graphology-layout@0.6.1/random.js";
 import forceAtlas2 from "https://esm.sh/graphology-layout-forceatlas2@0.10.1";
+import * as d3Force from "https://esm.sh/d3-force@3.0.0";
 import neo4j from "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";
 
 // === Icons ===
