@@ -2,10 +2,17 @@
 
 ## 0.3.0
 
+### New Features
+
+- **Automatic dark mode**: Detects host theme (marimo `class="dark"`, `data-theme`, `prefers-color-scheme`) and syncs automatically via MutationObserver
+
 ### Improvements
 
 - Increased node spread in spring layout: stronger charge repulsion, larger link distance and collision radius for clearer hub-spoke separation
 - Spring layout renamed to "Default" in the layout dropdown
+- Updated color palette: blue accent and slate-based neutrals, replacing the previous indigo tint
+- Theme toggle auto-hidden when running inside a themed host (e.g. marimo)
+- Dark mode label colors update dynamically with theme changes
 
 ## 0.2.10
 
