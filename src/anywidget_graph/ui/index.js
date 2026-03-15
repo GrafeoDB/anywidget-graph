@@ -30,6 +30,35 @@ const CATEGORICAL_COLORS = [
 
 const DISPLAY_NAME_FIELDS = ["name", "title", "label", "display", "id"];
 
+/**
+ * Find the two positions where a circle of radius r is tangent to circles a and b.
+ */
+function tangentPositions(a, b, r) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d < 1e-6) return [];
+
+  const dA = a.r + r;
+  const dB = b.r + r;
+
+  // Solve: |P - A| = dA, |P - B| = dB
+  // Using intersection of two circles
+  const x = (dA * dA - dB * dB + d * d) / (2 * d);
+  const yy = dA * dA - x * x;
+  if (yy < 0) return [];
+  const y = Math.sqrt(yy);
+
+  // Unit vectors along and perpendicular to A->B
+  const ux = dx / d, uy = dy / d;
+  const vx = -uy, vy = ux;
+
+  return [
+    { x: a.x + ux * x + vx * y, y: a.y + uy * x + vy * y },
+    { x: a.x + ux * x - vx * y, y: a.y + uy * x - vy * y },
+  ];
+}
+
 function getColorFromScale(value, scaleName, domain) {
   const scale = COLOR_SCALES[scaleName] || COLOR_SCALES.viridis;
   const [min, max] = domain || [0, 1];
@@ -476,70 +505,93 @@ function render({ model, el }) {
           clusterLayouts.set(clusterLabel, positions);
         });
 
-        // Step 3: Force between meta-nodes (cluster centers)
-        // Count cross-edges between cluster pairs
-        const clusterIndex = new Map(); // nodeId -> clusterLabel
-        allGroups.forEach(([clusterLabel, nodeIds]) => {
-          nodeIds.forEach((id) => clusterIndex.set(id, clusterLabel));
-        });
+        // Step 3: Circle packing for cluster positioning
+        // Each cluster gets a circle with radius proportional to sqrt(nodeCount)
+        // Packed tightly without overlap using a deterministic front-chain algorithm
+        const padding = 8; // gap between clusters
+        const radiusScale = 6; // multiplier for cluster circle radius
 
-        const crossEdges = new Map(); // "A|B" -> count
-        graph.forEachEdge((edgeId, attrs, source, target) => {
-          const cA = clusterIndex.get(source);
-          const cB = clusterIndex.get(target);
-          if (cA && cB && cA !== cB) {
-            const key = [cA, cB].sort().join("|");
-            crossEdges.set(key, (crossEdges.get(key) || 0) + 1);
+        // Build circles sorted largest first (greedy packing works best this way)
+        const circles = allGroups
+          .map(([clusterLabel, nodeIds]) => ({
+            label: clusterLabel,
+            r: Math.sqrt(nodeIds.length) * radiusScale + padding,
+          }))
+          .sort((a, b) => b.r - a.r);
+
+        // Place circles using a simple spiral packing algorithm
+        // First circle at origin, second tangent to first, rest packed against existing
+        const placed = []; // { x, y, r, label }
+
+        circles.forEach((circle, i) => {
+          if (i === 0) {
+            placed.push({ x: 0, y: 0, r: circle.r, label: circle.label });
+            return;
           }
-        });
-
-        // Build a meta-graph of clusters
-        const metaGraph = new Graph();
-        allGroups.forEach(([clusterLabel, nodeIds]) => {
-          const radius = Math.sqrt(nodeIds.length) * 10;
-          metaGraph.addNode(clusterLabel, {
-            x: Math.random() * 100,
-            y: Math.random() * 100,
-            size: radius,
-          });
-        });
-
-        crossEdges.forEach((weight, key) => {
-          const [a, b] = key.split("|");
-          if (metaGraph.hasNode(a) && metaGraph.hasNode(b)) {
-            metaGraph.addEdge(a, b, { weight });
+          if (i === 1) {
+            placed.push({
+              x: placed[0].r + circle.r,
+              y: 0,
+              r: circle.r,
+              label: circle.label,
+            });
+            return;
           }
-        });
 
-        // Run force on meta-graph with strong repulsion to separate clusters
-        forceAtlas2.assign(metaGraph, {
-          iterations: 300,
-          settings: {
-            gravity: 0.3,
-            scalingRatio: 100,
-            adjustSizes: true,
-            barnesHutOptimize: false,
-            strongGravityMode: false,
-            slowDown: 1,
-          },
+          // Find the best position tangent to two already-placed circles
+          let bestX = 0, bestY = 0, bestDist = Infinity;
+
+          for (let a = 0; a < placed.length; a++) {
+            for (let b = a + 1; b < placed.length; b++) {
+              // Find positions tangent to circles a and b
+              const candidates = tangentPositions(placed[a], placed[b], circle.r);
+              for (const pos of candidates) {
+                // Check no overlap with any placed circle
+                let valid = true;
+                for (const p of placed) {
+                  const dx = pos.x - p.x;
+                  const dy = pos.y - p.y;
+                  if (Math.sqrt(dx * dx + dy * dy) < circle.r + p.r - 1) {
+                    valid = false;
+                    break;
+                  }
+                }
+                if (valid) {
+                  const dist = Math.sqrt(pos.x * pos.x + pos.y * pos.y);
+                  if (dist < bestDist) {
+                    bestDist = dist;
+                    bestX = pos.x;
+                    bestY = pos.y;
+                  }
+                }
+              }
+            }
+          }
+
+          placed.push({ x: bestX, y: bestY, r: circle.r, label: circle.label });
         });
 
         // Step 4: Compose final positions
-        // Scale cluster internal layouts by cluster radius, offset by meta-node position
-        allGroups.forEach(([clusterLabel]) => {
-          const metaPos = {
-            x: metaGraph.getNodeAttribute(clusterLabel, "x"),
-            y: metaGraph.getNodeAttribute(clusterLabel, "y"),
-          };
-          const positions = clusterLayouts.get(clusterLabel);
-          const size = clusterSizes.get(clusterLabel);
-          // Scale factor: bigger clusters spread more
-          const scale = Math.max(1.5, Math.sqrt(size) * 1.5);
+        // Place each cluster's mini-force layout at the packed circle center
+        placed.forEach(({ x: cx, y: cy, r, label }) => {
+          const positions = clusterLayouts.get(label);
+          if (!positions) return;
+          const size = clusterSizes.get(label);
+          // Scale internal layout to fit within the cluster circle
+          // Find the max extent of the internal layout
+          let maxExt = 0;
+          Object.values(positions).forEach(({ x, y }) => {
+            const ext = Math.sqrt(x * x + y * y);
+            if (ext > maxExt) maxExt = ext;
+          });
+          // Scale so nodes fill ~80% of the circle radius (minus padding)
+          const usableR = r - padding;
+          const scale = maxExt > 0 ? (usableR * 0.8) / maxExt : 1;
 
           Object.entries(positions).forEach(([nodeId, pos]) => {
             if (graph.hasNode(nodeId)) {
-              graph.setNodeAttribute(nodeId, "x", metaPos.x + pos.x * scale);
-              graph.setNodeAttribute(nodeId, "y", metaPos.y + pos.y * scale);
+              graph.setNodeAttribute(nodeId, "x", cx + pos.x * scale);
+              graph.setNodeAttribute(nodeId, "y", cy + pos.y * scale);
             }
           });
         });
