@@ -52,7 +52,7 @@ def _(Graph):
 
             # Each file has 1-5 type definitions
             n_types = random.randint(1, 5)
-            for j in range(n_types):
+            for _j in range(n_types):
                 tid = f"type_{type_id}"
                 tname = f"Class_{type_id}"
                 nodes.append({"id": tid, "labels": ["TypeDefinition"], "name": tname})
