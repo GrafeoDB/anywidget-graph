@@ -51,7 +51,7 @@ def test_default_options():
     assert graph.show_labels is True
     assert graph.show_edge_labels is False
     assert graph.dark_mode is True
-    assert graph.layout == "force"
+    assert graph.layout == "spring"
     assert graph.selection_mode == "click"
     assert graph.database_backend == "grafeo"
     assert graph.max_nodes == 300

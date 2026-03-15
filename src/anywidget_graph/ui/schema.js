@@ -62,7 +62,7 @@ function extractTypesFromData(model) {
  * @param {function} onFilterChange - callback(hiddenNodeTypes: Set, hiddenEdgeTypes: Set)
  * @param {function} onColorChange - callback(typeColorMap: Map<string, string>)
  */
-export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onColorChange) {
+export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onColorChange, onRefreshLayout) {
   const panel = document.createElement("div");
   panel.className = "awg-schema-panel";
 
@@ -85,8 +85,11 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
   const refreshBtn = document.createElement("button");
   refreshBtn.className = "awg-btn awg-btn-icon awg-btn-sm";
   refreshBtn.innerHTML = ICONS.refresh;
-  refreshBtn.title = "Refresh schema";
-  refreshBtn.addEventListener("click", () => refreshSchema(model));
+  refreshBtn.title = "Refresh layout";
+  refreshBtn.addEventListener("click", () => {
+    refreshSchema(model);
+    onRefreshLayout?.();
+  });
   headerBtns.appendChild(refreshBtn);
 
   const closeBtn = document.createElement("button");

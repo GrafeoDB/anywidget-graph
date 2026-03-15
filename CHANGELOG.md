@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.10
+
+### New Features
+
+- **Spring layout (d3-force)**: New default layout using d3-force with charge, link-distance and collision forces; produces clean hub-spoke rings for hierarchical data like Neo4j browser
+- **Degree-based node sizing**: When no explicit `size_field` is set, nodes are sized by their connection count; hub nodes appear larger and push neighbors into natural rings
+- **Filter-aware layouts**: Switching layout or clicking refresh now re-runs the layout using only visible nodes, respecting type filters and search state
+
+### Improvements
+
+- Spring layout is the new default (renamed to "Default" in the dropdown)
+- Force layout uses `linLogMode` for better community separation
+- Cluster layout filters out hidden node types before packing
+- Filter panel refresh button triggers a layout refresh
+
 ## 0.2.9
 
 ### New Features

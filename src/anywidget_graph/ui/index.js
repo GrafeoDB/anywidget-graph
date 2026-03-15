@@ -4,6 +4,7 @@
  */
 import Graph from "https://esm.sh/graphology@0.25.4";
 import Sigma from "https://esm.sh/sigma@3.0.0";
+import * as d3Force from "https://esm.sh/d3-force@3.0.0";
 
 import { createToolbar } from "./toolbar.js";
 import { createSchemaPanel } from "./schema.js";
@@ -97,12 +98,18 @@ function computeNodeColor(node, colorField, colorScale, colorDomain) {
   return getCategoricalColor(value);
 }
 
-function computeNodeSize(node, sizeField, sizeDomain, sizeRange) {
+function computeNodeSize(node, sizeField, sizeDomain, sizeRange, degree) {
   if (node.size !== undefined) return node.size;
-  if (!sizeField || node[sizeField] === undefined || !sizeDomain) return 10;
-  const [min, max] = sizeDomain;
-  const t = max > min ? (node[sizeField] - min) / (max - min) : 0.5;
-  return sizeRange[0] + t * (sizeRange[1] - sizeRange[0]);
+  if (sizeField && node[sizeField] !== undefined && sizeDomain) {
+    const [min, max] = sizeDomain;
+    const t = max > min ? (node[sizeField] - min) / (max - min) : 0.5;
+    return sizeRange[0] + t * (sizeRange[1] - sizeRange[0]);
+  }
+  // Auto-size by degree: hub nodes get bigger, leaf nodes smaller
+  if (degree !== undefined && degree > 0) {
+    return Math.max(4, Math.min(30, 4 + Math.sqrt(degree) * 3));
+  }
+  return 8;
 }
 
 function autoLabel(node) {
@@ -152,10 +159,20 @@ function getStylingOpts(model, nodes, edges) {
     if (vals.length > 0) edgeSizeDomain = [Math.min(...vals), Math.max(...vals)];
   }
 
+  // Compute degree map for auto-sizing when no sizeField is set
+  const degreeMap = new Map();
+  if (!sizeField) {
+    edges.forEach((e) => {
+      degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
+      degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
+    });
+  }
+
   return {
     colorField, colorScale, colorDomain, sizeField, sizeDomain, sizeRange,
     edgeColorField, edgeColorScale, edgeColorDomain,
     edgeSizeField, edgeSizeDomain, edgeSizeRange,
+    degreeMap,
   };
 }
 
@@ -166,7 +183,7 @@ function buildNodeAttrs(node, opts) {
     nodeType: (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "Unlabeled"),
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
-    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange),
+    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(node.id)),
     color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain),
   };
 }
@@ -308,7 +325,13 @@ function render({ model, el }) {
   }
 
   // Create panels first (all collapsed by default)
-  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange);
+  function refreshLayout() {
+    applyLayout(model.get("layout") || "spring");
+    rendererRef?.refresh();
+    rendererRef?.getCamera().animatedReset({ duration: 300 });
+  }
+
+  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, refreshLayout);
   const properties = createPropertiesPanel(model);
   const settings = model.get("show_settings")
     ? createSettingsPanel(model)
@@ -407,7 +430,7 @@ function render({ model, el }) {
 
   rebuildGraph();
 
-  // Layout application (preserves pinned node positions)
+  // Layout application (preserves pinned positions, respects filters)
   function applyLayout(layoutName) {
     if (graph.order === 0) return;
     const pinned = model.get("pinned_nodes") || {};
@@ -420,6 +443,14 @@ function render({ model, el }) {
       }
     });
 
+    // Build a set of visible nodes (respecting type filters and search)
+    const visibleNodes = new Set();
+    graph.forEachNode((id, attrs) => {
+      if (hiddenNodeTypes.size > 0 && hiddenNodeTypes.has(attrs.nodeType)) return;
+      if (searchTerm && !searchVisibleNodes.has(id)) return;
+      visibleNodes.add(id);
+    });
+
     switch (layoutName) {
       case "circular":
         circular.assign(graph);
@@ -428,10 +459,11 @@ function render({ model, el }) {
         random.assign(graph);
         break;
       case "cluster": {
-        // Step 1: Group nodes by type
+        // Step 1: Group visible nodes by type
         const nodes = model.get("nodes") || [];
         const labelGroups = new Map();
         nodes.forEach((node) => {
+          if (!visibleNodes.has(node.id)) return;
           const label = (node.labels && node.labels[0]) || node.label || "__other";
           if (!labelGroups.has(label)) labelGroups.set(label, []);
           labelGroups.get(label).push(node.id);
@@ -598,21 +630,87 @@ function render({ model, el }) {
         break;
       }
       case "force": {
-        const n = graph.order;
-        // Scale layout parameters to graph size for good spreading
-        const iterations = Math.min(300, Math.max(100, n * 3));
-        const gravity = n < 20 ? 0.3 : n < 100 ? 0.5 : 1;
-        const scalingRatio = n < 20 ? 20 : n < 100 ? 10 : 5;
-        forceAtlas2.assign(graph, {
+        // Build temp subgraph with visible nodes only
+        const tempGraph = new Graph({ multi: true });
+        graph.forEachNode((id, attrs) => {
+          if (visibleNodes.has(id)) tempGraph.addNode(id, { ...attrs });
+        });
+        graph.forEachEdge((edgeId, attrs, source, target) => {
+          if (visibleNodes.has(source) && visibleNodes.has(target)) {
+            tempGraph.addEdge(source, target, { ...attrs });
+          }
+        });
+
+        const n = tempGraph.order;
+        if (n === 0) break;
+        const iterations = Math.min(400, Math.max(100, n * 3));
+        const gravity = n < 20 ? 0.3 : n < 100 ? 0.1 : 0.05;
+        const scalingRatio = n < 20 ? 20 : n < 100 ? 15 : 10;
+        forceAtlas2.assign(tempGraph, {
           iterations,
           settings: {
             gravity,
             scalingRatio,
             barnesHutOptimize: n > 50,
             strongGravityMode: false,
+            linLogMode: true,
             adjustSizes: true,
             slowDown: 1,
           },
+        });
+
+        // Copy positions back
+        tempGraph.forEachNode((id, attrs) => {
+          if (graph.hasNode(id)) {
+            graph.setNodeAttribute(id, "x", attrs.x);
+            graph.setNodeAttribute(id, "y", attrs.y);
+          }
+        });
+        break;
+      }
+      case "spring": {
+        // d3-force spring layout: produces clean hub-spoke rings for hierarchical data
+        const n = visibleNodes.size || graph.order;
+
+        // Build node and link arrays for d3 (visible nodes only)
+        const d3Nodes = [];
+        const nodeIndexMap = new Map();
+        let idx = 0;
+        graph.forEachNode((id, attrs) => {
+          if (!visibleNodes.has(id)) return;
+          nodeIndexMap.set(id, idx);
+          d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
+          idx++;
+        });
+
+        const d3Links = [];
+        graph.forEachEdge((edgeId, attrs, source, target) => {
+          if (nodeIndexMap.has(source) && nodeIndexMap.has(target)) {
+            d3Links.push({ source: nodeIndexMap.get(source), target: nodeIndexMap.get(target) });
+          }
+        });
+
+        // Configure forces
+        const linkDistance = n < 30 ? 50 : n < 100 ? 40 : 30;
+        const chargeStrength = n < 30 ? -200 : n < 100 ? -150 : -80;
+
+        const simulation = d3Force.forceSimulation(d3Nodes)
+          .force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.5))
+          .force("charge", d3Force.forceManyBody().strength(chargeStrength))
+          .force("center", d3Force.forceCenter(0, 0))
+          .force("collide", d3Force.forceCollide().radius((d) => d.size * 1.5 + 2).strength(0.7))
+          .stop();
+
+        // Run simulation synchronously
+        const ticks = Math.min(300, Math.max(100, n * 2));
+        for (let i = 0; i < ticks; i++) simulation.tick();
+
+        // Write positions back to graphology
+        d3Nodes.forEach((d) => {
+          if (graph.hasNode(d.id)) {
+            graph.setNodeAttribute(d.id, "x", d.x);
+            graph.setNodeAttribute(d.id, "y", d.y);
+          }
         });
         break;
       }
@@ -628,7 +726,7 @@ function render({ model, el }) {
   }
 
   // Apply initial layout
-  applyLayout(model.get("layout") || "force");
+  applyLayout(model.get("layout") || "spring");
 
   // Initialize Sigma renderer with LOD settings
   const nodeCount = graph.order;
@@ -790,11 +888,11 @@ function render({ model, el }) {
   const layoutSelect = document.createElement("select");
   layoutSelect.className = "awg-layout-select";
   layoutSelect.title = "Layout algorithm";
-  [["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
+  [["spring", "Default"], ["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
     const opt = document.createElement("option");
     opt.value = val;
     opt.textContent = text;
-    if (val === (model.get("layout") || "force")) opt.selected = true;
+    if (val === (model.get("layout") || "spring")) opt.selected = true;
     layoutSelect.appendChild(opt);
   });
   layoutSelect.addEventListener("change", () => {
@@ -1073,7 +1171,7 @@ function render({ model, el }) {
   // Update graph when data or styling changes
   function onDataOrStyleChange() {
     rebuildGraph();
-    applyLayout(model.get("layout") || "force");
+    applyLayout(model.get("layout") || "spring");
 
     // Update LOD thresholds based on new graph size
     const n = graph.order;
@@ -1098,11 +1196,7 @@ function render({ model, el }) {
   model.on("change:edge_size_range", onDataOrStyleChange);
 
   // Layout change handler
-  model.on("change:layout", () => {
-    applyLayout(model.get("layout"));
-    renderer.refresh();
-    renderer.getCamera().animatedReset({ duration: 300 });
-  });
+  model.on("change:layout", refreshLayout);
 
   // === Demo Mode: auto-init WASM and populate data ===
   if (model.get("_demo_mode")) {

@@ -76,7 +76,7 @@ class Graph(anywidget.AnyWidget):
     edge_size_range = traitlets.List(default_value=[1, 8]).tag(sync=True)
 
     # === Layout ===
-    layout = traitlets.Unicode(default_value="force").tag(sync=True)
+    layout = traitlets.Unicode(default_value="spring").tag(sync=True)
 
     # === Hover / Tooltip ===
     show_tooltip = traitlets.Bool(default_value=True).tag(sync=True)
@@ -929,7 +929,7 @@ edges.forEach(edge => {{
 }});
 
 // --- Apply layout ---
-const layoutName = OPTIONS.layout || "force";
+const layoutName = OPTIONS.layout || "spring";
 if (graph.order > 0) {{
   switch (layoutName) {{
     case "circular":
