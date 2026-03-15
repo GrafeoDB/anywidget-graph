@@ -42,23 +42,27 @@ def _(Graph):
         for i in range(count):
             nid = f"{label.lower()}_{i}"
             node_ids.append(nid)
-            nodes.append({
-                "id": nid,
-                "labels": [label],
-                "name": f"{label} {i}",
-            })
+            nodes.append(
+                {
+                    "id": nid,
+                    "labels": [label],
+                    "name": f"{label} {i}",
+                }
+            )
 
     edges = []
     for _ in range(250):
         src = random.choice(node_ids)
         tgt = random.choice(node_ids)
         if src != tgt:
-            edges.append({
-                "source": src,
-                "target": tgt,
-                "label": random.choice(edge_types),
-                "type": random.choice(edge_types),
-            })
+            edges.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "label": random.choice(edge_types),
+                    "type": random.choice(edge_types),
+                }
+            )
 
     graph = Graph.from_dict(
         {"nodes": nodes, "edges": edges},

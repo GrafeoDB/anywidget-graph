@@ -154,7 +154,7 @@ wheels = [
 
 [[package]]
 name = "anywidget-graph"
-version = "0.2.8"
+version = "0.2.9"
 source = { editable = "." }
 dependencies = [
     { name = "anywidget" },
@@ -200,7 +200,7 @@ requires-dist = [
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.20" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0" },
 ]
 
 [package.metadata.requires-dev]
