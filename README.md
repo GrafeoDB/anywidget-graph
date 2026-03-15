@@ -4,6 +4,8 @@ Interactive graph visualization for Python notebooks.
 
 Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidget.dev/) runs.
 
+![anywidget-graph demo](assets/demo.png)
+
 ## Features
 
 - **Universal**: One widget, every notebook environment
