@@ -325,7 +325,13 @@ function render({ model, el }) {
   }
 
   // Create panels first (all collapsed by default)
-  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange);
+  function refreshLayout() {
+    applyLayout(model.get("layout") || "spring");
+    rendererRef?.refresh();
+    rendererRef?.getCamera().animatedReset({ duration: 300 });
+  }
+
+  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, refreshLayout);
   const properties = createPropertiesPanel(model);
   const settings = model.get("show_settings")
     ? createSettingsPanel(model)
@@ -424,7 +430,7 @@ function render({ model, el }) {
 
   rebuildGraph();
 
-  // Layout application (preserves pinned node positions)
+  // Layout application (preserves pinned positions, respects filters)
   function applyLayout(layoutName) {
     if (graph.order === 0) return;
     const pinned = model.get("pinned_nodes") || {};
@@ -437,6 +443,14 @@ function render({ model, el }) {
       }
     });
 
+    // Build a set of visible nodes (respecting type filters and search)
+    const visibleNodes = new Set();
+    graph.forEachNode((id, attrs) => {
+      if (hiddenNodeTypes.size > 0 && hiddenNodeTypes.has(attrs.nodeType)) return;
+      if (searchTerm && !searchVisibleNodes.has(id)) return;
+      visibleNodes.add(id);
+    });
+
     switch (layoutName) {
       case "circular":
         circular.assign(graph);
@@ -445,10 +459,11 @@ function render({ model, el }) {
         random.assign(graph);
         break;
       case "cluster": {
-        // Step 1: Group nodes by type
+        // Step 1: Group visible nodes by type
         const nodes = model.get("nodes") || [];
         const labelGroups = new Map();
         nodes.forEach((node) => {
+          if (!visibleNodes.has(node.id)) return;
           const label = (node.labels && node.labels[0]) || node.label || "__other";
           if (!labelGroups.has(label)) labelGroups.set(label, []);
           labelGroups.get(label).push(node.id);
@@ -615,14 +630,23 @@ function render({ model, el }) {
         break;
       }
       case "force": {
-        const n = graph.order;
-        // Scale iterations with graph size
+        // Build temp subgraph with visible nodes only
+        const tempGraph = new Graph({ multi: true });
+        graph.forEachNode((id, attrs) => {
+          if (visibleNodes.has(id)) tempGraph.addNode(id, { ...attrs });
+        });
+        graph.forEachEdge((edgeId, attrs, source, target) => {
+          if (visibleNodes.has(source) && visibleNodes.has(target)) {
+            tempGraph.addEdge(source, target, { ...attrs });
+          }
+        });
+
+        const n = tempGraph.order;
+        if (n === 0) break;
         const iterations = Math.min(400, Math.max(100, n * 3));
-        // Low gravity keeps things spread; linLogMode creates natural community separation
-        // which makes hub nodes (high-degree) radiate their neighbors in rings
         const gravity = n < 20 ? 0.3 : n < 100 ? 0.1 : 0.05;
         const scalingRatio = n < 20 ? 20 : n < 100 ? 15 : 10;
-        forceAtlas2.assign(graph, {
+        forceAtlas2.assign(tempGraph, {
           iterations,
           settings: {
             gravity,
@@ -634,17 +658,26 @@ function render({ model, el }) {
             slowDown: 1,
           },
         });
+
+        // Copy positions back
+        tempGraph.forEachNode((id, attrs) => {
+          if (graph.hasNode(id)) {
+            graph.setNodeAttribute(id, "x", attrs.x);
+            graph.setNodeAttribute(id, "y", attrs.y);
+          }
+        });
         break;
       }
       case "spring": {
         // d3-force spring layout: produces clean hub-spoke rings for hierarchical data
-        const n = graph.order;
+        const n = visibleNodes.size || graph.order;
 
-        // Build node and link arrays for d3
+        // Build node and link arrays for d3 (visible nodes only)
         const d3Nodes = [];
         const nodeIndexMap = new Map();
         let idx = 0;
         graph.forEachNode((id, attrs) => {
+          if (!visibleNodes.has(id)) return;
           nodeIndexMap.set(id, idx);
           d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
           idx++;
@@ -693,7 +726,7 @@ function render({ model, el }) {
   }
 
   // Apply initial layout
-  applyLayout(model.get("layout") || "force");
+  applyLayout(model.get("layout") || "spring");
 
   // Initialize Sigma renderer with LOD settings
   const nodeCount = graph.order;
@@ -855,11 +888,11 @@ function render({ model, el }) {
   const layoutSelect = document.createElement("select");
   layoutSelect.className = "awg-layout-select";
   layoutSelect.title = "Layout algorithm";
-  [["force", "Force"], ["spring", "Spring"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
+  [["spring", "Default"], ["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
     const opt = document.createElement("option");
     opt.value = val;
     opt.textContent = text;
-    if (val === (model.get("layout") || "force")) opt.selected = true;
+    if (val === (model.get("layout") || "spring")) opt.selected = true;
     layoutSelect.appendChild(opt);
   });
   layoutSelect.addEventListener("change", () => {
@@ -1138,7 +1171,7 @@ function render({ model, el }) {
   // Update graph when data or styling changes
   function onDataOrStyleChange() {
     rebuildGraph();
-    applyLayout(model.get("layout") || "force");
+    applyLayout(model.get("layout") || "spring");
 
     // Update LOD thresholds based on new graph size
     const n = graph.order;
@@ -1163,11 +1196,7 @@ function render({ model, el }) {
   model.on("change:edge_size_range", onDataOrStyleChange);
 
   // Layout change handler
-  model.on("change:layout", () => {
-    applyLayout(model.get("layout"));
-    renderer.refresh();
-    renderer.getCamera().animatedReset({ duration: 300 });
-  });
+  model.on("change:layout", refreshLayout);
 
   // === Demo Mode: auto-init WASM and populate data ===
   if (model.get("_demo_mode")) {
