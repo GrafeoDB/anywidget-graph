@@ -299,12 +299,12 @@ function render({ model, el }) {
   // Renderer reference (set after Sigma init, used by theme/filter callbacks)
   let rendererRef = null;
 
-  // Auto-detect host theme (Tailwind class="dark", data-theme, or prefers-color-scheme)
+  // Auto-detect host theme (Tailwind dark/dark-theme class, data-theme, or prefers-color-scheme)
   function detectHostDark() {
     const html = document.documentElement;
-    if (html.classList.contains("dark")) return true;
+    if (html.classList.contains("dark") || html.classList.contains("dark-theme")) return true;
     if (html.dataset.theme === "dark") return true;
-    if (document.body?.classList.contains("dark")) return true;
+    if (document.body?.classList.contains("dark") || document.body?.classList.contains("dark-theme")) return true;
     if (document.body?.dataset.theme === "dark") return true;
     if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
     return false;
