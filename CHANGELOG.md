@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1 2026-03-16
+
+### New Features
+
+- **Lasso selection**: Freeform lasso tool for selecting nodes by drawing around them
+
+### Bug Fixes
+
+- Fixed missing ICONS import causing zoom and lasso buttons to fail
+- Fixed `lassoSvg` referenced before declaration, crashing widget on load
+
 ## 0.3.0
 
 ### New Features

@@ -515,10 +515,7 @@
   color: var(--awg-text);
 }
 
-/* Hide dark mode toggle when host provides theme */
-.awg-wrapper.awg-auto-theme .awg-theme-toggle {
-  display: none;
-}
+/* Dark mode toggle always visible — manual toggle disables auto-theme */
 
 /* === SCHEMA PANEL (LEFT) === */
 .awg-schema-panel {
