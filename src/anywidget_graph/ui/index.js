@@ -6,6 +6,7 @@ import Graph from "https://esm.sh/graphology@0.25.4";
 import Sigma from "https://esm.sh/sigma@3.0.0";
 import * as d3Force from "https://esm.sh/d3-force@3.0.0";
 
+import { ICONS } from "./icons.js";
 import { createToolbar } from "./toolbar.js";
 import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
@@ -298,11 +299,13 @@ function render({ model, el }) {
   // Renderer reference (set after Sigma init, used by theme/filter callbacks)
   let rendererRef = null;
 
-  // Auto-detect host theme (marimo uses Tailwind class="dark" on <html>)
+  // Auto-detect host theme (Tailwind class="dark", data-theme, or prefers-color-scheme)
   function detectHostDark() {
     const html = document.documentElement;
     if (html.classList.contains("dark")) return true;
     if (html.dataset.theme === "dark") return true;
+    if (document.body?.classList.contains("dark")) return true;
+    if (document.body?.dataset.theme === "dark") return true;
     if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
     return false;
   }
@@ -314,14 +317,28 @@ function render({ model, el }) {
     rendererRef?.refresh();
   }
 
-  // Detect if inside a themed host (marimo, etc.)
-  const hasHostTheme = !!el.getRootNode()?.host?.tagName?.startsWith("MARIMO-");
-  if (hasHostTheme) {
-    wrapper.classList.add("awg-auto-theme");
-    model.set("dark_mode", detectHostDark());
-    model.save_changes();
-    updateTheme();
-    const themeObserver = new MutationObserver(() => {
+  // Always auto-detect and observe theme changes
+  let autoTheme = true;
+  model.set("dark_mode", detectHostDark());
+  model.save_changes();
+  updateTheme();
+
+  const themeObserver = new MutationObserver(() => {
+    if (!autoTheme) return;
+    const dark = detectHostDark();
+    if (model.get("dark_mode") !== dark) {
+      model.set("dark_mode", dark);
+      model.save_changes();
+      updateTheme();
+    }
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+  if (document.body) {
+    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+  }
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (!autoTheme) return;
       const dark = detectHostDark();
       if (model.get("dark_mode") !== dark) {
         model.set("dark_mode", dark);
@@ -329,13 +346,11 @@ function render({ model, el }) {
         updateTheme();
       }
     });
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
-  } else {
-    updateTheme();
   }
 
-  // Manual toggle from settings panel still works
+  // Manual toggle from settings panel disables auto-theme
   model.on("change:dark_mode", () => {
+    autoTheme = false;
     updateTheme();
   });
 
@@ -1008,16 +1023,6 @@ function render({ model, el }) {
   selectionRect.className = "awg-selection-rect";
   container.appendChild(selectionRect);
 
-  function updateSelectionMode() {
-    const mode = model.get("selection_mode");
-    const active = mode === "box" || mode === "lasso";
-    selectionOverlay.style.pointerEvents = active ? "auto" : "none";
-    selectionOverlay.style.cursor = active ? "crosshair" : "default";
-    lassoSvg.style.display = "none";
-  }
-  updateSelectionMode();
-  model.on("change:selection_mode", updateSelectionMode);
-
   // Lasso SVG overlay for drawing the freeform path
   const lassoSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   lassoSvg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;z-index:16;display:none;pointer-events:none;";
@@ -1029,6 +1034,16 @@ function render({ model, el }) {
   lassoPathEl.setAttribute("stroke-width", "2");
   lassoPathEl.setAttribute("stroke-dasharray", "4 2");
   lassoSvg.appendChild(lassoPathEl);
+
+  function updateSelectionMode() {
+    const mode = model.get("selection_mode");
+    const active = mode === "box" || mode === "lasso";
+    selectionOverlay.style.pointerEvents = active ? "auto" : "none";
+    selectionOverlay.style.cursor = active ? "crosshair" : "default";
+    lassoSvg.style.display = "none";
+  }
+  updateSelectionMode();
+  model.on("change:selection_mode", updateSelectionMode);
 
   let boxStart = null;
   let isLassoing = false;
