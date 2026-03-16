@@ -295,6 +295,9 @@ function render({ model, el }) {
   wrapper.style.height = model.get("height") + "px";
   wrapper.style.maxHeight = model.get("height") + "px";
 
+  // Renderer reference (set after Sigma init, used by theme/filter callbacks)
+  let rendererRef = null;
+
   // Auto-detect host theme (marimo uses Tailwind class="dark" on <html>)
   function detectHostDark() {
     const html = document.documentElement;
@@ -343,7 +346,6 @@ function render({ model, el }) {
   let hiddenNodeTypes = new Set();
   let hiddenEdgeTypes = new Set();
   let typeColorOverrides = new Map(); // custom colors from filter panel
-  let rendererRef = null; // set after Sigma init
 
   function onFilterChange(nodeTypes, edgeTypes) {
     hiddenNodeTypes = nodeTypes;
