@@ -85,6 +85,18 @@ function getCategoricalColor(value) {
   return CATEGORICAL_COLORS[Math.abs(hash) % CATEGORICAL_COLORS.length];
 }
 
+function pointInPolygon(x, y, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 function computeNodeColor(node, colorField, colorScale, colorDomain) {
   if (node.color) return node.color;
   if (!colorField || node[colorField] === undefined) {
@@ -855,7 +867,8 @@ function render({ model, el }) {
   let justDragged = false;
 
   renderer.on("downNode", ({ node }) => {
-    if (model.get("selection_mode") === "box") return;
+    const selMode = model.get("selection_mode");
+    if (selMode === "box" || selMode === "lasso") return;
     draggedNode = node;
     isDragging = false;
     renderer.getCamera().disable();
@@ -945,10 +958,16 @@ function render({ model, el }) {
   boxModeBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="4 2"/></svg>`;
   boxModeBtn.title = "Box select";
 
+  const lassoModeBtn = document.createElement("button");
+  lassoModeBtn.className = "awg-zoom-btn awg-mode-btn";
+  lassoModeBtn.innerHTML = ICONS.lasso;
+  lassoModeBtn.title = "Lasso select";
+
   function updateModeButtons() {
     const mode = model.get("selection_mode");
-    clickModeBtn.classList.toggle("awg-mode-active", mode !== "box");
+    clickModeBtn.classList.toggle("awg-mode-active", mode === "click");
     boxModeBtn.classList.toggle("awg-mode-active", mode === "box");
+    lassoModeBtn.classList.toggle("awg-mode-active", mode === "lasso");
   }
   updateModeButtons();
 
@@ -960,10 +979,15 @@ function render({ model, el }) {
     model.set("selection_mode", "box");
     model.save_changes();
   });
+  lassoModeBtn.addEventListener("click", () => {
+    model.set("selection_mode", "lasso");
+    model.save_changes();
+  });
   model.on("change:selection_mode", updateModeButtons);
 
   modeGroup.appendChild(clickModeBtn);
   modeGroup.appendChild(boxModeBtn);
+  modeGroup.appendChild(lassoModeBtn);
 
   zoomControls.appendChild(zoomFitBtn);
   zoomControls.appendChild(zoomInBtn);
@@ -984,62 +1008,114 @@ function render({ model, el }) {
 
   function updateSelectionMode() {
     const mode = model.get("selection_mode");
-    selectionOverlay.style.pointerEvents = mode === "box" ? "auto" : "none";
-    selectionOverlay.style.cursor = mode === "box" ? "crosshair" : "default";
+    const active = mode === "box" || mode === "lasso";
+    selectionOverlay.style.pointerEvents = active ? "auto" : "none";
+    selectionOverlay.style.cursor = active ? "crosshair" : "default";
+    lassoSvg.style.display = "none";
   }
   updateSelectionMode();
   model.on("change:selection_mode", updateSelectionMode);
 
+  // Lasso SVG overlay for drawing the freeform path
+  const lassoSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  lassoSvg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;z-index:16;display:none;pointer-events:none;";
+  container.appendChild(lassoSvg);
+
+  const lassoPathEl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  lassoPathEl.setAttribute("fill", "rgba(99, 102, 241, 0.1)");
+  lassoPathEl.setAttribute("stroke", "#6366f1");
+  lassoPathEl.setAttribute("stroke-width", "2");
+  lassoPathEl.setAttribute("stroke-dasharray", "4 2");
+  lassoSvg.appendChild(lassoPathEl);
+
   let boxStart = null;
+  let isLassoing = false;
+  let lassoCoords = [];
 
   selectionOverlay.addEventListener("mousedown", (e) => {
-    if (model.get("selection_mode") !== "box") return;
+    const mode = model.get("selection_mode");
     const rect = container.getBoundingClientRect();
-    boxStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    selectionRect.style.display = "block";
-    selectionRect.style.left = boxStart.x + "px";
-    selectionRect.style.top = boxStart.y + "px";
-    selectionRect.style.width = "0px";
-    selectionRect.style.height = "0px";
+
+    if (mode === "box") {
+      boxStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      selectionRect.style.display = "block";
+      selectionRect.style.left = boxStart.x + "px";
+      selectionRect.style.top = boxStart.y + "px";
+      selectionRect.style.width = "0px";
+      selectionRect.style.height = "0px";
+    } else if (mode === "lasso") {
+      e.preventDefault();
+      isLassoing = true;
+      lassoCoords = [[e.clientX - rect.left, e.clientY - rect.top]];
+      lassoSvg.style.display = "block";
+      lassoPathEl.setAttribute("points", "");
+    }
   });
 
   selectionOverlay.addEventListener("mousemove", (e) => {
-    if (!boxStart) return;
     const rect = container.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const x = Math.min(boxStart.x, cx);
-    const y = Math.min(boxStart.y, cy);
-    const w = Math.abs(cx - boxStart.x);
-    const h = Math.abs(cy - boxStart.y);
-    selectionRect.style.left = x + "px";
-    selectionRect.style.top = y + "px";
-    selectionRect.style.width = w + "px";
-    selectionRect.style.height = h + "px";
+
+    if (boxStart) {
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const x = Math.min(boxStart.x, cx);
+      const y = Math.min(boxStart.y, cy);
+      const w = Math.abs(cx - boxStart.x);
+      const h = Math.abs(cy - boxStart.y);
+      selectionRect.style.left = x + "px";
+      selectionRect.style.top = y + "px";
+      selectionRect.style.width = w + "px";
+      selectionRect.style.height = h + "px";
+    } else if (isLassoing) {
+      lassoCoords.push([e.clientX - rect.left, e.clientY - rect.top]);
+      lassoPathEl.setAttribute("points", lassoCoords.map(([x, y]) => `${x},${y}`).join(" "));
+    }
   });
 
   selectionOverlay.addEventListener("mouseup", (e) => {
-    if (!boxStart) return;
     const rect = container.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const x1 = Math.min(boxStart.x, cx);
-    const y1 = Math.min(boxStart.y, cy);
-    const x2 = Math.max(boxStart.x, cx);
-    const y2 = Math.max(boxStart.y, cy);
-    boxStart = null;
-    selectionRect.style.display = "none";
 
-    // Find nodes inside the box
-    const selected = [];
-    graph.forEachNode((id, attrs) => {
-      const pos = renderer.graphToViewport({ x: attrs.x, y: attrs.y });
-      if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
-        selected.push(id);
-      }
-    });
-    model.set("selected_nodes", selected);
-    model.save_changes();
+    if (boxStart) {
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const x1 = Math.min(boxStart.x, cx);
+      const y1 = Math.min(boxStart.y, cy);
+      const x2 = Math.max(boxStart.x, cx);
+      const y2 = Math.max(boxStart.y, cy);
+      boxStart = null;
+      selectionRect.style.display = "none";
+
+      // Find nodes inside the box
+      const selected = [];
+      graph.forEachNode((id, attrs) => {
+        const pos = renderer.graphToViewport({ x: attrs.x, y: attrs.y });
+        if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
+          selected.push(id);
+        }
+      });
+      model.set("selected_nodes", selected);
+      model.save_changes();
+    } else if (isLassoing) {
+      isLassoing = false;
+      lassoSvg.style.display = "none";
+
+      if (lassoCoords.length < 3) { lassoCoords = []; return; }
+
+      // Close the polygon
+      lassoCoords.push(lassoCoords[0]);
+
+      // Find nodes inside the lasso
+      const selected = [];
+      graph.forEachNode((id, attrs) => {
+        const pos = renderer.graphToViewport({ x: attrs.x, y: attrs.y });
+        if (pointInPolygon(pos.x, pos.y, lassoCoords)) {
+          selected.push(id);
+        }
+      });
+      model.set("selected_nodes", selected);
+      model.save_changes();
+      lassoCoords = [];
+    }
   });
 
   // Tooltip element
