@@ -1,0 +1,47 @@
+name: Grafeo latest
+
+# Runs the suite against the newest grafeo on PyPI (pre-releases included),
+# so engine changes show up before users hit them. The lockfile pins the
+# version used by regular CI; this job deliberately ignores it.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Upgrade grafeo to the newest release (pre-releases included)
+        run: uv pip install --upgrade --prerelease allow grafeo
+
+      - name: Show engine
+        run: uv run --no-sync python -c "import grafeo; print(grafeo.__version__, grafeo.build_info())"
+
+      # --no-sync keeps the upgraded grafeo instead of restoring the locked one
+      - name: Run tests
+        run: uv run --no-sync pytest -v

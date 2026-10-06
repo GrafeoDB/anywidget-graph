@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Improvements
+
+- **Grafeo 0.5.44**: the `grafeo` extra now requires `grafeo>=0.5.44,<0.7`, ready for the 0.6.0 release
+- **Browser engine 0.5.44**: WASM mode loads `@grafeo-db/wasm@0.5.44` (was 0.5.0) from jsDelivr; the version is set in one place (`GRAFEO_WASM_VERSION` in `ui/grafeo-embed.js`)
+- **Paths and lists render**: results with `RETURN p`, `collect(n)`, variable-length relationships or `nodes(p)` / `relationships(p)` now show their nodes and edges in all three Grafeo modes; nodes that are only referenced by a path or an edge are looked up
+- **Shared Grafeo result conversion** for the server and WASM modes (`ui/grafeo-result.js`)
+- Schema panel shows counts in Grafeo server and WASM modes
+- Grafeo server errors show the server's `detail` message instead of raw JSON
+- Unknown query languages in embedded mode (for example AQL) report Grafeo's error instead of a GQL syntax error
+- The ESM bundler renames every backend function automatically and no longer touches method calls with the same name
+- Weekly CI job runs the suite against the newest grafeo on PyPI, pre-releases included; the CI Python matrix now really runs 3.13 and 3.14
+
+### Bug Fixes
+
+- Fixed WASM mode: `@grafeo-db/wasm` is built for bundlers since 0.5.x and has no init function, so the esm.sh import failed; the binary is now instantiated directly (0.5.0 also panicked on every query in the browser)
+- Fixed Grafeo server and WASM results rendering nothing: nodes and edges were matched on `labels` / `type` / `start` instead of Grafeo's `_labels` / `_type` / `_source` / `_target`
+- Fixed Grafeo server schema request (`/databases/{name}/schema` does not exist, now `GET /db/{name}/schema`)
+- Fixed Grafeo schema parsing in WASM mode and in `GrafeoBackend.fetch_schema()` (labels are `{name, count}` objects)
+- Fixed a node property called `id` (or an edge property called `source` / `target`) replacing the engine identity, which left edges pointing at missing nodes and blanked the widget (the demo data has such properties)
+- Fixed duplicate edges from undirected matches in embedded mode
+- Fixed neighbor expansion on Grafeo: integer ids were compared as strings (`id(n) = "42"`) and never matched; node ids are now escaped in generated queries, and SPARQL / GraphQL sessions expand with Cypher
+- Fixed the widget going blank when an edge's endpoint is missing or a node id repeats (Graphology throws), for example when new results replace the demo data
+- Demo mode loads its statements one at a time and refreshes the schema panel afterwards
+
 ## 0.3.1 2026-03-16
 
 ### New Features

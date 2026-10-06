@@ -239,10 +239,35 @@ graph = Graph(
 
 ### Grafeo (default)
 
+Grafeo runs in one of three modes, picked with `grafeo_connection_mode` or in the settings panel.
+
+**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.5.44,<0.7`).
+
 ```python
 import grafeo
 db = grafeo.GrafeoDB()
-graph = Graph(database_backend="grafeo", grafeo_db=db)
+graph = Graph(database_backend="grafeo", grafeo_db=db, query_language="gql")
+```
+
+**Server**: the browser talks to [grafeo-server](https://github.com/GrafeoDB/grafeo-server) over HTTP (`POST /query`, `GET /db/{name}/schema`). The server must allow the notebook's origin, for example `grafeo-server --cors-origins http://localhost:8888`.
+
+```python
+graph = Graph(database_backend="grafeo", grafeo_connection_mode="server", grafeo_server_url="http://localhost:7474")
+```
+
+**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.5.44) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
+
+```python
+graph = Graph(database_backend="grafeo", grafeo_connection_mode="wasm", query_language="gql")
+```
+
+Query languages: GQL, Cypher, Gremlin, GraphQL and SPARQL. Nodes and edges are taken from every result column, including lists (`collect(n)`, variable-length relationships, `nodes(p)`) and paths (`RETURN p`); scalar columns are ignored. Run one statement per query: Grafeo rejects several `;`-separated statements in one call.
+
+Try it without any setup:
+
+```python
+from anywidget_graph.demo import demo_graph
+demo_graph()  # WASM mode with a small movie graph loaded
 ```
 
 ### Neo4j (browser-side)
