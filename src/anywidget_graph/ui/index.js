@@ -479,10 +479,14 @@ function render({ model, el }) {
     const opts = getStylingOpts(model, nodes, edges);
 
     nodes.forEach((node) => {
+      // Graphology throws on duplicate keys and on edges to unknown nodes,
+      // which would leave the widget blank; skip such entries instead.
+      if (graph.hasNode(node.id)) return;
       graph.addNode(node.id, buildNodeAttrs(node, opts));
     });
 
     edges.forEach((edge) => {
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
       graph.addEdge(edge.source, edge.target, buildEdgeAttrs(edge, opts));
     });
   }
@@ -1326,18 +1330,8 @@ function render({ model, el }) {
     (async () => {
       try {
         const demoDataStr = model.get("_demo_data");
-        if (demoDataStr) {
-          await grafeoEmbedBackend.connect(model);
-          const statements = JSON.parse(demoDataStr);
-          for (const stmt of statements) {
-            if (stmt.trim()) {
-              try {
-                await grafeoEmbedBackend.executeQuery(stmt.trim(), "gql", model);
-              } catch (_) {
-                // Some statements may fail if data already exists
-              }
-            }
-          }
+        if (demoDataStr && (await grafeoEmbedBackend.connect(model))) {
+          await grafeoEmbedBackend.loadStatements(JSON.parse(demoDataStr), model);
         }
       } catch (err) {
         console.warn("Demo WASM init:", err.message);

@@ -300,8 +300,8 @@ class Graph(anywidget.AnyWidget):
         try:
             self.query_running = True
             self.query_error = ""
-            lang = self.query_language or "cypher"
-            query = self._build_neighbor_query(node_id, lang)
+            lang = self.query_language if self.query_language in self._NEIGHBOR_QUERY_LANGUAGES else "cypher"
+            query = self._build_neighbor_query(node_id, lang, integer_ids=isinstance(self._backend, GrafeoBackend))
             new_nodes, new_edges = self._backend.execute(query, language=lang)
             self._merge_graph(new_nodes, new_edges)
         except Exception as e:
@@ -309,17 +309,39 @@ class Graph(anywidget.AnyWidget):
         finally:
             self.query_running = False
 
+    # Languages with a native neighbor query; expansion uses Cypher for the others
+    _NEIGHBOR_QUERY_LANGUAGES = frozenset({"cypher", "gql", "gremlin", "aql"})
+
     @staticmethod
-    def _build_neighbor_query(node_id: str, language: str) -> str:
-        """Build a neighbor query for the given language."""
-        if language in ("cypher", "gql"):
-            return f'MATCH (n)-[r]-(m) WHERE id(n) = "{node_id}" RETURN n, r, m'
+    def _string_literal(value: str, quote: str) -> str:
+        """Quote a string for a query, escaping backslashes and the quote character."""
+        escaped = value.replace("\\", "\\\\").replace(quote, "\\" + quote)
+        return f"{quote}{escaped}{quote}"
+
+    @classmethod
+    def _build_neighbor_query(cls, node_id: str, language: str, *, integer_ids: bool = False) -> str:
+        """Build a neighbor query for the given language.
+
+        With ``integer_ids`` (Grafeo), a numeric node id is written as an
+        integer literal: Grafeo ids are integers, so ``id(n) = "42"`` and
+        ``g.V('42')`` never match.
+        """
+
+        def literal(quote: str) -> str:
+            if integer_ids and node_id.isascii() and node_id.isdigit():
+                return node_id
+            return cls._string_literal(node_id, quote)
+
         if language == "gremlin":
-            return f"g.V('{node_id}').bothE().as('e').otherV().as('v').select('e','v')"
+            vertex = literal("'")
+            return f"g.V({vertex}).bothE().as('e').otherV().as('v').select('e','v')"
         if language == "aql":
-            return f'FOR v, e IN 1..1 ANY "{node_id}" GRAPH "default" RETURN {{v: v, e: e}}'
-        # Fallback to Cypher-style
-        return f'MATCH (n)-[r]-(m) WHERE id(n) = "{node_id}" RETURN n, r, m'
+            # ArangoDB document ids ("collection/key") are always strings
+            start = cls._string_literal(node_id, '"')
+            return f'FOR v, e IN 1..1 ANY {start} GRAPH "default" RETURN {{v: v, e: e}}'
+        # Cypher and GQL (also the fallback)
+        node = literal('"')
+        return f"MATCH (n)-[r]-(m) WHERE id(n) = {node} RETURN n, r, m"
 
     def _merge_graph(self, new_nodes: list[dict], new_edges: list[dict]) -> None:
         """Merge new nodes and edges into the existing graph, deduplicating."""

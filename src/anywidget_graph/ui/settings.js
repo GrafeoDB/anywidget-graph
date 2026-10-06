@@ -372,7 +372,7 @@ export function createSettingsPanel(model, callbacks) {
         connectBtn.disabled = true;
         statusIndicator.innerHTML =
           '<span class="awg-status-dot-inline awg-status-connecting"></span> Loading WASM';
-        wasmStatus.textContent = "Downloading @grafeo-db/web from CDN...";
+        wasmStatus.textContent = "Downloading the Grafeo WASM engine from CDN...";
       } else {
         connectBtn.textContent = "Initialize WASM";
         connectBtn.disabled = false;

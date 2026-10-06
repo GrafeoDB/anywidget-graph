@@ -1,10 +1,54 @@
 /**
  * Grafeo WASM browser-side client (embed mode).
- * Lazy-loads @grafeo-db/wasm from esm.sh on first use.
+ * Lazy-loads @grafeo-db/wasm from the jsDelivr CDN on first use.
  */
+import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
+
+// The only place the browser engine version is set. Keep it exact and in
+// lockstep with the `grafeo` Python extra in pyproject.toml.
+export const GRAFEO_WASM_VERSION = "0.5.44";
+export const GRAFEO_WASM_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}`;
 
 let wasmDb = null;
-let wasmInitialized = false;
+let wasmBindingsPromise = null;
+
+/**
+ * Load the wasm-bindgen bindings once per page.
+ *
+ * @grafeo-db/wasm is built with `wasm-pack --target bundler`: it has no init
+ * function and its entry point imports the .wasm file as an ES module, which
+ * browsers cannot do without a bundler (esm.sh does not instantiate it
+ * either). So the JS glue is imported directly and the binary is
+ * instantiated here, the way wasm-bindgen's bundler entry point does it.
+ */
+function loadWasmBindings() {
+  if (!wasmBindingsPromise) {
+    wasmBindingsPromise = (async () => {
+      const bindings = await import(`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`);
+      const wasmUrl = `${GRAFEO_WASM_CDN}/grafeo_wasm_bg.wasm`;
+      let module;
+      try {
+        module = await WebAssembly.compileStreaming(fetch(wasmUrl));
+      } catch (_) {
+        // Fallback for servers or proxies that do not send application/wasm
+        const resp = await fetch(wasmUrl);
+        if (!resp.ok) throw new Error("Failed to download " + wasmUrl + ": " + resp.status);
+        module = await WebAssembly.compile(await resp.arrayBuffer());
+      }
+      // Every import of the binary is provided by the glue module ("./grafeo_wasm_bg.js")
+      const imports = {};
+      for (const { module: name } of WebAssembly.Module.imports(module)) imports[name] = bindings;
+      const instance = await WebAssembly.instantiate(module, imports);
+      bindings.__wbg_set_wasm(instance.exports);
+      if (typeof instance.exports.__wbindgen_start === "function") instance.exports.__wbindgen_start();
+      return bindings;
+    })().catch((err) => {
+      wasmBindingsPromise = null; // allow a retry after a network error
+      throw err;
+    });
+  }
+  return wasmBindingsPromise;
+}
 
 /**
  * Initialize Grafeo WASM database in the browser.
@@ -14,14 +58,9 @@ export async function connect(model) {
   model.save_changes();
 
   try {
-    if (!wasmInitialized) {
-      const mod = await import("https://esm.sh/@grafeo-db/wasm@0.5.0");
-      await mod.default();
-      wasmInitialized = true;
-      wasmDb = new mod.Database();
-    } else if (!wasmDb) {
-      const mod = await import("https://esm.sh/@grafeo-db/wasm@0.5.0");
-      wasmDb = new mod.Database();
+    if (!wasmDb) {
+      const bindings = await loadWasmBindings();
+      wasmDb = new bindings.Database();
     }
 
     model.set("connection_status", "connected");
@@ -44,6 +83,7 @@ export async function connect(model) {
 export async function disconnect(model) {
   if (wasmDb) {
     try {
+      wasmDb.close();
       wasmDb.free();
     } catch (_) {
       // ignore close errors
@@ -62,6 +102,16 @@ export function isConnected() {
 }
 
 /**
+ * Run one statement and return its rows (array of column-keyed objects).
+ */
+export function runStatement(db, query, language) {
+  if (language && language !== "gql") {
+    return db.executeWithLanguage(query, language);
+  }
+  return db.execute(query);
+}
+
+/**
  * Execute a query against the WASM database.
  */
 export async function executeQuery(query, language, model) {
@@ -76,15 +126,12 @@ export async function executeQuery(query, language, model) {
   model.save_changes();
 
   try {
-    let result;
-    if (language && language !== "gql") {
-      result = wasmDb.executeWithLanguage(query, language);
-    } else {
-      result = wasmDb.execute(query);
-    }
+    const db = wasmDb;
+    const rows = runStatement(db, query, language);
+    const result = await grafeoRowsToGraph(rows, (lookup) => db.execute(lookup));
     model.set("query_running", false);
     model.save_changes();
-    return processResult(result);
+    return result;
   } catch (error) {
     model.set("query_running", false);
     model.set("query_error", "Query error: " + error.message);
@@ -94,93 +141,40 @@ export async function executeQuery(query, language, model) {
 }
 
 /**
+ * Run data-loading statements one at a time (the engine rejects several
+ * `;`-separated statements in one call), then refresh the schema panel.
+ * Returns the number of statements that failed.
+ */
+export async function loadStatements(statements, model) {
+  if (!wasmDb) return statements.length;
+
+  let failed = 0;
+  for (const stmt of statements) {
+    const text = stmt.trim().replace(/;$/, "");
+    if (!text) continue;
+    try {
+      runStatement(wasmDb, text, "gql");
+    } catch (err) {
+      failed += 1;
+      console.warn("Grafeo WASM statement failed:", text, err);
+    }
+  }
+  await fetchSchema(model);
+  return failed;
+}
+
+/**
  * Fetch schema from the WASM database.
  */
 export async function fetchSchema(model) {
   if (!wasmDb) return;
 
   try {
-    const schema = wasmDb.schema();
-    const nodeTypes = [];
-    const edgeTypes = [];
-
-    if (schema && schema.lpg) {
-      (schema.lpg.labels || []).forEach((l) => {
-        nodeTypes.push({
-          label: typeof l === "string" ? l : l.name || String(l),
-          properties: l.properties || [],
-        });
-      });
-
-      (schema.lpg.edgeTypes || []).forEach((r) => {
-        edgeTypes.push({
-          type: typeof r === "string" ? r : r.name || String(r),
-          properties: r.properties || [],
-        });
-      });
-    }
-
+    const { nodeTypes, edgeTypes } = grafeoSchemaToTypes(wasmDb.schema());
     model.set("schema_node_types", nodeTypes);
     model.set("schema_edge_types", edgeTypes);
     model.save_changes();
   } catch (err) {
     // Schema fetch is non-critical
-  }
-}
-
-/**
- * Process WASM execute() result into {nodes, edges}.
- * execute() returns Array<Record<string, unknown>>.
- */
-function processResult(result) {
-  const nodes = new Map();
-  const edges = [];
-
-  if (!Array.isArray(result)) return { nodes: [], edges: [] };
-
-  for (const row of result) {
-    for (const val of Object.values(row)) {
-      if (val && typeof val === "object") {
-        processValue(val, nodes, edges);
-      }
-    }
-  }
-
-  return { nodes: Array.from(nodes.values()), edges };
-}
-
-/**
- * Process a single value from query results.
- */
-function processValue(val, nodes, edges) {
-  if (Array.isArray(val)) {
-    val.forEach((v) => {
-      if (v && typeof v === "object") processValue(v, nodes, edges);
-    });
-    return;
-  }
-
-  if (val.labels && val.id !== undefined) {
-    const id = String(val.id);
-    if (!nodes.has(id)) {
-      const props = val.properties || {};
-      nodes.set(id, {
-        id,
-        label: props.name || props.title || val.labels[0] || id,
-        labels: val.labels,
-        ...props,
-      });
-    }
-  } else if (val.type && (val.start !== undefined || val.source !== undefined)) {
-    const props = val.properties || {};
-    edges.push({
-      source: String(val.start ?? val.source),
-      target: String(val.end ?? val.target),
-      label: val.type,
-      ...props,
-    });
-  } else if (val.nodes && val.relationships) {
-    (val.nodes || []).forEach((n) => processValue(n, nodes, edges));
-    (val.relationships || []).forEach((r) => processValue(r, nodes, edges));
   }
 }

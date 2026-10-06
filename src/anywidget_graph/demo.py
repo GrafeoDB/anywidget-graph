@@ -18,7 +18,7 @@ import json
 
 from anywidget_graph.widget import Graph
 
-# Classic movie/actor graph dataset — small enough to load instantly,
+# Classic movie/actor graph dataset, small enough to load instantly,
 # rich enough to demonstrate labels, relationships, and properties.
 DEMO_NODES = [
     {"id": "m1", "label": "The Matrix", "labels": ["Movie"], "year": 1999, "color": "#6366f1"},

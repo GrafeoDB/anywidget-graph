@@ -590,6 +590,40 @@ def test_build_neighbor_query_aql():
     assert "FOR" in q
 
 
+def test_build_neighbor_query_integer_ids():
+    """Grafeo ids are integers: numeric ids become integer literals (regression: they never matched)."""
+    assert Graph._build_neighbor_query("42", "gql", integer_ids=True) == (
+        "MATCH (n)-[r]-(m) WHERE id(n) = 42 RETURN n, r, m"
+    )
+    assert Graph._build_neighbor_query("42", "gremlin", integer_ids=True).startswith("g.V(42)")
+    # Other backends keep string ids, and AQL ids are always strings
+    assert 'id(n) = "42"' in Graph._build_neighbor_query("42", "cypher")
+    assert "g.V('42')" in Graph._build_neighbor_query("42", "gremlin")
+    assert 'ANY "42"' in Graph._build_neighbor_query("42", "aql", integer_ids=True)
+
+
+def test_build_neighbor_query_escapes_ids():
+    """Node ids come from the browser; quotes must not break out of the literal."""
+    q = Graph._build_neighbor_query('a" OR true OR "', "cypher", integer_ids=True)
+    assert q == 'MATCH (n)-[r]-(m) WHERE id(n) = "a\\" OR true OR \\"" RETURN n, r, m'
+    assert "g.V('it\\'s')" in Graph._build_neighbor_query("it's", "gremlin")
+    assert '"a\\\\b"' in Graph._build_neighbor_query("a\\b", "cypher")
+
+
+def test_expand_node_uses_cypher_for_languages_without_neighbor_query():
+    calls: list[tuple[str, str]] = []
+
+    class RecordingBackend:
+        def execute(self, query, *, language="cypher"):
+            calls.append((language, query))
+            return [], []
+
+    graph = Graph(backend=RecordingBackend(), query_language="sparql")
+    graph.expand_node("n1")
+    assert calls == [("cypher", 'MATCH (n)-[r]-(m) WHERE id(n) = "n1" RETURN n, r, m')]
+    assert graph.query_error == ""
+
+
 # ------------------------------------------------------------------ #
 #  Grafeo backend: language dispatch                                   #
 # ------------------------------------------------------------------ #
