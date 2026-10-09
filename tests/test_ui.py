@@ -153,7 +153,7 @@ def test_bundle_parses_with_node(esm, node_bin, tmp_path):
 
 
 def test_js_unit_tests(node_bin):
-    _run_node(node_bin, "--test", "tests/js/grafeo-result.test.mjs")
+    _run_node(node_bin, "--test", "tests/js/grafeo-result.test.mjs", "tests/js/lanes.test.mjs")
 
 
 # ------------------------------------------------------------------ #

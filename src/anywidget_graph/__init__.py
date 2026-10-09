@@ -3,4 +3,4 @@
 from anywidget_graph.widget import Graph
 
 __all__ = ["Graph"]
-__version__ = "0.2.8"
+__version__ = "0.4.0"

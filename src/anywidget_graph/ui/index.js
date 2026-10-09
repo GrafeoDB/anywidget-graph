@@ -12,6 +12,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -292,9 +293,15 @@ async function executeQuery(model) {
 function render({ model, el }) {
   const wrapper = document.createElement("div");
   wrapper.className = "awg-wrapper";
-  wrapper.style.width = model.get("width") + "px";
-  wrapper.style.height = model.get("height") + "px";
-  wrapper.style.maxHeight = model.get("height") + "px";
+  // fill: take the host element's size and follow it; otherwise the fixed width and height
+  function applySize() {
+    const fill = model.get("fill");
+    wrapper.style.width = fill ? "100%" : model.get("width") + "px";
+    wrapper.style.height = fill ? "100%" : model.get("height") + "px";
+    wrapper.style.maxHeight = fill ? "" : model.get("height") + "px";
+  }
+  applySize();
+  model.on("change:fill", applySize);
 
   // Renderer reference (set after Sigma init, used by theme/filter callbacks)
   let rendererRef = null;
@@ -309,6 +316,16 @@ function render({ model, el }) {
     if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
     return false;
   }
+
+  // Host theme: the host's colours win over the widget's light and dark defaults
+  function applyHostTheme() {
+    const variables = themeVariables(model.get("theme"));
+    for (const [name, value] of Object.entries(variables)) wrapper.style.setProperty(name, value);
+    const text = (model.get("theme") || {}).text;
+    if (text) rendererRef?.setSetting("labelColor", { color: text });
+    rendererRef?.refresh();
+  }
+  model.on("change:theme", applyHostTheme);
 
   function updateTheme() {
     const dark = model.get("dark_mode");
@@ -471,9 +488,17 @@ function render({ model, el }) {
   // Initialize Graphology graph (multi: true allows parallel edges)
   const graph = new Graph({ multi: true });
 
+  // Linked lanes, append, pulse and theme: shared state (empty unless the host sets lanes, batches, pulse or theme)
+  const laneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), pulse: new Set(), lastSeq: 0, hoverAction: null, actionSeq: 0 };
+  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions"]);
+  model.save_changes();
+
   // Add initial nodes and edges with property-based styling
   function rebuildGraph() {
     graph.clear();
+    laneState.lanes = model.get("lanes") || [];
+    laneState.laneById = new Map();
+    laneState.cross = [];
     const nodes = model.get("nodes") || [];
     const edges = model.get("edges") || [];
     const opts = getStylingOpts(model, nodes, edges);
@@ -482,11 +507,21 @@ function render({ model, el }) {
       // Graphology throws on duplicate keys and on edges to unknown nodes,
       // which would leave the widget blank; skip such entries instead.
       if (graph.hasNode(node.id)) return;
-      graph.addNode(node.id, buildNodeAttrs(node, opts));
+      const attrs = buildNodeAttrs(node, opts);
+      if (laneState.lanes.length) {
+        attrs.lane = laneOf(node, laneState.lanes);
+        laneState.laneById.set(node.id, attrs.lane);
+      }
+      graph.addNode(node.id, attrs);
     });
 
     edges.forEach((edge) => {
       if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
+      // Cross-lane edges are drawn on the overlay, not by sigma, and take no part in the layout
+      if (laneState.lanes.length && isCrossEdge(edge, laneState.laneById)) {
+        laneState.cross.push({ source: edge.source, target: edge.target, key: crossKey(edge) });
+        return;
+      }
       graph.addEdge(edge.source, edge.target, buildEdgeAttrs(edge, opts));
     });
   }
@@ -495,6 +530,13 @@ function render({ model, el }) {
 
   // Layout application (preserves pinned positions, respects filters)
   function applyLayout(layoutName) {
+    // Lanes get their bands and framing also while empty: a live run starts from nothing, action glyphs show at once
+    if (laneState.lanes.length) {
+      layoutLanes();
+      frameLanes();
+      return;
+    }
+    frameLanes();
     if (graph.order === 0) return;
     const pinned = model.get("pinned_nodes") || {};
 
@@ -788,6 +830,64 @@ function render({ model, el }) {
     });
   }
 
+  // Bands of all lanes; their height follows the canvas's shape (within limits) so the lanes fill it
+  function computeBands() {
+    const width = container.offsetWidth, height = container.offsetHeight;
+    let bandHeight = LANE_HEIGHT;
+    if (width > 0 && height > 0 && laneState.lanes.length) {
+      const span = laneBands(laneState.lanes).reduce((right, band) => Math.max(right, band.x1), 0);
+      bandHeight = Math.min(LANE_HEIGHT * 2.2, Math.max(LANE_HEIGHT, (span + 240) / (width / height) - 240));
+    }
+    laneState.bands = laneBands(laneState.lanes, { height: bandHeight });
+  }
+
+  // The camera frames every band, also the ones without nodes (an action lane's glyph)
+  function frameLanes() {
+    if (!rendererRef) return;
+    rendererRef.setCustomBBox(laneState.lanes.length && laneState.bands.length ? lanesBBox(laneState.bands) : null);
+  }
+
+  // A column lane's nodes stacked in the middle of its band (in their order in the graph)
+  function arrangeColumn(lane, index) {
+    const ids = [];
+    graph.forEachNode((node, attrs) => {
+      if (attrs.lane === lane.id) ids.push(node);
+    });
+    return columnPositions(ids, laneState.bands[index]);
+  }
+
+  // Each lane laid out on its own (forceAtlas2 from stable starting points), scaled into its band; pinned nodes stay.
+  // A column lane stacks its nodes; an action lane holds no nodes.
+  function layoutLanes() {
+    const pinned = model.get("pinned_nodes") || {};
+    computeBands();
+    laneState.lanes.forEach((lane, index) => {
+      if (lane.action) return;
+      if (lane.arrange === "column") {
+        for (const [node, position] of Object.entries(arrangeColumn(lane, index))) {
+          if (!pinned[node]) graph.mergeNodeAttributes(node, position);
+        }
+        return;
+      }
+      const sub = new Graph({ multi: true });
+      graph.forEachNode((node, attrs) => {
+        if (attrs.lane === lane.id) sub.addNode(node, { x: hashUnit(node + "x"), y: hashUnit(node + "y") });
+      });
+      graph.forEachEdge((edge, attrs, source, target) => {
+        if (sub.hasNode(source) && sub.hasNode(target)) sub.addEdge(source, target);
+      });
+      if (sub.order === 0) return;
+      if (sub.order > 1) forceAtlas2.assign(sub, { iterations: 150, settings: { ...forceAtlas2.inferSettings(sub), gravity: 1 } });
+      const positions = {};
+      sub.forEachNode((node, attrs) => {
+        positions[node] = { x: attrs.x, y: attrs.y };
+      });
+      for (const [node, position] of Object.entries(fitToBand(positions, laneState.bands[index]))) {
+        if (!pinned[node]) graph.mergeNodeAttributes(node, position);
+      }
+    });
+  }
+
   // Apply initial layout
   applyLayout(model.get("layout") || "spring");
 
@@ -809,8 +909,156 @@ function render({ model, el }) {
     defaultEdgeType: "line",
     // Enable edge interaction events (click, hover)
     enableEdgeEvents: true,
+    // A host may mount the widget in a hidden or not yet sized container (a closed panel, a tab)
+    allowInvalidContainer: true,
   });
   rendererRef = renderer;
+  frameLanes();
+  applyHostTheme();
+
+  // Overlay for lane titles and cross-lane curves (2D canvas above sigma, redrawn after every sigma frame)
+  const overlay = document.createElement("canvas");
+  overlay.className = "awg-lanes-overlay";
+  container.appendChild(overlay);
+
+  function sizeOverlay() {
+    const dpr = window.devicePixelRatio || 1;
+    const width = container.offsetWidth, height = container.offsetHeight;
+    overlay.width = Math.max(1, Math.round(width * dpr));
+    overlay.height = Math.max(1, Math.round(height * dpr));
+    overlay.style.width = `${width}px`;
+    overlay.style.height = `${height}px`;
+  }
+
+  function drawOverlay() {
+    const ctx = overlay.getContext("2d");
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
+    if (!laneState.lanes.length) return;
+    const theme = model.get("theme") || {};
+    const accent = theme.accent || "#5bb8a9";
+    const now = performance.now();
+
+    // Lane titles above each band; a column or action lane's title is centred over it
+    ctx.font = "600 12px system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = theme.muted || "#9aa2b0";
+    laneState.lanes.forEach((lane, index) => {
+      const band = laneState.bands[index];
+      if (!band) return;
+      const narrow = lane.action || lane.arrange === "column";
+      const corners = [laneToViewport({ x: band.x0, y: band.y0 }), laneToViewport({ x: band.x0, y: band.y1 })];
+      const top = Math.min(corners[0].y, corners[1].y);
+      const x = narrow ? laneToViewport({ x: (band.x0 + band.x1) / 2, y: band.y0 }).x : corners[0].x;
+      ctx.textAlign = narrow ? "center" : "left";
+      ctx.fillText(lane.title || lane.id, x, top - 14);
+    });
+    ctx.textAlign = "left";
+
+    // Action lanes: a glyph button in the middle of the band (stacked bars in the lane's colours)
+    laneState.lanes.forEach((lane, index) => {
+      if (!lane.action || !laneState.bands[index]) return;
+      const center = actionCenter(index);
+      const hover = laneState.hoverAction === lane.id;
+      const colors = Array.isArray(lane.glyph) && lane.glyph.length ? lane.glyph : [accent, accent, accent];
+      ctx.fillStyle = theme.panel || "rgba(127, 127, 127, 0.12)";
+      ctx.strokeStyle = hover ? accent : theme.border || "rgba(127, 127, 127, 0.4)";
+      ctx.lineWidth = hover ? 1.6 : 1;
+      ctx.beginPath();
+      ctx.roundRect(center.x - 24, center.y - 24, 48, 48, 9);
+      ctx.fill();
+      ctx.stroke();
+      const barHeight = 7, gap = 4, total = colors.length * barHeight + (colors.length - 1) * gap;
+      colors.forEach((color, i) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(center.x - 14, center.y - total / 2 + i * (barHeight + gap), 28, barHeight, 2.5);
+        ctx.fill();
+      });
+      if (lane.caption) {
+        ctx.font = "500 11px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = hover ? accent : theme.muted || "#9aa2b0";
+        ctx.textAlign = "center";
+        ctx.fillText(lane.caption, center.x, center.y + 40);
+        ctx.textAlign = "left";
+        ctx.font = "600 12px system-ui, -apple-system, sans-serif";
+      }
+    });
+
+    // Cross-lane curves; an appearing one is drawn up to its progress
+    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id].filter(Boolean));
+    for (const edge of laneState.cross) {
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
+      const a = renderer.graphToViewport(graph.getNodeAttributes(edge.source));
+      const b = renderer.graphToViewport(graph.getNodeAttributes(edge.target));
+      const start = laneState.crossAppear.get(edge.key);
+      const t = start === undefined ? 1 : progress(start, now, 450);
+      if (t <= 0) continue;
+      const lit = focus.has(edge.source) || focus.has(edge.target);
+      ctx.strokeStyle = withAlpha(accent, lit ? 0.9 : 0.32);
+      ctx.lineWidth = lit ? 1.8 : 1.1;
+      const part = curveUntil(a, curveControl(a, b), b, t);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(part.control.x, part.control.y, part.end.x, part.end.y);
+      ctx.stroke();
+    }
+  }
+
+  // A lane point in viewport pixels; sigma leaves its transform stale on an empty graph, so the overlay fits the lanes itself then
+  function laneToViewport(point) {
+    if (graph.order > 0 || !laneState.bands.length) return renderer.graphToViewport(point);
+    return fitBox(lanesBBox(laneState.bands), container.offsetWidth, container.offsetHeight)(point);
+  }
+
+  // The middle of an action lane's band, in viewport pixels
+  function actionCenter(index) {
+    const band = laneState.bands[index];
+    return laneToViewport({ x: (band.x0 + band.x1) / 2, y: (band.y0 + band.y1) / 2 });
+  }
+
+  // The action lane under a viewport point, if any
+  function actionAt(point) {
+    const index = laneState.lanes.findIndex((lane, i) => lane.action && laneState.bands[i] && glyphHit(point, actionCenter(i)));
+    return index >= 0 ? laneState.lanes[index] : null;
+  }
+
+  // Hovering a glyph shows it can be clicked
+  container.addEventListener("mousemove", (event) => {
+    if (!laneState.lanes.some((lane) => lane.action)) return;
+    const rect = container.getBoundingClientRect();
+    const lane = actionAt({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    const id = lane ? lane.id : null;
+    if (id === laneState.hoverAction) return;
+    laneState.hoverAction = id;
+    container.style.cursor = id ? "pointer" : "";
+    renderer.refresh();
+  });
+
+  renderer.on("afterRender", drawOverlay);
+  sizeOverlay();
+
+  // One requestAnimationFrame loop while something appears or pulses; sigma's refresh redraws the overlay too
+  let animating = false;
+  function animate() {
+    const now = performance.now();
+    const appearing = [...laneState.appear.values(), ...laneState.edgeAppear.values(), ...laneState.crossAppear.values()].some((start) => now - start < 450);
+    renderer.refresh();
+    if (appearing || laneState.pulse.size) {
+      requestAnimationFrame(animate);
+      return;
+    }
+    animating = false;
+    laneState.appear.clear();
+    laneState.edgeAppear.clear();
+    laneState.crossAppear.clear();
+  }
+  function startAnimating() {
+    if (animating) return;
+    animating = true;
+    requestAnimationFrame(animate);
+  }
 
   // Node reducer for type filtering, search filtering, selection, and pinned indicator
   renderer.setSetting("nodeReducer", (node, data) => {
@@ -847,6 +1095,18 @@ function render({ model, el }) {
       res.borderSize = 2;
     }
 
+    // Appearing (append) and pulsing (pulse_nodes) nodes
+    const appearAt = laneState.appear.get(node);
+    if (appearAt !== undefined) {
+      const t = progress(appearAt, performance.now(), 450);
+      if (t <= 0) res.hidden = true;
+      res.size = (res.size || data.size) * t;
+    }
+    if (laneState.pulse.has(node)) {
+      res.size = (res.size || data.size) * pulseScale(performance.now());
+      res.forceLabel = true;
+    }
+
     return res;
   });
 
@@ -876,8 +1136,81 @@ function render({ model, el }) {
       res.hidden = true;
     }
 
+    const appearAt = laneState.edgeAppear.get(edge);
+    if (appearAt !== undefined) {
+      const t = progress(appearAt, performance.now(), 450);
+      if (t <= 0) res.hidden = true;
+      res.size = (res.size || data.size) * t;
+    }
+
     return res;
   });
+
+  // Incremental append: merge new nodes and edges without moving what is drawn; new items appear one after another
+  model.on("change:append_batch", () => {
+    const batch = model.get("append_batch") || {};
+    if (!batch.seq || batch.seq <= laneState.lastSeq) return;
+    laneState.lastSeq = batch.seq;
+    const nodes = batch.nodes || [], edges = batch.edges || [];
+    const opts = getStylingOpts(model, nodes, edges);
+    const animated = model.get("append_animation") !== "none";
+    const schedule = staggerSchedule(nodes.length + edges.length, model.get("append_stagger_ms") ?? 60);
+    const t0 = performance.now();
+    const lanes = laneState.lanes;
+    let item = 0;
+
+    nodes.forEach((node) => {
+      const at = t0 + schedule[item++];
+      if (graph.hasNode(node.id)) {
+        const { x, y, ...rest } = buildNodeAttrs(node, opts);
+        graph.mergeNodeAttributes(node.id, rest);  // properties update, position stays
+        return;
+      }
+      const lane = lanes.length ? laneOf(node, lanes) : undefined;
+      const laneIndex = lanes.length ? lanes.findIndex((l) => l.id === lane) : 0;
+      const band = laneState.bands[laneIndex] || laneBands(lanes.length ? lanes : [{ id: "" }])[Math.max(0, laneIndex)];
+      const cross = [], laneNeighbours = [];
+      for (const edge of edges) {
+        const other = edge.source === node.id ? edge.target : edge.target === node.id ? edge.source : null;
+        if (!other || !graph.hasNode(other)) continue;
+        const position = graph.getNodeAttributes(other);
+        (lane && laneState.laneById.get(other) !== lane ? cross : laneNeighbours).push({ x: position.x, y: position.y });
+      }
+      graph.addNode(node.id, { ...buildNodeAttrs(node, opts), ...placeAppended(node.id, { cross, lane: laneNeighbours }, band), lane });
+      if (lane) laneState.laneById.set(node.id, lane);
+      if (lanes[laneIndex]?.arrange === "column") {
+        for (const [id, position] of Object.entries(arrangeColumn(lanes[laneIndex], laneIndex))) graph.mergeNodeAttributes(id, position);
+      }
+      if (animated) laneState.appear.set(node.id, at);
+    });
+
+    edges.forEach((edge) => {
+      const at = t0 + schedule[item++];
+      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
+      if (lanes.length && isCrossEdge(edge, laneState.laneById)) {
+        const key = crossKey(edge);
+        if (laneState.cross.some((c) => c.key === key)) return;
+        laneState.cross.push({ source: edge.source, target: edge.target, key });
+        if (animated) laneState.crossAppear.set(key, at);
+        return;
+      }
+      const label = edge.label || "";
+      if (graph.edges(edge.source, edge.target).some((key) => graph.getEdgeAttribute(key, "label") === label)) return;
+      const key = graph.addEdge(edge.source, edge.target, buildEdgeAttrs(edge, opts));
+      if (animated) laneState.edgeAppear.set(key, at);
+    });
+
+    if (animated) startAnimating();
+    else renderer.refresh();
+  });
+
+  // Pulsing nodes: a soft breath on the ids in pulse_nodes, until the list is empty
+  function applyPulse() {
+    laneState.pulse = new Set((model.get("pulse_nodes") || []).filter((id) => graph.hasNode(id)));
+    if (laneState.pulse.size) startAnimating();
+    else renderer.refresh();
+  }
+  model.on("change:pulse_nodes", applyPulse);
 
   model.on("change:selected_nodes", () => { renderer.refresh(); });
   model.on("change:pinned_nodes", () => { renderer.refresh(); });
@@ -1205,7 +1538,21 @@ function render({ model, el }) {
 
   // ResizeObserver for responsive sizing
   const resizeObserver = new ResizeObserver(() => {
+    // Hidden or collapsed: nothing to draw until the container has a size again
+    if (!container.offsetWidth || !container.offsetHeight) return;
     renderer.resize();
+    sizeOverlay();
+    // Lanes whose height no longer fits the canvas's shape are laid out again
+    if (laneState.lanes.length && laneState.bands.length) {
+      const saved = laneState.bands;
+      computeBands();
+      if (Math.abs(laneState.bands[0].y1 - saved[0].y1) > saved[0].y1 * 0.1) {
+        layoutLanes();
+        frameLanes();
+      } else {
+        laneState.bands = saved;
+      }
+    }
     renderer.refresh();
   });
   resizeObserver.observe(container);
@@ -1240,7 +1587,13 @@ function render({ model, el }) {
   });
 
   // Stage click (deselect)
-  renderer.on("clickStage", () => {
+  renderer.on("clickStage", (payload) => {
+    const lane = payload?.event ? actionAt({ x: payload.event.x, y: payload.event.y }) : null;
+    if (lane) {
+      model.set("lane_action", { lane: lane.id, seq: ++laneState.actionSeq });
+      model.save_changes();
+      return;
+    }
     model.set("selected_node", null);
     model.set("selected_edge", null);
     model.set("selected_nodes", []);
@@ -1311,6 +1664,7 @@ function render({ model, el }) {
   }
 
   model.on("change:nodes", onDataOrStyleChange);
+  model.on("change:lanes", onDataOrStyleChange);
   model.on("change:edges", onDataOrStyleChange);
   model.on("change:color_field", onDataOrStyleChange);
   model.on("change:color_scale", onDataOrStyleChange);

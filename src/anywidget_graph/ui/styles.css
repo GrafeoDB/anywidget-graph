@@ -1066,3 +1066,11 @@
     padding: 10px 16px;
   }
 }
+
+/* Linked lanes: lane titles and cross-lane curves above the sigma canvas */
+.awg-lanes-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}

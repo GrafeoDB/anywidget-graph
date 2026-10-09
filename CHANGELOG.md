@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 2026-10-09
+
+### Features
+
+- **Linked lanes**: `lanes` shows several graphs side by side in one canvas, each with its own layout and title; edges between lanes (or marked `cross`) are drawn as soft curves on an overlay and light up with hover or selection
+- **Live append**: `append()` (or the `append_batch` state a host sets) adds nodes and edges without a re-layout; existing nodes keep their positions, new ones fade in and edges draw in, staggered by `append_stagger_ms` and kept under 1.5 s per batch (`append_animation="none"` turns it off)
+- **Lane widths, column lanes and action lanes**: a lane can be narrower or wider (`width`), stack its nodes in a column (`arrange: "column"`), or hold a clickable glyph instead of nodes (`action`, `glyph`, `caption`) that reports clicks in `lane_action`; the camera frames every lane and the lanes stretch to the canvas's shape
+- **Pulse**: `pulse_nodes` gives the listed nodes a soft pulse
+- **Host theme**: `theme` sets the background, panels, text, borders and accent from the host page
+- **Feature detection**: the widget sets `_features` when it renders
+- **Fill the host**: `fill=True` makes the widget take its host element's size (100% wide and high) and follow its resizes; `width` and `height` are then ignored
 
 ### Improvements
 
@@ -25,6 +35,7 @@
 - Fixed neighbor expansion on Grafeo: integer ids were compared as strings (`id(n) = "42"`) and never matched; node ids are now escaped in generated queries, and SPARQL / GraphQL sessions expand with Cypher
 - Fixed the widget going blank when an edge's endpoint is missing or a node id repeats (Graphology throws), for example when new results replace the demo data
 - Demo mode loads its statements one at a time and refreshes the schema panel afterwards
+- Fixed `Sigma: Container has no width` when the widget is mounted in a hidden or not yet sized container (a closed panel, a tab); it now renders once the container has a size
 
 ## 0.3.1 2026-03-16
 

@@ -58,6 +58,8 @@ class Graph(anywidget.AnyWidget):
     # === Display Settings ===
     width = traitlets.Int(default_value=800).tag(sync=True)
     height = traitlets.Int(default_value=600).tag(sync=True)
+    # Take the host element's size (100% wide and high) and follow its resizes; width/height are then ignored
+    fill = traitlets.Bool(default_value=False).tag(sync=True)
     background = traitlets.Unicode(default_value="#fafafa").tag(sync=True)
     show_labels = traitlets.Bool(default_value=True).tag(sync=True)
     show_edge_labels = traitlets.Bool(default_value=False).tag(sync=True)
@@ -139,6 +141,17 @@ class Graph(anywidget.AnyWidget):
     # === Demo Mode (auto-populate WASM and run query) ===
     _demo_mode = traitlets.Bool(default_value=False).tag(sync=True)
     _demo_data = traitlets.Unicode(default_value="").tag(sync=True)
+
+    # === Linked lanes, incremental append, pulse and host theme (all off by default) ===
+    lanes = traitlets.List(trait=traitlets.Dict()).tag(sync=True)
+    append_batch = traitlets.Dict(default_value={}).tag(sync=True)
+    append_stagger_ms = traitlets.Int(default_value=60).tag(sync=True)
+    append_animation = traitlets.Unicode(default_value="draw").tag(sync=True)
+    pulse_nodes = traitlets.List(default_value=[]).tag(sync=True)
+    theme = traitlets.Dict(default_value={}).tag(sync=True)
+    # A click on an action lane's glyph: {"lane": <lane id>, "seq": <n>} (seq counts up, so repeated clicks are seen)
+    lane_action = traitlets.Dict(default_value={}).tag(sync=True)
+    _features = traitlets.List(default_value=[]).tag(sync=True)
 
     def __init__(
         self,
@@ -233,6 +246,14 @@ class Graph(anywidget.AnyWidget):
             self._backend = GrafeoBackend(grafeo_db)
         else:
             self._backend = None
+
+    def append(self, nodes: list[dict[str, Any]] | None = None, edges: list[dict[str, Any]] | None = None) -> None:
+        """Add nodes and edges to the drawn graph without a re-layout (merged by id).
+
+        Existing nodes keep their positions.
+        """
+        seq = int(self.append_batch.get("seq", 0)) + 1
+        self.append_batch = {"seq": seq, "nodes": list(nodes or []), "edges": list(edges or [])}
 
     @property
     def backend(self) -> DatabaseBackend | None:

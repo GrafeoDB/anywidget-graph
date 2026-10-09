@@ -102,6 +102,7 @@ def get_esm() -> str:
     settings_js = _read_file(_UI_DIR / "settings.js")
     properties_js = _read_file(_UI_DIR / "properties.js")
     results_js = _read_file(_UI_DIR / "results.js")
+    lanes_js = _read_file(_UI_DIR / "lanes.js")
     toolbar_js = _read_file(_UI_DIR / "toolbar.js")
     index_js = _read_file(_UI_DIR / "index.js")
 
@@ -141,6 +142,9 @@ import neo4j from "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/
 
 // === Results Drawer ===
 {_strip_imports_exports(results_js)}
+
+// === Linked Lanes (pure helpers) ===
+{_strip_imports_exports(lanes_js)}
 
 // === Toolbar ===
 {_resolve_namespaces(toolbar_js)}

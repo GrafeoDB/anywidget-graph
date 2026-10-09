@@ -769,3 +769,36 @@ def test_query_time_traitlet():
     assert graph.query_time == 0.0
     graph.query_time = 42.5
     assert graph.query_time == 42.5
+
+
+def test_fill_makes_the_widget_follow_its_host():
+    """With fill the widget takes the host element's size (width and height) instead of fixed pixels."""
+    assert Graph().fill is False
+    widget = Graph(fill=True)
+
+    assert widget.fill is True
+    assert widget.trait_metadata("fill", "sync") is True
+
+
+def test_linked_lane_traits_default_off():
+    graph = Graph()
+    assert graph.lanes == []
+    assert graph.append_batch == {}
+    assert graph.append_stagger_ms == 60
+    assert graph.append_animation == "draw"
+    assert graph.pulse_nodes == []
+    assert graph.theme == {}
+    assert graph.lane_action == {}
+
+
+def test_lane_action_is_synced_for_the_host():
+    graph = Graph(lanes=[{"id": "model", "title": "Model", "action": True, "width": 0.25}])
+    assert graph.trait_metadata("lane_action", "sync") is True
+
+
+def test_append_sends_a_numbered_batch():
+    graph = Graph(nodes=[{"id": "a"}])
+    graph.append(nodes=[{"id": "b"}], edges=[{"source": "a", "target": "b"}])
+    graph.append(nodes=[{"id": "c"}])
+    assert graph.append_batch == {"seq": 2, "nodes": [{"id": "c"}], "edges": []}
+    assert graph.nodes == [{"id": "a"}]  # append does not rewrite the full lists

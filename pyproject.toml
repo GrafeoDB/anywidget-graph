@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.3.1"
+version = "0.4.0"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"

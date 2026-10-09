@@ -183,6 +183,29 @@ graph.unpin_all()                   # Unpin everything
 graph.clear()                   # Remove all nodes, edges, pins, and selection
 ```
 
+### Linked lanes and live append
+
+Show two graphs side by side in one canvas, each laid out in its own lane, with curved edges between them, and grow them while a process runs:
+
+```python
+graph = Graph(
+    lanes=[{"id": "source", "title": "Source graph"}, {"id": "target", "title": "Target graph"}],
+    nodes=[{"id": "a", "lane": "source"}, {"id": "b", "lane": "source"}, {"id": "x", "lane": "target"}],
+    edges=[{"source": "a", "target": "b"}, {"source": "x", "target": "a", "cross": True}],
+)
+graph.append(nodes=[{"id": "y", "lane": "target"}], edges=[{"source": "y", "target": "b"}])
+graph.pulse_nodes = ["b"]       # a soft pulse on these nodes; [] stops it
+graph.theme = {"background": "#0d1416", "panel": "#121b1e", "text": "#dbe7e5", "muted": "#8ea3a3", "border": "#1e2b2f", "accent": "#5bb8a9"}
+```
+
+- `lanes`: lanes left to right; a node's `lane` picks one (a node without a known lane goes to the first). Edges between lanes (or marked `cross`) are drawn as soft curves above both lanes and light up when either end is hovered or selected. Without `lanes` the widget behaves as before.
+- `append(nodes, edges)`: adds items without a re-layout; existing nodes keep their positions, a new node is placed at the height of its neighbours in other lanes (or next to its neighbours in its lane). New items fade in and edges draw from source to target, `append_stagger_ms` (default 60) apart; a large batch is kept under 1.5 s. `append_animation="none"` turns the animation off.
+- Lane options: `width` is a lane's share of the standard width (default 1); `arrange: "column"` stacks the lane's nodes in the middle of its band (for a few roots, such as repositories, whose edges then fan out into the next lane); `action: True` makes a lane without nodes that shows a glyph button (`glyph`: a list of colours drawn as stacked bars, `caption`: text under it). The camera frames all lanes, and the lanes stretch to the canvas's shape.
+- `lane_action`: set to `{"lane": <id>, "seq": <n>}` when an action lane's glyph is clicked, so the host can respond (open a panel, switch a view).
+- `pulse_nodes`: ids that pulse softly.
+- `theme`: host colours (`background`, `panel`, `text`, `muted`, `border`, `accent`) that replace the widget's light and dark defaults.
+- `_features`: the widget sets the capabilities it supports when it renders, so a host can detect an older build.
+
 ## Styling
 
 ### Property-based coloring
@@ -222,6 +245,7 @@ graph = Graph(
     edges=edges,
     width=800,                  # Widget width (px)
     height=600,                 # Widget height (px)
+    fill=False,                 # Take the host's size and follow resizes (ignores width/height)
     background="#fafafa",       # Background color
     show_labels=True,           # Node labels
     show_edge_labels=False,     # Edge labels
