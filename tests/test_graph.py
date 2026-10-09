@@ -789,6 +789,13 @@ def test_linked_lane_traits_default_off():
     assert graph.pulse_nodes == []
     assert graph.theme == {}
     assert graph.lane_action == {}
+    assert graph.totals == {}
+
+
+def test_totals_are_synced_for_the_front_end():
+    graph = Graph(totals={"nodes": {"File": 20000}, "edges": {"CONTAINS": 52000}})
+    assert graph.trait_metadata("totals", "sync") is True
+    assert graph.totals["nodes"]["File"] == 20000
 
 
 def test_lane_action_is_synced_for_the_host():
@@ -801,4 +808,46 @@ def test_append_sends_a_numbered_batch():
     graph.append(nodes=[{"id": "b"}], edges=[{"source": "a", "target": "b"}])
     graph.append(nodes=[{"id": "c"}])
     assert graph.append_batch == {"seq": 2, "nodes": [{"id": "c"}], "edges": []}
-    assert graph.nodes == [{"id": "a"}]  # append does not rewrite the full lists
+
+
+def test_append_keeps_the_items_in_nodes_and_edges():
+    # So to_json, to_html and a widget shown again include them
+    graph = Graph(nodes=[{"id": "a", "label": "A"}], edges=[])
+    graph.append(nodes=[{"id": "b"}], edges=[{"source": "a", "target": "b"}])
+    graph.append(nodes=[{"id": "a", "color": "red"}, {"id": "c"}], edges=[{"source": "a", "target": "b"}])
+    assert graph.nodes == [{"id": "a", "label": "A", "color": "red"}, {"id": "b"}, {"id": "c"}]
+    assert graph.edges == [{"source": "a", "target": "b"}]
+    assert '"c"' in graph.to_json()
+
+
+def test_remove_takes_items_out_of_the_lists_and_sends_a_removal_batch():
+    graph = Graph(
+        nodes=[{"id": "a"}, {"id": "b"}, {"id": "c"}],
+        edges=[
+            {"source": "a", "target": "b", "label": "x"},
+            {"source": "a", "target": "b", "label": "y"},
+            {"source": "b", "target": "c"},
+        ],
+    )
+    graph.remove(nodes=["c"], edges=[{"source": "a", "target": "b", "label": "x"}])
+    assert graph.nodes == [{"id": "a"}, {"id": "b"}]
+    # The edge touching c went with it; the named edge went; the other a-b edge stays
+    assert graph.edges == [{"source": "a", "target": "b", "label": "y"}]
+    assert graph.append_batch == {
+        "seq": 1,
+        "nodes": [],
+        "edges": [],
+        "remove": {"nodes": ["c"], "edges": [{"source": "a", "target": "b", "label": "x"}]},
+    }
+    # Without a label, every edge between the ends goes
+    graph.remove(edges=[{"source": "a", "target": "b"}])
+    assert graph.edges == []
+    assert graph.append_batch["seq"] == 2
+
+
+def test_append_sends_the_lists_and_the_batch_in_one_message():
+    graph = Graph(nodes=[{"id": "a"}])
+    sent = []
+    graph.send_state = lambda key=None: sent.append(sorted(key) if isinstance(key, set | list) else key)
+    graph.append(nodes=[{"id": "b"}])
+    assert sent == [["append_batch", "nodes"]]

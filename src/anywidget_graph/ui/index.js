@@ -12,7 +12,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha } from "./lanes.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -319,10 +319,10 @@ function render({ model, el }) {
 
   // Host theme: the host's colours win over the widget's light and dark defaults
   function applyHostTheme() {
+    // A key the theme leaves out is "" and removes its variable: the widget's light or dark colour shows again
     const variables = themeVariables(model.get("theme"));
     for (const [name, value] of Object.entries(variables)) wrapper.style.setProperty(name, value);
-    const text = (model.get("theme") || {}).text;
-    if (text) rendererRef?.setSetting("labelColor", { color: text });
+    rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), model.get("dark_mode")) });
     rendererRef?.refresh();
   }
   model.on("change:theme", applyHostTheme);
@@ -330,7 +330,7 @@ function render({ model, el }) {
   function updateTheme() {
     const dark = model.get("dark_mode");
     wrapper.classList.toggle("awg-dark", dark);
-    rendererRef?.setSetting("labelColor", { color: dark ? "#e0e0e0" : "#333" });
+    rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), dark) });
     rendererRef?.refresh();
   }
 
@@ -447,6 +447,9 @@ function render({ model, el }) {
           searchVisibleNodes.add(target);
         });
       });
+
+      // With lanes, a match's partners in the other lanes are its neighbours too (their curves show with them)
+      for (const id of crossNeighbours(searchDirectMatches, laneState.cross)) searchVisibleNodes.add(id);
     }
     rendererRef?.refresh();
   }
@@ -489,18 +492,33 @@ function render({ model, el }) {
   const graph = new Graph({ multi: true });
 
   // Linked lanes, append, pulse and theme: shared state (empty unless the host sets lanes, batches, pulse or theme)
-  const laneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), pulse: new Set(), lastSeq: 0, hoverAction: null, actionSeq: 0 };
-  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions"]);
+  // A batch already in the model when this view renders is in its nodes and edges (Graph.append keeps them there)
+  const laneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), vanish: new Map(), edgeVanish: new Map(), pulse: new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
+  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons", "action_edges", "remove", "totals"]);
   model.save_changes();
+
+  // The data drawn: the host's nodes and edges with the appended batches merged in. A redraw (new lanes, a style)
+  // keeps appended items; new nodes or edges from the host replace them, unless they are a copy of what is drawn.
+  let drawn = mergeItems(undefined, model.get("nodes") || [], model.get("edges") || []);
+
+  // An edge end that is no node but an action lane's id: the edge ends at that lane's button (connect nodes to an action)
+  function actionLaneIndex(id) {
+    if (graph.hasNode(id)) return -1;
+    return laneState.lanes.findIndex((lane) => lane.action && lane.id === id);
+  }
+  const drawable = (id) => graph.hasNode(id) || actionLaneIndex(id) >= 0;
+  const overlayEdge = (edge) => actionLaneIndex(edge.source) >= 0 || actionLaneIndex(edge.target) >= 0 || isCrossEdge(edge, laneState.laneById);
 
   // Add initial nodes and edges with property-based styling
   function rebuildGraph() {
     graph.clear();
+    laneState.vanish.clear();
+    laneState.edgeVanish.clear();
     laneState.lanes = model.get("lanes") || [];
     laneState.laneById = new Map();
     laneState.cross = [];
-    const nodes = model.get("nodes") || [];
-    const edges = model.get("edges") || [];
+    const nodes = [...drawn.nodes.values()];
+    const edges = drawn.edges;
     const opts = getStylingOpts(model, nodes, edges);
 
     nodes.forEach((node) => {
@@ -515,15 +533,33 @@ function render({ model, el }) {
       graph.addNode(node.id, attrs);
     });
 
+    addEdges(edges, opts);
+  }
+
+  function addEdges(edges, opts) {
     edges.forEach((edge) => {
-      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
-      // Cross-lane edges are drawn on the overlay, not by sigma, and take no part in the layout
-      if (laneState.lanes.length && isCrossEdge(edge, laneState.laneById)) {
+      if (!drawable(edge.source) || !drawable(edge.target)) return;
+      // Cross-lane edges (and edges into an action lane) are drawn on the overlay, not by sigma, and take no part in the layout
+      if (laneState.lanes.length && overlayEdge(edge)) {
         laneState.cross.push({ source: edge.source, target: edge.target, key: crossKey(edge) });
         return;
       }
       graph.addEdge(edge.source, edge.target, buildEdgeAttrs(edge, opts));
     });
+  }
+
+  // The same items again (maybe with new properties): restyle them where they are, without a layout
+  function restyle() {
+    const nodes = [...drawn.nodes.values()];
+    const opts = getStylingOpts(model, nodes, drawn.edges);
+    for (const node of nodes) {
+      if (!graph.hasNode(node.id)) continue;
+      const { x, y, ...rest } = buildNodeAttrs(node, opts);
+      graph.mergeNodeAttributes(node.id, rest);
+    }
+    graph.clearEdges();
+    laneState.cross = [];
+    addEdges(drawn.edges, opts);
   }
 
   rebuildGraph();
@@ -565,7 +601,7 @@ function render({ model, el }) {
         break;
       case "cluster": {
         // Step 1: Group visible nodes by type
-        const nodes = model.get("nodes") || [];
+        const nodes = [...drawn.nodes.values()];
         const labelGroups = new Map();
         nodes.forEach((node) => {
           if (!visibleNodes.has(node.id)) return;
@@ -853,7 +889,7 @@ function render({ model, el }) {
     graph.forEachNode((node, attrs) => {
       if (attrs.lane === lane.id) ids.push(node);
     });
-    return columnPositions(ids, laneState.bands[index]);
+    return columnPositions(ids, insetBand(laneState.bands[index]));
   }
 
   // Each lane laid out on its own (forceAtlas2 from stable starting points), scaled into its band; pinned nodes stay.
@@ -882,7 +918,8 @@ function render({ model, el }) {
       sub.forEachNode((node, attrs) => {
         positions[node] = { x: attrs.x, y: attrs.y };
       });
-      for (const [node, position] of Object.entries(fitToBand(positions, laneState.bands[index]))) {
+      // Into the band less a margin, so no node sits under the lane's title or on its border
+      for (const [node, position] of Object.entries(fitToBand(positions, insetBand(laneState.bands[index])))) {
         if (!pinned[node]) graph.mergeNodeAttributes(node, position);
       }
     });
@@ -898,7 +935,7 @@ function render({ model, el }) {
     renderEdgeLabels: model.get("show_edge_labels"),
     defaultNodeColor: "#6366f1",
     defaultEdgeColor: "#94a3b8",
-    labelColor: { color: model.get("dark_mode") ? "#e0e0e0" : "#333" },
+    labelColor: { color: labelColor(model.get("theme"), model.get("dark_mode")) },
     labelSize: 12,
     labelWeight: "500",
     // LOD: only show labels for nodes above this rendered-size threshold
@@ -937,13 +974,16 @@ function render({ model, el }) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
     if (!laneState.lanes.length) return;
-    const theme = model.get("theme") || {};
-    const accent = theme.accent || "#5bb8a9";
+    // The widget's own colours: its light or dark defaults, or the host theme (applyHostTheme sets these variables)
+    const css = getComputedStyle(wrapper);
+    const color = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+    const accent = color("--awg-accent", "#0880ea"), muted = color("--awg-text-muted", "#9ca3af");
+    const panel = color("--awg-bg-secondary", "#f8f9fa"), border = color("--awg-border", "#e2e8f0");
     const now = performance.now();
 
     // Lane titles above each band; a column or action lane's title is centred over it
     ctx.font = "600 12px system-ui, -apple-system, sans-serif";
-    ctx.fillStyle = theme.muted || "#9aa2b0";
+    ctx.fillStyle = muted;
     laneState.lanes.forEach((lane, index) => {
       const band = laneState.bands[index];
       if (!band) return;
@@ -956,42 +996,18 @@ function render({ model, el }) {
     });
     ctx.textAlign = "left";
 
-    // Action lanes: a glyph button in the middle of the band (stacked bars in the lane's colours)
-    laneState.lanes.forEach((lane, index) => {
-      if (!lane.action || !laneState.bands[index]) return;
-      const center = actionCenter(index);
-      const hover = laneState.hoverAction === lane.id;
-      const colors = Array.isArray(lane.glyph) && lane.glyph.length ? lane.glyph : [accent, accent, accent];
-      ctx.fillStyle = theme.panel || "rgba(127, 127, 127, 0.12)";
-      ctx.strokeStyle = hover ? accent : theme.border || "rgba(127, 127, 127, 0.4)";
-      ctx.lineWidth = hover ? 1.6 : 1;
-      ctx.beginPath();
-      ctx.roundRect(center.x - 24, center.y - 24, 48, 48, 9);
-      ctx.fill();
-      ctx.stroke();
-      const barHeight = 7, gap = 4, total = colors.length * barHeight + (colors.length - 1) * gap;
-      colors.forEach((color, i) => {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(center.x - 14, center.y - total / 2 + i * (barHeight + gap), 28, barHeight, 2.5);
-        ctx.fill();
-      });
-      if (lane.caption) {
-        ctx.font = "500 11px system-ui, -apple-system, sans-serif";
-        ctx.fillStyle = hover ? accent : theme.muted || "#9aa2b0";
-        ctx.textAlign = "center";
-        ctx.fillText(lane.caption, center.x, center.y + 40);
-        ctx.textAlign = "left";
-        ctx.font = "600 12px system-ui, -apple-system, sans-serif";
-      }
-    });
-
-    // Cross-lane curves; an appearing one is drawn up to its progress
-    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id].filter(Boolean));
+    // Cross-lane curves (under the buttons, so a curve into an action lane ends at its button's edge); an appearing
+    // one is drawn up to its progress
+    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id, laneState.hoverAction].filter(Boolean));
+    const endPoint = (id) => {
+      // A node hidden by a filter or a search (or not yet appeared) hides its curves too
+      if (graph.hasNode(id)) return renderer.getNodeDisplayData(id)?.hidden ? null : renderer.graphToViewport(graph.getNodeAttributes(id));
+      const index = actionLaneIndex(id);
+      return index >= 0 && laneState.bands[index] ? actionCenter(index) : null;
+    };
     for (const edge of laneState.cross) {
-      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) continue;
-      const a = renderer.graphToViewport(graph.getNodeAttributes(edge.source));
-      const b = renderer.graphToViewport(graph.getNodeAttributes(edge.target));
+      const a = endPoint(edge.source), b = endPoint(edge.target);
+      if (!a || !b) continue;
       const start = laneState.crossAppear.get(edge.key);
       const t = start === undefined ? 1 : progress(start, now, 450);
       if (t <= 0) continue;
@@ -1004,12 +1020,77 @@ function render({ model, el }) {
       ctx.quadraticCurveTo(part.control.x, part.control.y, part.end.x, part.end.y);
       ctx.stroke();
     }
+
+    // Action lanes: a button in the middle of the band with the host's icon, glyph bars, or a neutral "open" icon
+    laneState.lanes.forEach((lane, index) => {
+      if (!lane.action || !laneState.bands[index]) return;
+      const center = actionCenter(index);
+      const hover = laneState.hoverAction === lane.id;
+      ctx.fillStyle = panel;
+      ctx.strokeStyle = hover ? accent : border;
+      ctx.lineWidth = hover ? 1.6 : 1;
+      ctx.beginPath();
+      ctx.roundRect(center.x - 24, center.y - 24, 48, 48, 9);
+      ctx.fill();
+      ctx.stroke();
+      drawLaneIcon(ctx, laneIcon(lane, accent), center, accent);
+      if (lane.caption) {
+        ctx.font = "500 11px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = hover ? accent : muted;
+        ctx.textAlign = "center";
+        ctx.fillText(lane.caption, center.x, center.y + 40);
+        ctx.textAlign = "left";
+        ctx.font = "600 12px system-ui, -apple-system, sans-serif";
+      }
+    });
+  }
+
+  // An action lane's icon inside its 48 px button: an image (loaded once, then redrawn), stacked bars, or "open"
+  const iconImages = new Map();
+  const OPEN_ICON = [new Path2D("M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"), new Path2D("M15 3h6v6"), new Path2D("M10 14 21 3")];
+  function drawLaneIcon(ctx, icon, center, accent) {
+    if (icon.kind === "image") {
+      let image = iconImages.get(icon.src);
+      if (!image) {
+        image = new Image();
+        image.onload = image.onerror = () => renderer.refresh();
+        image.src = icon.src;
+        iconImages.set(icon.src, image);
+      }
+      if (!image.complete) return;  // drawn once it has loaded
+      try {
+        // An SVG without a width or height has no natural size, but draws fine
+        ctx.drawImage(image, center.x - 16, center.y - 16, 32, 32);
+        return;
+      } catch {
+        icon = { kind: "open" };  // it did not load: the neutral icon instead
+      }
+    }
+    if (icon.kind === "bars") {
+      const barHeight = 7, gap = 4, total = icon.colors.length * barHeight + (icon.colors.length - 1) * gap;
+      icon.colors.forEach((color, i) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(center.x - 14, center.y - total / 2 + i * (barHeight + gap), 28, barHeight, 2.5);
+        ctx.fill();
+      });
+      return;
+    }
+    // The neutral "open" icon (a box with an arrow out of it), on a 24-unit grid scaled to 24 px
+    ctx.save();
+    ctx.translate(center.x - 12, center.y - 12);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const path of OPEN_ICON) ctx.stroke(path);
+    ctx.restore();
   }
 
   // A lane point in viewport pixels; sigma leaves its transform stale on an empty graph, so the overlay fits the lanes itself then
   function laneToViewport(point) {
     if (graph.order > 0 || !laneState.bands.length) return renderer.graphToViewport(point);
-    return fitBox(lanesBBox(laneState.bands), container.offsetWidth, container.offsetHeight)(point);
+    return fitBox(lanesBBox(laneState.bands), container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding"))(point);
   }
 
   // The middle of an action lane's band, in viewport pixels
@@ -1043,7 +1124,20 @@ function render({ model, el }) {
   let animating = false;
   function animate() {
     const now = performance.now();
-    const appearing = [...laneState.appear.values(), ...laneState.edgeAppear.values(), ...laneState.crossAppear.values()].some((start) => now - start < 450);
+    // Removed items leave the graph once they have faded out
+    for (const [key, start] of laneState.edgeVanish) {
+      if (now - start < 450) continue;
+      if (graph.hasEdge(key)) graph.dropEdge(key);
+      laneState.edgeVanish.delete(key);
+    }
+    for (const [id, start] of laneState.vanish) {
+      if (now - start < 450) continue;
+      if (graph.hasNode(id)) graph.dropNode(id);
+      laneState.laneById.delete(id);
+      laneState.vanish.delete(id);
+    }
+    const appearing = laneState.vanish.size > 0 || laneState.edgeVanish.size > 0
+      || [...laneState.appear.values(), ...laneState.edgeAppear.values(), ...laneState.crossAppear.values()].some((start) => now - start < 450);
     renderer.refresh();
     if (appearing || laneState.pulse.size) {
       requestAnimationFrame(animate);
@@ -1102,12 +1196,30 @@ function render({ model, el }) {
       if (t <= 0) res.hidden = true;
       res.size = (res.size || data.size) * t;
     }
+    const vanishAt = laneState.vanish.get(node);
+    if (vanishAt !== undefined) {
+      const t = progress(vanishAt, performance.now(), 450);
+      if (t >= 1) res.hidden = true;
+      res.size = (res.size || data.size) * (1 - t);
+    }
     if (laneState.pulse.has(node)) {
       res.size = (res.size || data.size) * pulseScale(performance.now());
       res.forceLabel = true;
     }
+    // An appended node placed with room for its label shows it, also where sigma's label grid would drop it
+    // (rows one label line apart share a grid cell); zoomed out the rows close up, and the grid decides again
+    if (data.labelRoom && renderer.getCamera().ratio <= 1) res.forceLabel = true;
 
     return res;
+  });
+
+  // Sigma runs the reducers on a refresh, not on a zoom: crossing the default view's scale refreshes, so labelRoom labels
+  // give way to the label grid when zoomed out and come back when zoomed in again
+  let zoomedOut = false;
+  renderer.getCamera().on("updated", (state) => {
+    if (state.ratio > 1 === zoomedOut) return;
+    zoomedOut = state.ratio > 1;
+    renderer.refresh();
   });
 
   // Edge reducer for type filtering and search filtering
@@ -1142,33 +1254,55 @@ function render({ model, el }) {
       if (t <= 0) res.hidden = true;
       res.size = (res.size || data.size) * t;
     }
+    if (laneState.edgeVanish.size || laneState.vanish.size) {
+      const [source, target] = graph.extremities(edge);
+      const starts = [laneState.edgeVanish.get(edge), laneState.vanish.get(source), laneState.vanish.get(target)].filter((start) => start !== undefined);
+      if (starts.length) {
+        const t = progress(Math.min(...starts), performance.now(), 450);
+        if (t >= 1) res.hidden = true;
+        res.size = (res.size || data.size) * (1 - t);
+      }
+    }
 
     return res;
   });
 
   // Incremental append: merge new nodes and edges without moving what is drawn; new items appear one after another
-  model.on("change:append_batch", () => {
-    const batch = model.get("append_batch") || {};
-    if (!batch.seq || batch.seq <= laneState.lastSeq) return;
+  function applyBatch(batch) {
     laneState.lastSeq = batch.seq;
     const nodes = batch.nodes || [], edges = batch.edges || [];
+    drawn = applyBatchItems(drawn, batch);
     const opts = getStylingOpts(model, nodes, edges);
     const animated = model.get("append_animation") !== "none";
+    const removed = removeDrawn(batch.remove || {}, animated);
     const schedule = staggerSchedule(nodes.length + edges.length, model.get("append_stagger_ms") ?? 60);
     const t0 = performance.now();
     const lanes = laneState.lanes;
+    // Without lanes, new nodes go inside the area already drawn, so sigma's camera keeps its scale and nothing moves
+    const extent = lanes.length ? null : extentBand(graph.mapNodes((node, attrs) => ({ x: attrs.x, y: attrs.y })));
+    // Spots taken per lane (one group without lanes), so appended nodes do not land on one another
+    const occupied = new Map();
+    const taken = (lane) => occupied.get(lane ?? "") || occupied.set(lane ?? "", []).get(lane ?? "");
+    graph.forEachNode((node, attrs) => {
+      if (!removed.has(node)) taken(attrs.lane).push({ x: attrs.x, y: attrs.y });
+    });
+    // A label's room in graph units, at the framed view (the lanes, or the drawn area without lanes)
+    const frame = lanes.length ? lanesBBox(laneState.bands) : extent && { x: [extent.x0, extent.x1], y: [extent.y0, extent.y1] };
+    const scale = frame ? fitScale(frame, container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding")) : 0;
+    const unit = scale > 0 ? { x: LABEL_COLUMN / scale, y: LABEL_ROW / scale } : undefined;
     let item = 0;
 
     nodes.forEach((node) => {
       const at = t0 + schedule[item++];
       if (graph.hasNode(node.id)) {
+        laneState.vanish.delete(node.id);  // removed and sent again (a re-sample): it stays
         const { x, y, ...rest } = buildNodeAttrs(node, opts);
         graph.mergeNodeAttributes(node.id, rest);  // properties update, position stays
         return;
       }
       const lane = lanes.length ? laneOf(node, lanes) : undefined;
       const laneIndex = lanes.length ? lanes.findIndex((l) => l.id === lane) : 0;
-      const band = laneState.bands[laneIndex] || laneBands(lanes.length ? lanes : [{ id: "" }])[Math.max(0, laneIndex)];
+      const band = lanes.length ? insetBand(laneState.bands[laneIndex] || laneBands(lanes)[laneIndex]) : extent || laneBands([{ id: "" }])[0];
       const cross = [], laneNeighbours = [];
       for (const edge of edges) {
         const other = edge.source === node.id ? edge.target : edge.target === node.id ? edge.source : null;
@@ -1176,7 +1310,10 @@ function render({ model, el }) {
         const position = graph.getNodeAttributes(other);
         (lane && laneState.laneById.get(other) !== lane ? cross : laneNeighbours).push({ x: position.x, y: position.y });
       }
-      graph.addNode(node.id, { ...buildNodeAttrs(node, opts), ...placeAppended(node.id, { cross, lane: laneNeighbours }, band), lane });
+      const spot = placeAppended(node.id, { cross, lane: laneNeighbours, occupied: taken(lane), unit }, band);
+      taken(lane).push(spot);
+      // labelRoom: placed with its label clear of every other one, so the label shows (see the node reducer)
+      graph.addNode(node.id, { ...buildNodeAttrs(node, opts), x: spot.x, y: spot.y, lane, labelRoom: Boolean(unit) && !spot.crowded });
       if (lane) laneState.laneById.set(node.id, lane);
       if (lanes[laneIndex]?.arrange === "column") {
         for (const [id, position] of Object.entries(arrangeColumn(lanes[laneIndex], laneIndex))) graph.mergeNodeAttributes(id, position);
@@ -1186,8 +1323,8 @@ function render({ model, el }) {
 
     edges.forEach((edge) => {
       const at = t0 + schedule[item++];
-      if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
-      if (lanes.length && isCrossEdge(edge, laneState.laneById)) {
+      if (!drawable(edge.source) || !drawable(edge.target)) return;
+      if (lanes.length && overlayEdge(edge)) {
         const key = crossKey(edge);
         if (laneState.cross.some((c) => c.key === key)) return;
         laneState.cross.push({ source: edge.source, target: edge.target, key });
@@ -1195,14 +1332,56 @@ function render({ model, el }) {
         return;
       }
       const label = edge.label || "";
-      if (graph.edges(edge.source, edge.target).some((key) => graph.getEdgeAttribute(key, "label") === label)) return;
+      const existing = graph.edges(edge.source, edge.target).find((key) => (graph.getEdgeAttribute(key, "label") || "") === label);
+      if (existing !== undefined) {
+        laneState.edgeVanish.delete(existing);  // removed and sent again: it stays
+        return;
+      }
       const key = graph.addEdge(edge.source, edge.target, buildEdgeAttrs(edge, opts));
       if (animated) laneState.edgeAppear.set(key, at);
     });
 
     if (animated) startAnimating();
     else renderer.refresh();
-  });
+  }
+
+  // A batch's removals: the nodes (with their edges and cross-lane curves) and edges fade out, then leave the graph
+  // (at once without animation). Nothing is laid out again. Returns the ids of the removed nodes.
+  function removeDrawn(remove, animated) {
+    const ids = new Set((remove.nodes || []).filter((id) => graph.hasNode(id)));
+    const specs = remove.edges || [];
+    const edgeKeys = [];
+    for (const spec of specs) {
+      if (!graph.hasNode(spec.source) || !graph.hasNode(spec.target)) continue;
+      for (const key of graph.edges(spec.source, spec.target)) {
+        if (edgeMatches({ ...spec, label: graph.getEdgeAttribute(key, "label") }, spec)) edgeKeys.push(key);
+      }
+    }
+    laneState.cross = laneState.cross.filter((c) => !ids.has(c.source) && !ids.has(c.target) && !specs.some((spec) => spec.source === c.source && spec.target === c.target));
+    if (!ids.size && !edgeKeys.length) return ids;
+    // Without lanes sigma frames the drawn extent: keep that framing, so the rest does not move when these leave
+    if (!laneState.lanes.length) renderer.setCustomBBox(renderer.getBBox());
+    const start = performance.now();
+    for (const key of edgeKeys) {
+      if (animated) laneState.edgeVanish.set(key, start);
+      else graph.dropEdge(key);
+    }
+    for (const id of ids) {
+      laneState.appear.delete(id);
+      if (animated) {
+        laneState.vanish.set(id, start);
+      } else {
+        graph.dropNode(id);
+        laneState.laneById.delete(id);
+      }
+    }
+    // A removed node leaves the selection (else everything else stays dimmed)
+    const selected = model.get("selected_nodes") || [];
+    if (selected.some((id) => ids.has(id))) model.set("selected_nodes", selected.filter((id) => !ids.has(id)));
+    if (ids.has(model.get("selected_node")?.id)) model.set("selected_node", null);
+    model.save_changes();
+    return ids;
+  }
 
   // Pulsing nodes: a soft breath on the ids in pulse_nodes, until the list is empty
   function applyPulse() {
@@ -1210,7 +1389,7 @@ function render({ model, el }) {
     if (laneState.pulse.size) startAnimating();
     else renderer.refresh();
   }
-  model.on("change:pulse_nodes", applyPulse);
+  applyPulse();
 
   model.on("change:selected_nodes", () => { renderer.refresh(); });
   model.on("change:pinned_nodes", () => { renderer.refresh(); });
@@ -1590,7 +1769,7 @@ function render({ model, el }) {
   renderer.on("clickStage", (payload) => {
     const lane = payload?.event ? actionAt({ x: payload.event.x, y: payload.event.y }) : null;
     if (lane) {
-      model.set("lane_action", { lane: lane.id, seq: ++laneState.actionSeq });
+      model.set("lane_action", nextLaneAction(lane.id, model.get("lane_action")));
       model.save_changes();
       return;
     }
@@ -1622,8 +1801,9 @@ function render({ model, el }) {
       if (selected.length === 0) return;
       e.preventDefault();
       const removeSet = new Set(selected);
-      const nodes = (model.get("nodes") || []).filter(n => !removeSet.has(n.id));
-      const edges = (model.get("edges") || []).filter(
+      // From the drawn data, so appended items the host's lists may not hold stay
+      const nodes = [...drawn.nodes.values()].filter(n => !removeSet.has(n.id));
+      const edges = drawn.edges.filter(
         edge => !removeSet.has(edge.source) && !removeSet.has(edge.target)
       );
       model.set("nodes", nodes);
@@ -1648,8 +1828,61 @@ function render({ model, el }) {
     model.save_changes();
   });
 
-  // Update graph when data or styling changes
-  function onDataOrStyleChange() {
+  // What the host changes together (lanes, nodes and edges, a style, a batch, pulses) is drawn once, in this order,
+  // after it has all arrived: a host that sets lanes, nodes and edges one by one gets one layout, not three
+  const pending = new Set();
+  function queueSync(kind) {
+    if (!pending.size) queueMicrotask(sync);
+    pending.add(kind);
+  }
+
+  function sync() {
+    const changed = new Set(pending);
+    pending.clear();
+    // The widget's own write-back of what it draws: nothing to do
+    if (written && model.get("nodes") === written.nodes && model.get("edges") === written.edges) changed.delete("data");
+    const batch = model.get("append_batch") || {};
+    const fresh = batch.seq > laneState.lastSeq ? batch : null;
+    let redraw = changed.has("lanes") || changed.has("style");
+    if (changed.has("data")) {
+      const nodes = model.get("nodes") || [], edges = model.get("edges") || [];
+      // Graph.append sends its merged lists with the batch: a copy of what is drawn plus the batch, nothing to lay out
+      if (!sameItems(fresh ? applyBatchItems(drawn, fresh) : drawn, nodes, edges)) {
+        drawn = mergeItems(undefined, nodes, edges);
+        redraw = true;
+      } else if (!fresh) {
+        // The same items, maybe with new properties
+        drawn = mergeItems(undefined, nodes, edges);
+        if (!redraw) {
+          restyle();
+          renderer.refresh();
+        }
+      }
+    }
+    if (redraw) redrawAll();
+    if (fresh) {
+      applyBatch(fresh);
+      writeBack();
+    }
+    // An active search takes in the redrawn or appended nodes
+    if ((redraw || fresh) && searchTerm) onSearch(searchTerm);
+    if (redraw || fresh || changed.has("pulse")) applyPulse();
+  }
+
+  // The model's nodes and edges hold what is drawn. After a batch the host has not merged into them itself (as
+  // Graph.append does), the widget writes the merged lists back, so the node count, the results table, the schema
+  // panel and the host see the appended items too.
+  let written = null;
+  function writeBack() {
+    if (sameItems(drawn, model.get("nodes") || [], model.get("edges") || [])) return;
+    written = { nodes: [...drawn.nodes.values()], edges: [...drawn.edges] };
+    model.set("nodes", written.nodes);
+    model.set("edges", written.edges);
+    model.save_changes();
+  }
+
+  // Redraw from the drawn data: rebuild, lay out, fit the camera
+  function redrawAll() {
     rebuildGraph();
     applyLayout(model.get("layout") || "spring");
 
@@ -1663,18 +1896,14 @@ function render({ model, el }) {
     renderer.getCamera().animatedReset({ duration: 300 });
   }
 
-  model.on("change:nodes", onDataOrStyleChange);
-  model.on("change:lanes", onDataOrStyleChange);
-  model.on("change:edges", onDataOrStyleChange);
-  model.on("change:color_field", onDataOrStyleChange);
-  model.on("change:color_scale", onDataOrStyleChange);
-  model.on("change:color_domain", onDataOrStyleChange);
-  model.on("change:size_field", onDataOrStyleChange);
-  model.on("change:size_range", onDataOrStyleChange);
-  model.on("change:edge_color_field", onDataOrStyleChange);
-  model.on("change:edge_color_scale", onDataOrStyleChange);
-  model.on("change:edge_size_field", onDataOrStyleChange);
-  model.on("change:edge_size_range", onDataOrStyleChange);
+  model.on("change:nodes", () => queueSync("data"));
+  model.on("change:edges", () => queueSync("data"));
+  model.on("change:lanes", () => queueSync("lanes"));
+  model.on("change:append_batch", () => queueSync("batch"));
+  model.on("change:pulse_nodes", () => queueSync("pulse"));
+  for (const name of ["color_field", "color_scale", "color_domain", "size_field", "size_range", "edge_color_field", "edge_color_scale", "edge_size_field", "edge_size_range"]) {
+    model.on(`change:${name}`, () => queueSync("style"));
+  }
 
   // Layout change handler
   model.on("change:layout", refreshLayout);

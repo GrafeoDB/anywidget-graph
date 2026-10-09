@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.1 2026-10-09
+
+### Features
+
+- **Remove in a batch**: `Graph.remove(nodes, edges)` (or `remove` in the `append_batch` a host sets) takes nodes (with every edge touching them) and edges out of the drawing; they fade out and nothing is laid out again. One batch can remove and add (a re-sample): an item removed and sent again stays where it is, with its new properties
+- **Totals from the host**: `totals` (`{"nodes": {"<type>": n}, "edges": {"<type>": n}}`) shows "shown / total" in the count badge and the schema panel, for a host that sends a sample of a larger graph; a type the sample lacks shows as 0
+- **Edges into an action lane**: an edge whose end is an action lane's id draws as a curve into its button, like the cross-lane curves (draws in, can be removed, lights up with its node, hides with it)
+- **Lane icons**: an action lane shows the host's `icon` (SVG markup, where `currentColor` takes the accent, or an image URL); `glyph` colours still draw stacked bars, and without either a neutral "open" icon shows (it used to be stacked bars, a model icon)
+- `_features` adds `lane_icons`, `action_edges`, `remove` and `totals`
+
+### Improvements
+
+- **Appended items stay**: `append()` also merges its items into `nodes` and `edges`, so `to_json()`, `to_html()` and a widget shown again include them; the widget sees the lists match what it draws and does not lay out again. Changing `lanes` or a style keeps appended items (it used to drop them); setting `nodes` or `edges` to other data still replaces everything drawn
+- **The model holds what is drawn**: a host that sets `append_batch` itself (without `Graph.append`) gets the merged lists written back into `nodes` and `edges`, so the node count, the results table, the schema panel and the host see appended items too
+- **Search across lanes**: a search also shows a match's partners in the other lanes, with the curves between them
+- **Lane margins**: nodes keep a margin (6% per side) from their lane's edges, so none sits right under the lane title or on the border; laid-out, column and appended nodes alike
+- **Lane colours from the widget**: the lane overlay (titles, buttons, curves) takes the widget's light or dark colours for a key the host theme leaves out (it fell back to fixed colours)
+- **One redraw per change**: lanes, nodes, edges and style changes that arrive together are drawn once (a host that sets `lanes`, `nodes` and `edges` one after another got three layouts)
+- **Dependencies**: the `dev` extra and group require `pytest>=9.1`, `ruff>=0.16` and `prek>=0.5`; the `pandas` extra requires `pandas>=3`, `cosmosdb` requires `gremlinpython>=3.8`
+
+### Bug Fixes
+
+- Fixed `append()` without lanes moving the drawn graph: new nodes now go next to their neighbours inside the area already drawn, so the camera keeps its scale (they were placed on a fixed 1000-unit square, which could make sigma rescale)
+- Fixed cross-lane curves still drawn to a node hidden by a filter or a search
+- Fixed `theme` keeping old colours when a key is left out or the theme is cleared, and a `dark_mode` change resetting the label colour the theme sets
+- Fixed a click on an action lane's glyph going unreported in a widget shown twice (or shown again): `lane_action.seq` now counts on from the model's value instead of from 1 in every view
+- Fixed the Delete key dropping appended items it did not delete
+- Fixed `pulse_nodes` set before the widget renders being ignored
+- Fixed nodes appended (or redrawn) during an active search staying hidden even when they match it
+- Fixed appended nodes and their labels landing on top of each other: ids that differ only at the end (`n1`, `n2`, ...) got nearly the same spot, and nodes next to the same neighbour could share one. Nodes of the same neighbours now stack as rows at its height, one label line apart (then in the next column), clear of the labels already drawn, and their labels show at the default zoom (sigma's label grid dropped all but two of a stack)
+- Fixed lane titles sitting at the top edge of an empty canvas, and the lanes jumping when the first node arrived (for example at the start of a live append): an empty canvas is now framed with sigma's stage padding, like a canvas with nodes
+
 ## 0.4.0 2026-10-09
 
 ### Features

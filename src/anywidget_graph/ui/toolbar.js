@@ -3,6 +3,7 @@
  */
 import { ICONS } from "./icons.js";
 import { updateStatusDot } from "./settings.js";
+import { shownOf, totalShown, nodeType, edgeType } from "./lanes.js";
 
 /**
  * Create the toolbar component.
@@ -93,14 +94,18 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
   // Count badge
   const countBadge = document.createElement("span");
   countBadge.className = "awg-count-badge";
+  // "300 / 30,000 nodes" when the host gives totals (it may hold far more than it sends)
   function updateCount() {
     const nodes = model.get("nodes") || [];
     const edges = model.get("edges") || [];
-    countBadge.textContent = `${nodes.length} nodes \u00b7 ${edges.length} edges`;
+    const totals = model.get("totals") || {};
+    const shownNodes = shownOf(nodes.length, totalShown(nodes, nodeType, totals.nodes));
+    countBadge.textContent = `${shownNodes} nodes \u00b7 ${shownOf(edges.length, totalShown(edges, edgeType, totals.edges))} edges`;
   }
   updateCount();
   model.on("change:nodes", updateCount);
   model.on("change:edges", updateCount);
+  model.on("change:totals", updateCount);
   toolbar.appendChild(countBadge);
 
   // Query timing badge

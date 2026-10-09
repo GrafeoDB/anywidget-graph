@@ -151,6 +151,9 @@ class Graph(anywidget.AnyWidget):
     theme = traitlets.Dict(default_value={}).tag(sync=True)
     # A click on an action lane's glyph: {"lane": <lane id>, "seq": <n>} (seq counts up, so repeated clicks are seen)
     lane_action = traitlets.Dict(default_value={}).tag(sync=True)
+    # Totals from the host when it sends a sample: {"nodes": {"<type>": n}, "edges": {"<type>": n}}; the count badge
+    # and the schema panel show "shown / total" (a type without a total shows its count only)
+    totals = traitlets.Dict(default_value={}).tag(sync=True)
     _features = traitlets.List(default_value=[]).tag(sync=True)
 
     def __init__(
@@ -250,10 +253,54 @@ class Graph(anywidget.AnyWidget):
     def append(self, nodes: list[dict[str, Any]] | None = None, edges: list[dict[str, Any]] | None = None) -> None:
         """Add nodes and edges to the drawn graph without a re-layout (merged by id).
 
-        Existing nodes keep their positions.
+        Existing nodes keep their positions. The items are also merged into ``nodes`` and ``edges`` (a node by id,
+        its properties updated; an edge once per source, target and label), so ``to_json()``, ``to_html()`` and a
+        widget shown again include them; the widget sees the lists match what it draws and does not lay out again.
         """
+        nodes, edges = list(nodes or []), list(edges or [])
+        merged_nodes = {node["id"]: node for node in self.nodes}
+        for node in nodes:
+            merged_nodes[node["id"]] = {**merged_nodes.get(node["id"], {}), **node}
+        edge_keys = {(e["source"], e["target"], e.get("label") or "") for e in self.edges}
+        merged_edges = list(self.edges)
+        for edge in edges:
+            key = (edge["source"], edge["target"], edge.get("label") or "")
+            if key not in edge_keys:
+                edge_keys.add(key)
+                merged_edges.append(edge)
         seq = int(self.append_batch.get("seq", 0)) + 1
-        self.append_batch = {"seq": seq, "nodes": list(nodes or []), "edges": list(edges or [])}
+        with self.hold_sync():
+            self.nodes = list(merged_nodes.values())
+            self.edges = merged_edges
+            self.append_batch = {"seq": seq, "nodes": nodes, "edges": edges}
+
+    def remove(self, nodes: list[str] | None = None, edges: list[dict[str, Any]] | None = None) -> None:
+        """Take nodes (with every edge touching them) and edges out of the drawn graph without a re-layout.
+
+        They fade out; the rest stays where it is. An edge is ``{"source", "target"}`` (every edge between those ends)
+        or with a ``"label"`` (that edge only). They also leave ``nodes`` and ``edges``.
+        """
+        ids, specs = set(nodes or []), list(edges or [])
+
+        def named(edge: dict[str, Any]) -> bool:
+            return any(
+                edge["source"] == spec["source"]
+                and edge["target"] == spec["target"]
+                and (spec.get("label") is None or (edge.get("label") or "") == spec["label"])
+                for spec in specs
+            )
+
+        kept_edges = [e for e in self.edges if e["source"] not in ids and e["target"] not in ids and not named(e)]
+        seq = int(self.append_batch.get("seq", 0)) + 1
+        with self.hold_sync():
+            self.nodes = [n for n in self.nodes if n["id"] not in ids]
+            self.edges = kept_edges
+            self.append_batch = {
+                "seq": seq,
+                "nodes": [],
+                "edges": [],
+                "remove": {"nodes": list(nodes or []), "edges": specs},
+            }
 
     @property
     def backend(self) -> DatabaseBackend | None:

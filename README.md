@@ -34,17 +34,19 @@ uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
 ```python
 from anywidget_graph import Graph
 
-graph = Graph.from_dict({
-    "nodes": [
-        {"id": "alice", "label": "Alice", "group": "person"},
-        {"id": "bob", "label": "Bob", "group": "person"},
-        {"id": "paper", "label": "Graph Theory", "group": "document"},
-    ],
-    "edges": [
-        {"source": "alice", "target": "bob", "label": "knows"},
-        {"source": "alice", "target": "paper", "label": "authored"},
-    ]
-})
+graph = Graph.from_dict(
+    {
+        "nodes": [
+            {"id": "alice", "label": "Alice", "group": "person"},
+            {"id": "bob", "label": "Bob", "group": "person"},
+            {"id": "paper", "label": "Graph Theory", "group": "document"},
+        ],
+        "edges": [
+            {"source": "alice", "target": "bob", "label": "knows"},
+            {"source": "alice", "target": "paper", "label": "authored"},
+        ],
+    }
+)
 
 graph
 ```
@@ -54,10 +56,7 @@ graph
 ### Dictionary
 
 ```python
-graph = Graph.from_dict({
-    "nodes": [{"id": "a"}, {"id": "b"}],
-    "edges": [{"source": "a", "target": "b"}]
-})
+graph = Graph.from_dict({"nodes": [{"id": "a"}, {"id": "b"}], "edges": [{"source": "a", "target": "b"}]})
 ```
 
 ### Direct initialization
@@ -142,13 +141,16 @@ graph = Graph.from_dataframe(nodes_df, edges_df)
 ```python
 graph = Graph.from_dict(data)
 
+
 @graph.on_node_click
 def handle_node(node_id, node_data):
     print(f"Clicked: {node_id}")
 
+
 @graph.on_edge_click
 def handle_edge(edge_data):
     print(f"Edge: {edge_data['label']}")
+
 
 @graph.on_selection
 def handle_selection(node_ids):
@@ -158,29 +160,29 @@ def handle_selection(node_ids):
 ### Selection
 
 ```python
-graph.selected_nodes            # Current selection (list of IDs)
-graph.selection_mode = "box"    # Switch to box-select mode
+graph.selected_nodes  # Current selection (list of IDs)
+graph.selection_mode = "box"  # Switch to box-select mode
 ```
 
 ### Node expansion
 
 ```python
-graph.expand_node("alice")      # Fetch and merge neighbors (requires backend)
+graph.expand_node("alice")  # Fetch and merge neighbors (requires backend)
 ```
 
 ### Node pinning
 
 ```python
-graph.pin_nodes(["alice", "bob"])   # Pin at current positions
-graph.unpin_nodes(["alice"])        # Release back to layout
-graph.toggle_pin("bob")            # Toggle pin state
-graph.unpin_all()                   # Unpin everything
+graph.pin_nodes(["alice", "bob"])  # Pin at current positions
+graph.unpin_nodes(["alice"])  # Release back to layout
+graph.toggle_pin("bob")  # Toggle pin state
+graph.unpin_all()  # Unpin everything
 ```
 
 ### Clear
 
 ```python
-graph.clear()                   # Remove all nodes, edges, pins, and selection
+graph.clear()  # Remove all nodes, edges, pins, and selection
 ```
 
 ### Linked lanes and live append
@@ -194,16 +196,26 @@ graph = Graph(
     edges=[{"source": "a", "target": "b"}, {"source": "x", "target": "a", "cross": True}],
 )
 graph.append(nodes=[{"id": "y", "lane": "target"}], edges=[{"source": "y", "target": "b"}])
-graph.pulse_nodes = ["b"]       # a soft pulse on these nodes; [] stops it
-graph.theme = {"background": "#0d1416", "panel": "#121b1e", "text": "#dbe7e5", "muted": "#8ea3a3", "border": "#1e2b2f", "accent": "#5bb8a9"}
+graph.remove(nodes=["x"])  # fades out, nothing else moves
+graph.pulse_nodes = ["b"]  # a soft pulse on these nodes; [] stops it
+graph.theme = {
+    "background": "#0d1416",
+    "panel": "#121b1e",
+    "text": "#dbe7e5",
+    "muted": "#8ea3a3",
+    "border": "#1e2b2f",
+    "accent": "#5bb8a9",
+}
 ```
 
-- `lanes`: lanes left to right; a node's `lane` picks one (a node without a known lane goes to the first). Edges between lanes (or marked `cross`) are drawn as soft curves above both lanes and light up when either end is hovered or selected. Without `lanes` the widget behaves as before.
-- `append(nodes, edges)`: adds items without a re-layout; existing nodes keep their positions, a new node is placed at the height of its neighbours in other lanes (or next to its neighbours in its lane). New items fade in and edges draw from source to target, `append_stagger_ms` (default 60) apart; a large batch is kept under 1.5 s. `append_animation="none"` turns the animation off.
-- Lane options: `width` is a lane's share of the standard width (default 1); `arrange: "column"` stacks the lane's nodes in the middle of its band (for a few roots, such as repositories, whose edges then fan out into the next lane); `action: True` makes a lane without nodes that shows a glyph button (`glyph`: a list of colours drawn as stacked bars, `caption`: text under it). The camera frames all lanes, and the lanes stretch to the canvas's shape.
-- `lane_action`: set to `{"lane": <id>, "seq": <n>}` when an action lane's glyph is clicked, so the host can respond (open a panel, switch a view).
+- `lanes`: lanes left to right; a node's `lane` picks one (a node without a known lane goes to the first). Edges between lanes (or marked `cross`) are drawn as soft curves above both lanes and light up when either end is hovered or selected; a search also shows a match's partners in the other lanes. Without `lanes` the widget behaves as before.
+- `append(nodes, edges)`: adds items without a re-layout; existing nodes keep their positions, a new node is placed at the height of its neighbours in other lanes, where nodes of the same neighbours stack as rows one label line apart with their labels shown (or next to its neighbours in its lane; without lanes, next to its neighbours inside the area already drawn). The items are also merged into `nodes` and `edges`, so `to_json()`, `to_html()` and a widget shown again include them (a host that sets `append_batch` itself gets the merged lists written back by the widget). Changing `lanes` or a style keeps appended items; setting `nodes` or `edges` to other data replaces everything drawn. New items fade in and edges draw from source to target, `append_stagger_ms` (default 60) apart; a large batch is kept under 1.5 s. `append_animation="none"` turns the animation off.
+- `remove(nodes, edges)`: takes nodes (with every edge touching them) and edges out without a re-layout; they fade out and leave `nodes` and `edges`. An edge is `{"source", "target"}` (every edge between those ends) or with a `"label"` (that edge only). A host that sets `append_batch` itself puts them under `remove`: `{"seq": n, "nodes": [...], "edges": [...], "remove": {"nodes": [ids], "edges": [...]}}`; removals come first, so one batch can re-sample (an item removed and sent again stays where it is).
+- Lane options: `width` is a lane's share of the standard width (default 1); `arrange: "column"` stacks the lane's nodes in the middle of its band (for a few roots, such as repositories, whose edges then fan out into the next lane); `action: True` makes a lane without nodes that shows a button, with the host's `icon` (SVG markup, where `currentColor` takes the accent colour, or an image URL), or `glyph` (a list of colours drawn as stacked bars), else a neutral "open" icon; `caption` is text under it. An edge whose end is an action lane's id (and no node) is drawn as a curve into its button, like the cross-lane curves. The camera frames all lanes, and the lanes stretch to the canvas's shape.
+- `lane_action`: set to `{"lane": <id>, "seq": <n>}` when an action lane's glyph is clicked, so the host can respond (open a panel, switch a view). `seq` counts on from the value the model holds, so every click is a change, also in a widget shown twice.
 - `pulse_nodes`: ids that pulse softly.
-- `theme`: host colours (`background`, `panel`, `text`, `muted`, `border`, `accent`) that replace the widget's light and dark defaults.
+- `totals`: for a host that sends a sample of a larger graph, `{"nodes": {"<type>": n}, "edges": {"<type>": n}}` (types as the schema panel groups them: a node's first label, an edge's type). The count badge and the schema panel show "shown / total"; a type the sample lacks shows as 0, a type without a total shows its count (and counts as shown in full).
+- `theme`: host colours (`background`, `panel`, `text`, `muted`, `border`, `accent`) that replace the widget's light and dark defaults; a key left out (or `theme = {}`) brings the default back.
 - `_features`: the widget sets the capabilities it supports when it renders, so a host can detect an older build.
 
 ## Styling
@@ -213,10 +225,10 @@ graph.theme = {"background": "#0d1416", "panel": "#121b1e", "text": "#dbe7e5", "
 ```python
 graph = Graph.from_dict(
     data,
-    color_field="group",               # Color nodes by field
-    color_scale="viridis",             # Scale: viridis, plasma, inferno, magma, cividis, turbo
-    size_field="score",                # Size nodes by field
-    size_range=[5, 30],                # Min/max node size
+    color_field="group",  # Color nodes by field
+    color_scale="viridis",  # Scale: viridis, plasma, inferno, magma, cividis, turbo
+    size_field="score",  # Size nodes by field
+    size_range=[5, 30],  # Min/max node size
 )
 ```
 
@@ -232,7 +244,7 @@ graph.edge_size_range = [1, 8]
 ### Layouts
 
 ```python
-Graph.from_dict(data, layout="force")      # ForceAtlas2 (default)
+Graph.from_dict(data, layout="force")  # ForceAtlas2 (default)
 Graph.from_dict(data, layout="circular")
 Graph.from_dict(data, layout="random")
 ```
@@ -243,19 +255,19 @@ Graph.from_dict(data, layout="random")
 graph = Graph(
     nodes=nodes,
     edges=edges,
-    width=800,                  # Widget width (px)
-    height=600,                 # Widget height (px)
-    fill=False,                 # Take the host's size and follow resizes (ignores width/height)
-    background="#fafafa",       # Background color
-    show_labels=True,           # Node labels
-    show_edge_labels=False,     # Edge labels
-    show_toolbar=True,          # Toolbar visibility
-    show_settings=True,         # Settings panel
-    show_query_input=True,      # Query input box
-    dark_mode=True,             # Dark theme
-    show_tooltip=True,          # Hover tooltips
+    width=800,  # Widget width (px)
+    height=600,  # Widget height (px)
+    fill=False,  # Take the host's size and follow resizes (ignores width/height)
+    background="#fafafa",  # Background color
+    show_labels=True,  # Node labels
+    show_edge_labels=False,  # Edge labels
+    show_toolbar=True,  # Toolbar visibility
+    show_settings=True,  # Settings panel
+    show_query_input=True,  # Query input box
+    dark_mode=True,  # Dark theme
+    show_tooltip=True,  # Hover tooltips
     tooltip_fields=["label", "id"],
-    max_nodes=300,              # Limit for node expansion
+    max_nodes=300,  # Limit for node expansion
 )
 ```
 
@@ -269,6 +281,7 @@ Grafeo runs in one of three modes, picked with `grafeo_connection_mode` or in th
 
 ```python
 import grafeo
+
 db = grafeo.GrafeoDB()
 graph = Graph(database_backend="grafeo", grafeo_db=db, query_language="gql")
 ```
@@ -291,6 +304,7 @@ Try it without any setup:
 
 ```python
 from anywidget_graph.demo import demo_graph
+
 demo_graph()  # WASM mode with a small movie graph loaded
 ```
 
@@ -314,10 +328,10 @@ graph = Graph(backend=my_backend)  # Any object implementing DatabaseBackend pro
 ## Export
 
 ```python
-graph.to_json()                         # JSON string with nodes and edges
-graph.to_html()                         # Self-contained HTML string
-graph.to_html(title="My Graph")         # Custom title
-graph.save_html("graph.html")           # Write HTML to file
+graph.to_json()  # JSON string with nodes and edges
+graph.to_html()  # Self-contained HTML string
+graph.to_html(title="My Graph")  # Custom title
+graph.save_html("graph.html")  # Write HTML to file
 ```
 
 ## Environment Support

@@ -7,6 +7,7 @@ import { ICONS } from "./icons.js";
 import { fetchSchema as neo4jFetchSchema } from "./neo4j.js";
 import { fetchSchema as grafeoFetchSchema } from "./grafeo.js";
 import { fetchSchema as grafeoEmbedFetchSchema } from "./grafeo-embed.js";
+import { withTotals, shownOf, nodeType, edgeType } from "./lanes.js";
 
 const FILTER_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
@@ -20,7 +21,8 @@ function hashColor(str) {
 }
 
 /**
- * Extract node types and edge types from current graph data.
+ * Extract node types and edge types from current graph data, with the host's totals ({nodes: {type: n},
+ * edges: {type: n}}) when it gives them: "shown / total", and a type the data lacks as 0.
  */
 function extractTypesFromData(model) {
   const nodes = model.get("nodes") || [];
@@ -29,9 +31,7 @@ function extractTypesFromData(model) {
   // Node types: group by first label, or "Unlabeled"
   const nodeTypeMap = new Map();
   nodes.forEach((node) => {
-    const typeKey = (node.labels && node.labels.length > 0)
-      ? node.labels[0]
-      : (node.label || "Unlabeled");
+    const typeKey = nodeType(node);
     if (!nodeTypeMap.has(typeKey)) nodeTypeMap.set(typeKey, 0);
     nodeTypeMap.set(typeKey, nodeTypeMap.get(typeKey) + 1);
   });
@@ -39,18 +39,15 @@ function extractTypesFromData(model) {
   // Edge types: group by label/type
   const edgeTypeMap = new Map();
   edges.forEach((edge) => {
-    const typeKey = edge.type || edge.label || "unknown";
+    const typeKey = edgeType(edge);
     if (!edgeTypeMap.has(typeKey)) edgeTypeMap.set(typeKey, 0);
     edgeTypeMap.set(typeKey, edgeTypeMap.get(typeKey) + 1);
   });
 
+  const totals = model.get("totals") || {};
   return {
-    nodeTypes: [...nodeTypeMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([label, count]) => ({ label, count })),
-    edgeTypes: [...edgeTypeMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([type, count]) => ({ type, count })),
+    nodeTypes: withTotals(nodeTypeMap, totals.nodes).map(({ name, count, total }) => ({ label: name, count, total })),
+    edgeTypes: withTotals(edgeTypeMap, totals.edges).map(({ name, count, total }) => ({ type: name, count, total })),
   };
 }
 
@@ -207,11 +204,12 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 
       section.appendChild(sectionHeader);
 
-      nodeTypes.forEach(({ label, count }) => {
+      nodeTypes.forEach(({ label, count, total }) => {
         const props = nodePropsMap.get(label) || [];
         const item = createFilterItem({
           name: label,
           count,
+          total,
           color: typeColorMap.get(label) || hashColor(label),
           kind: "node",
           properties: props,
@@ -271,11 +269,12 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 
       section.appendChild(sectionHeader);
 
-      edgeTypes.forEach(({ type, count }) => {
+      edgeTypes.forEach(({ type, count, total }) => {
         const props = edgePropsMap.get(type) || [];
         const item = createFilterItem({
           name: type,
           count,
+          total,
           color: typeColorMap.get(type) || hashColor(type),
           kind: "edge",
           properties: props,
@@ -302,6 +301,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
   model.on("change:edges", renderFilters);
   model.on("change:schema_node_types", renderFilters);
   model.on("change:schema_edge_types", renderFilters);
+  model.on("change:totals", renderFilters);
   renderFilters();
 
   panel.appendChild(content);
@@ -318,7 +318,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 /**
  * Create a single filter item with checkbox, color swatch, name, and count.
  */
-function createFilterItem({ name, count, color, kind, properties, isHidden, onToggle, onColorChange, onQuery }) {
+function createFilterItem({ name, count, total, color, kind, properties, isHidden, onToggle, onColorChange, onQuery }) {
   const item = document.createElement("div");
   item.className = "awg-schema-item" + (isHidden ? " awg-filter-hidden" : "");
 
@@ -365,7 +365,7 @@ function createFilterItem({ name, count, color, kind, properties, isHidden, onTo
   // Count badge
   const countSpan = document.createElement("span");
   countSpan.className = "awg-filter-count";
-  countSpan.textContent = count;
+  countSpan.textContent = shownOf(count, total);
   itemHeader.appendChild(countSpan);
 
   // Expand arrow (only if properties)
