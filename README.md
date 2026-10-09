@@ -212,8 +212,14 @@ graph.theme = {
 - `append(nodes, edges)`: adds items without a re-layout; existing nodes keep their positions, a new node is placed at the height of its neighbours in other lanes, where nodes of the same neighbours stack as rows one label line apart with their labels shown (or next to its neighbours in its lane; without lanes, next to its neighbours inside the area already drawn). The items are also merged into `nodes` and `edges`, so `to_json()`, `to_html()` and a widget shown again include them (a host that sets `append_batch` itself gets the merged lists written back by the widget). Changing `lanes` or a style keeps appended items; setting `nodes` or `edges` to other data replaces everything drawn. New items fade in and edges draw from source to target, `append_stagger_ms` (default 60) apart; a large batch is kept under 1.5 s. `append_animation="none"` turns the animation off.
 - `remove(nodes, edges)`: takes nodes (with every edge touching them) and edges out without a re-layout; they fade out and leave `nodes` and `edges`. An edge is `{"source", "target"}` (every edge between those ends) or with a `"label"` (that edge only). A host that sets `append_batch` itself puts them under `remove`: `{"seq": n, "nodes": [...], "edges": [...], "remove": {"nodes": [ids], "edges": [...]}}`; removals come first, so one batch can re-sample (an item removed and sent again stays where it is).
 - Lane options: `width` is a lane's share of the standard width (default 1); `arrange: "column"` stacks the lane's nodes in the middle of its band (for a few roots, such as repositories, whose edges then fan out into the next lane); `action: True` makes a lane without nodes that shows a button, with the host's `icon` (SVG markup, where `currentColor` takes the accent colour, or an image URL), or `glyph` (a list of colours drawn as stacked bars), else a neutral "open" icon; `caption` is text under it. An edge whose end is an action lane's id (and no node) is drawn as a curve into its button, like the cross-lane curves. The camera frames all lanes, and the lanes stretch to the canvas's shape.
+- Lane layout options (all off by default; a lane without them is laid out as before):
+  - `layout: "force"`: a force layout inside the lane: nodes repel and do not overlap, edges inside the lane are springs, and a node is pulled towards the height of its partners in the lanes to its left. Nodes never leave their lane. A crowded lane draws its nodes smaller so the layout has room. Appended nodes settle from where they land while the older nodes stay put. Deterministic: the same data gives the same picture.
+  - `rows: {"field": "layer", "order": ["business", "application", "technology"]}`: splits the lane into rows, top to bottom, by a node field; a node with another value (or none) goes to an extra row at the bottom. Row heights follow the node counts (with a minimum), each row shows its name and a faint separator, and nodes stay inside their row. Implies `layout: "force"`.
+  - `labels: {"count": 12}`: at the default zoom, shows the labels of the lane's 12 largest nodes (by size, then degree), and no others (hover or select a node to see its label; zoomed in or out, sigma's label grid decides). A label may cover smaller nodes, on a soft backing so it stays readable, but never a node as large, a labelled node or another label; one that would cross the lane's right edge goes on the left of its node, and a long name is shortened with an ellipsis (hover shows it whole).
+  - `relayout: 0.33`: when one batch removes or adds more than this share of the lane's nodes (a re-sample), the lane is laid out again as a whole and its nodes glide to their new places; smaller batches keep older nodes where they are.
 - `lane_action`: set to `{"lane": <id>, "seq": <n>}` when an action lane's glyph is clicked, so the host can respond (open a panel, switch a view). `seq` counts on from the value the model holds, so every click is a change, also in a widget shown twice.
 - `pulse_nodes`: ids that pulse softly.
+- `type_colors`: colours per type, `{"nodes": {"<type>": "#hex"}, "edges": {"<type>": "#hex"}}` (types as the schema panel groups them). They colour the items of that type and the legend swatches; an item's own `color` still wins, and other types keep the palette.
 - `totals`: for a host that sends a sample of a larger graph, `{"nodes": {"<type>": n}, "edges": {"<type>": n}}` (types as the schema panel groups them: a node's first label, an edge's type). The count badge and the schema panel show "shown / total"; a type the sample lacks shows as 0, a type without a total shows its count (and counts as shown in full).
 - `theme`: host colours (`background`, `panel`, `text`, `muted`, `border`, `accent`) that replace the widget's light and dark defaults; a key left out (or `theme = {}`) brings the default back.
 - `_features`: the widget sets the capabilities it supports when it renders, so a host can detect an older build.
@@ -324,6 +330,25 @@ graph = Graph(
 ```python
 graph = Graph(backend=my_backend)  # Any object implementing DatabaseBackend protocol
 ```
+
+## Embedding in an app
+
+The widget knows graphs, not your domain. The host (a notebook, or an app that mounts the widget's front end) decides how its data looks and behaves, and the widget's own defaults stay neutral:
+
+- **Looks**: colours per type (`type_colors`), the host's colours (`theme`), action lane icons (`icon`, `glyph`), lane titles and captions.
+- **What to show**: when a graph is too large to draw whole, the host picks the sample and sends it, with the totals behind it (`totals`); the widget never makes counts up. `append()` and `remove()` keep the drawing up to date without a re-layout.
+- **Layout per lane**: `width`, `arrange`, `layout`, `rows`, `relayout` and `labels` are lane options the host sets.
+
+New behaviour is opt-in and off by default: an update does not change a view that does not ask for it. `_features` lists what a build supports, so a host can tell an older build apart and fall back.
+
+### Without Python
+
+An app can mount the bundled front end (`anywidget_graph.ui.get_esm()` and `get_css()`) with any model object that has `get`, `set`, `on`, `off`, `save_changes` and `send`, as anywidget's model does.
+
+- The host sets `nodes`, `edges`, `lanes`, `append_batch`, `pulse_nodes`, `theme`, `type_colors`, `totals`, `dark_mode`, and the size (`width` and `height`, or `fill`).
+- The widget sets `selected_node`, `selected_nodes`, `selected_edge`, `hovered_node`, `lane_action` and `_features`. After an `append_batch` it writes the merged `nodes` and `edges` back, unless they already hold the batch (as `Graph.append()` sends them).
+- A setting the host leaves out reads as the widget's default, the same as a fresh Python `Graph()` has it.
+- The widget sends no query when it mounts: the first view is the host's.
 
 ## Export
 

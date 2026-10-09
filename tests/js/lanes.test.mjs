@@ -8,6 +8,8 @@ import {
   laneBands, lanesBBox, columnPositions, glyphHit, fitBox, labelColor, nextLaneAction, edgeKey, mergeItems,
   sameItems, extentBand, crossNeighbours, laneIcon, removeItems, edgeMatches, applyBatchItems,
   withTotals, shownOf, totalShown, nodeType, edgeType, insetBand,
+  seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
+  colorFor, labelsThatFit, shortenLabel,
 } from "../../src/anywidget_graph/ui/lanes.js";
 
 const LANES = [{ id: "intermediate", title: "Intermediate graph" }, { id: "output", title: "Output graph" }];
@@ -256,6 +258,154 @@ test("nodes keep a margin from their lane's edges, so none sits under a title or
   assert.deepEqual(placed, { a: { x: 1460, y: 120 }, b: { x: 2340, y: 1880 } });
 });
 
+test("a lane's force layout is deterministic: a seeded random source gives the same numbers again", () => {
+  const a = seededRandom("intermediate"), b = seededRandom("intermediate"), c = seededRandom("output");
+  const first = Array.from({ length: 5 }, a);
+  assert.deepEqual(first, Array.from({ length: 5 }, b));
+  assert.notDeepEqual(first, Array.from({ length: 5 }, c));
+  assert.ok(first.every((n) => n >= 0 && n < 1));
+});
+
+test("every step keeps a node inside its lane, so the lanes stay distinct graphs", () => {
+  const band = { x0: 100, x1: 200, y0: 0, y1: 50 };
+  const inside = { x: 150, y: 20 }, outside = { x: 250, y: -10, vx: 3, vy: -2 };
+  clampInto(inside, band);
+  clampInto(outside, band);
+  assert.deepEqual(inside, { x: 150, y: 20 });
+  // A node pushed over the edge stops there (its velocity towards the edge is dropped)
+  assert.deepEqual(outside, { x: 200, y: 0, vx: 0, vy: 0 });
+});
+
+test("a node is pulled towards the mean height of its partners in lanes already laid out", () => {
+  const cross = [{ source: "e1", target: "i1" }, { source: "e1", target: "i2" }, { source: "i3", target: "e2" }, { source: "e3", target: "model" }];
+  const placed = new Map([["i1", { x: 0, y: 100 }], ["i2", { x: 0, y: 300 }], ["i3", { x: 0, y: 50 }]]);
+  const heights = partnerHeights(["e1", "e2", "e3"], cross, placed);
+  assert.deepEqual([...heights], [["e1", 200], ["e2", 50]]);  // e3's partner is no laid-out node: no pull
+});
+
+test("a lane's natural spacing follows its area and node count, so 10 or 300 nodes both fill it", () => {
+  const band = { x0: 0, x1: 1000, y0: 0, y1: 1000 };
+  assert.equal(laneSpacing(100, band), 100);
+  assert.equal(laneSpacing(400, band), 50);
+  assert.equal(laneSpacing(0, band), 1000);
+});
+
+test("a label is clear when no other label box overlaps its own", () => {
+  const unit = { x: 100, y: 20 };
+  assert.equal(labelClear({ x: 0, y: 0 }, [{ x: 0, y: 25 }, { x: 120, y: 0 }], unit), true);
+  assert.equal(labelClear({ x: 0, y: 0 }, [{ x: 50, y: 10 }], unit), false);
+  assert.equal(labelClear({ x: 0, y: 0 }, [], unit), true);
+});
+
+test("a crowded lane draws its nodes smaller (relative sizes kept), so they take at most a share of its area", () => {
+  const band = { x0: 0, x1: 1000, y0: 0, y1: 1000 };  // 300 x 300 px at 0.3 px per unit
+  // 10 nodes of radius 5 px: about 785 px2 of discs in 90,000 px2, room enough
+  assert.equal(laneSizeScale(Array(10).fill(5), band, 0.3), 1);
+  // 400 nodes of radius 10 px: 125,664 px2 of discs, far more than a third of the lane
+  const shrink = laneSizeScale(Array(400).fill(10), band, 0.3);
+  assert.ok(shrink < 1 && shrink > 0.3);
+  const discs = 400 * Math.PI * (10 * shrink) ** 2;
+  assert.ok(Math.abs(discs - 0.35 * 90000) < 1);
+  assert.equal(laneSizeScale([], band, 0.3), 1);
+});
+
+test("a lane with rows puts a node in the row of its field's value; any other value goes to an extra row", () => {
+  const rows = { field: "layer", order: ["business", "application", "technology"] };
+  assert.equal(rowOf({ layer: "business" }, rows), 0);
+  assert.equal(rowOf({ layer: "technology" }, rows), 2);
+  assert.equal(rowOf({ layer: "motivation" }, rows), 3);
+  assert.equal(rowOf({}, rows), 3);
+});
+
+test("rows split the band top to bottom on screen by node count, each with a minimum height; the extra row only when used", () => {
+  const band = { x0: 0, x1: 1000, y0: 100, y1: 1100 };
+  const rows = rowBands(band, ["business", "application", "technology"], [2, 6, 2, 0]);
+  assert.deepEqual(rows.map((row) => row.label), ["business", "application", "technology"]);
+  // Proportional (2 : 6 : 2), filling the band; the first row on top of the screen (sigma's y points up)
+  assert.equal(rows[0].y1, 1100);
+  assert.equal(rows.at(-1).y0, 100);
+  assert.ok(Math.abs((rows[1].y1 - rows[1].y0) - 600) < 1e-9);
+  for (let i = 1; i < rows.length; i++) assert.equal(rows[i].y1, rows[i - 1].y0);
+  // Nodes stay a little away from the separators: each row's band is inset from its edges
+  assert.ok(rows[0].band.y0 > rows[0].y0 && rows[0].band.y1 < rows[0].y1);
+  assert.deepEqual([rows[0].band.x0, rows[0].band.x1], [0, 1000]);
+  // An empty row keeps a minimum height; an unmatched node adds the extra row at the bottom (no label)
+  const sparse = rowBands(band, ["business", "application"], [0, 10, 1]);
+  assert.equal(sparse.length, 3);
+  assert.ok(sparse[0].y1 - sparse[0].y0 >= 0.12 * 1000 - 1e-9);
+  assert.equal(sparse[2].label, "");
+  // Nothing counted yet (a live run starting empty): equal rows
+  const empty = rowBands(band, ["a", "b"], [0, 0, 0]);
+  assert.equal(empty.length, 2);
+  assert.equal(empty[0].y1 - empty[0].y0, 500);
+});
+
+test("a batch that removes or adds more than a third of a lane lays the lane out again", () => {
+  assert.equal(bigBatch(246, 143, 157), true);
+  assert.equal(bigBatch(246, 21, 21), false);
+  assert.equal(bigBatch(30, 0, 11), true);
+  assert.equal(bigBatch(0, 0, 3), true);  // an empty lane's first nodes get a whole layout
+  assert.equal(bigBatch(100, 0, 0), false);
+});
+
+test("an item's colour: its own colour, else its type's colour from the host, else the palette", () => {
+  const typeColors = { File: "#112233" };
+  assert.equal(colorFor({ color: "#ff0000" }, "File", typeColors, "#palette"), "#ff0000");
+  assert.equal(colorFor({}, "File", typeColors, "#palette"), "#112233");
+  assert.equal(colorFor({}, "Class", typeColors, "#palette"), "#palette");
+  assert.equal(colorFor({}, "File", undefined, "#palette"), "#palette");
+});
+
+test("a lane labels its largest nodes: a label may cover smaller nodes, never a node as large, a chosen node or another label; at the lane's right edge it flips left", () => {
+  const opts = { height: 20, gap: 2, margin: 2, band: { x0: 0, x1: 1000 } };
+  const nodes = [
+    { id: "hub", x: 100, y: 100, size: 12, degree: 4, width: 80 },
+    { id: "hub2", x: 140, y: 102, size: 12, degree: 8, width: 80 },  // as big as hub, more edges: ranked first
+    { id: "big", x: 500, y: 500, size: 10, degree: 0, width: 100 },  // its label would cover "dot"
+    { id: "edge", x: 960, y: 400, size: 6, degree: 2, width: 90 },  // its label would cross the lane's right edge
+    { id: "near", x: 300, y: 104, size: 4, degree: 1, width: 40 },
+    { id: "dot", x: 560, y: 502, size: 3, degree: 0, width: 30 },
+  ];
+  assert.deepEqual(labelsThatFit(nodes, 10, opts), [
+    { id: "hub2", side: "right" },  // hub's label would cover hub2, as large as hub: hub gets none
+    { id: "big", side: "right" },  // big's label covers dot, which is smaller: allowed
+    { id: "edge", side: "left" },
+    { id: "near", side: "right" },
+    // dot gets none: its node is under big's label
+  ]);
+  assert.deepEqual(labelsThatFit(nodes, 1, opts), [{ id: "hub2", side: "right" }]);
+  assert.deepEqual(labelsThatFit(nodes, 0, opts), []);
+  // Taken space (a row's name): a label that would cover it is not shown
+  const named = labelsThatFit(nodes, 10, { ...opts, taken: [{ x0: 850, x1: 900, y0: 395, y1: 405 }] });
+  assert.equal(named.some((label) => label.id === "edge"), false);
+  assert.equal(named.length, 3);
+});
+
+test("a row keeps room for its name at the top, so no node sits under it", () => {
+  const band = { x0: 0, x1: 1000, y0: 0, y1: 1000 };
+  const rows = rowBands(band, ["a", "b"], [5, 5, 0], 0.12, 0.1, 80);
+  // The top of each row (the highest y: sigma's y points up) is kept free for the name
+  assert.ok(rows[0].y1 - rows[0].band.y1 >= 80 - 1e-9);
+  assert.ok(rows[1].y1 - rows[1].band.y1 >= 80 - 1e-9);
+  // Without a name's room, the plain inset
+  assert.ok(Math.abs(rowBands(band, ["a", "b"], [5, 5, 0])[0].y1 - rowBands(band, ["a", "b"], [5, 5, 0])[0].band.y1 - 50) < 1e-9);
+});
+
+test("the framing can leave room on the right, for controls over the rightmost lane", () => {
+  const bands = laneBands([{ id: "a" }, { id: "m", width: 0.25, action: true }]);
+  assert.deepEqual(lanesBBox(bands, 100, 300), { x: [-100, 2050], y: [-100, 1100] });
+});
+
+test("a long label is shortened to a width with an ellipsis; a short one stays as it is", () => {
+  const measure = (text) => text.length * 6;  // 6 px per character
+  assert.equal(shortenLabel("Payment", 110, measure), "Payment");
+  // 110 px holds 17 characters and the ellipsis
+  assert.equal(shortenLabel("Image Provider HTTP Service", 110, measure), "Image Provider HT\u2026");
+  // A space before the ellipsis is dropped
+  assert.equal(shortenLabel("Order Item Service", 42, measure), "Order\u2026");
+  assert.equal(shortenLabel("", 110, measure), "");
+});
+
 test("a search shows a match's partners in other lanes, through the cross-lane links either way", () => {
   const cross = [
     { source: "t1", target: "s1", key: "t1|s1" },
@@ -300,18 +450,18 @@ test("a click hits the glyph inside its box only", () => {
   assert.equal(glyphHit({ x: 140, y: 100 }, { x: 100, y: 100 }), false);
 });
 
-test("an empty canvas fits the lane area itself, centred and in proportion", () => {
+test("an empty canvas fits the lane area itself, centred and in proportion, y up as sigma draws it", () => {
   const toViewport = fitBox({ x: [0, 2000], y: [0, 1000] }, 1000, 1000);
-  assert.deepEqual(toViewport({ x: 0, y: 0 }), { x: 0, y: 250 });
-  assert.deepEqual(toViewport({ x: 2000, y: 1000 }), { x: 1000, y: 750 });
+  assert.deepEqual(toViewport({ x: 0, y: 0 }), { x: 0, y: 750 });
+  assert.deepEqual(toViewport({ x: 2000, y: 1000 }), { x: 1000, y: 250 });
   assert.deepEqual(toViewport({ x: 1000, y: 500 }), { x: 500, y: 500 });
 });
 
 test("an empty canvas keeps sigma's stage padding, so the lanes don't move when the first node arrives", () => {
   // Sigma fits the box into the smaller side less twice the padding: 50 px above and below here, 100 px at the sides
   const toViewport = fitBox({ x: [0, 2000], y: [0, 1000] }, 1000, 500, 50);
-  assert.deepEqual(toViewport({ x: 0, y: 0 }), { x: 100, y: 50 });
-  assert.deepEqual(toViewport({ x: 2000, y: 1000 }), { x: 900, y: 450 });
+  assert.deepEqual(toViewport({ x: 0, y: 0 }), { x: 100, y: 450 });
+  assert.deepEqual(toViewport({ x: 2000, y: 1000 }), { x: 900, y: 50 });
   assert.deepEqual(toViewport({ x: 1000, y: 500 }), { x: 500, y: 250 });
   // A container without a size yet maps everything to its corner instead of NaN
   assert.deepEqual(fitBox({ x: [0, 2000], y: [0, 1000] }, 0, 0, 30)({ x: 1000, y: 500 }), { x: 0, y: 0 });

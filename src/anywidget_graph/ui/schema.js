@@ -210,7 +210,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
           name: label,
           count,
           total,
-          color: typeColorMap.get(label) || hashColor(label),
+          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || hashColor(label),
           kind: "node",
           properties: props,
           isHidden: hiddenNodeTypes.has(label),
@@ -275,7 +275,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
           name: type,
           count,
           total,
-          color: typeColorMap.get(type) || hashColor(type),
+          color: typeColorMap.get(type) || (model.get("type_colors")?.edges || {})[type] || hashColor(type),
           kind: "edge",
           properties: props,
           isHidden: hiddenEdgeTypes.has(type),
@@ -302,6 +302,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
   model.on("change:schema_node_types", renderFilters);
   model.on("change:schema_edge_types", renderFilters);
   model.on("change:totals", renderFilters);
+  model.on("change:type_colors", renderFilters);
   renderFilters();
 
   panel.appendChild(content);

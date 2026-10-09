@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.2 2026-10-09
+
+### Features
+
+All opt-in per lane: a lane without these options is laid out exactly as in 0.4.1.
+
+- **Force layout for a lane**: `layout: "force"` lays the lane out with forces inside its band (repulsion, collision, edges as springs, a pull towards the height of its partners in the lanes to its left), so a dense graph spreads over its lane instead of shrinking into a core; nodes never leave their lane, a crowded lane draws its nodes smaller, and the layout is deterministic. Appended nodes settle from where they land while older nodes stay put
+- **Rows in a lane**: `rows: {"field": ..., "order": [...]}` splits a lane into rows top to bottom by a node field (sized by node count, with a minimum; other values go to an extra row at the bottom), with each row's name (with room of its own, no node under it) and a faint separator
+- **Lay a lane out again on a big batch**: `relayout: <share>` lays the lane out again when one batch removes or adds more than that share of its nodes (a re-sample); its nodes glide to their new places
+- **Colours per type**: `type_colors` (`{"nodes": {"<type>": "#hex"}, "edges": {"<type>": "#hex"}}`) colours the items of a type and their legend swatches, so the legend matches the drawing; an item's own `color` still wins
+- **Labels for a lane's largest nodes**: `labels: {"count": n}` shows the labels of a lane's n largest nodes at the default zoom, and no others in that lane (hover or select a node to see its label). A label may cover smaller nodes on a soft backing, never a node as large, a labelled node or another label; it goes on the left of its node at the lane's right edge (never over a row's name), and a long name is shortened with an ellipsis
+- **Defaults for hosts without Python**: a setting an app's own model leaves out reads as the widget's default (as a fresh Python `Graph()` has it), so for example labels show without the host sending `show_labels`
+- `_features` adds `force_layout`, `lane_rows`, `relayout`, `type_colors` and `lane_labels`
+
+### Documentation
+
+- README: "Embedding in an app": the widget stays generic and the host decides looks, samples and lane layouts (all opt-in); the model contract for an app that mounts the front end without Python
+
+### Bug Fixes
+
+- Fixed the zoom controls covering the caption of an action lane at the right edge on a narrow canvas: when the rightmost lane is an action lane, the framing leaves room for the controls
+- Fixed the empty canvas mapping lanes with the y axis pointing down while sigma points it up (nothing visible depended on it before rows)
+
 ## 0.4.1 2026-10-09
 
 ### Features
