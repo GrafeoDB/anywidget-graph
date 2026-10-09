@@ -154,6 +154,9 @@ class Graph(anywidget.AnyWidget):
     # Totals from the host when it sends a sample: {"nodes": {"<type>": n}, "edges": {"<type>": n}}; the count badge
     # and the schema panel show "shown / total" (a type without a total shows its count only)
     totals = traitlets.Dict(default_value={}).tag(sync=True)
+    # Colours per type from the host: {"nodes": {"<type>": "#hex"}, "edges": {"<type>": "#hex"}}; they colour the items
+    # of that type and the legend swatches (an item's own `color` still wins; other types keep the palette)
+    type_colors = traitlets.Dict(default_value={}).tag(sync=True)
     _features = traitlets.List(default_value=[]).tag(sync=True)
 
     def __init__(

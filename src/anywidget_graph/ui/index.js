@@ -2,6 +2,7 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
+import { TRAIT_DEFAULTS } from "./defaults.js";
 import Graph from "https://esm.sh/graphology@0.25.4";
 import Sigma from "https://esm.sh/sigma@3.0.0";
 import * as d3Force from "https://esm.sh/d3-force@3.0.0";
@@ -12,7 +13,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand } from "./lanes.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -99,13 +100,12 @@ function pointInPolygon(x, y, polygon) {
   return inside;
 }
 
-function computeNodeColor(node, colorField, colorScale, colorDomain) {
+function computeNodeColor(node, colorField, colorScale, colorDomain, typeColors) {
   if (node.color) return node.color;
   if (!colorField || node[colorField] === undefined) {
-    // Color by node type (matches filter panel swatch colors)
+    // Color by node type: the host's colour for it (type_colors), else the palette (matches the filter panel swatches)
     const nodeType = (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "");
-    if (nodeType) return getCategoricalColor(nodeType);
-    return "#6366f1";
+    return colorFor(node, nodeType, typeColors, nodeType ? getCategoricalColor(nodeType) : "#6366f1");
   }
   const value = node[colorField];
   if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
@@ -187,6 +187,7 @@ function getStylingOpts(model, nodes, edges) {
     edgeColorField, edgeColorScale, edgeColorDomain,
     edgeSizeField, edgeSizeDomain, edgeSizeRange,
     degreeMap,
+    typeColors: model.get("type_colors") || {},
   };
 }
 
@@ -198,12 +199,12 @@ function buildNodeAttrs(node, opts) {
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
     size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(node.id)),
-    color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain),
+    color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
   };
 }
 
 function buildEdgeAttrs(edge, opts) {
-  let color = edge.color || "#94a3b8";
+  let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
   if (opts.edgeColorField && edge[opts.edgeColorField] !== undefined) {
     const val = edge[opts.edgeColorField];
     color = typeof val === "number"
@@ -288,9 +289,29 @@ async function executeQuery(model) {
 }
 
 /**
+ * The host's model, where a setting the host left out (an app without Python) reads as the widget's default.
+ */
+function withDefaults(host) {
+  return {
+    get: (name) => {
+      const value = host.get(name);
+      if (value !== undefined || !(name in TRAIT_DEFAULTS)) return value;
+      const fallback = TRAIT_DEFAULTS[name];
+      return fallback !== null && typeof fallback === "object" ? structuredClone(fallback) : fallback;
+    },
+    set: (...args) => host.set(...args),
+    on: (...args) => host.on(...args),
+    off: (...args) => host.off(...args),
+    save_changes: (...args) => host.save_changes(...args),
+    send: (...args) => host.send(...args),
+  };
+}
+
+/**
  * Main render function for the anywidget.
  */
-function render({ model, el }) {
+function render({ model: host, el }) {
+  const model = withDefaults(host);
   const wrapper = document.createElement("div");
   wrapper.className = "awg-wrapper";
   // fill: take the host element's size and follow it; otherwise the fixed width and height
@@ -493,8 +514,8 @@ function render({ model, el }) {
 
   // Linked lanes, append, pulse and theme: shared state (empty unless the host sets lanes, batches, pulse or theme)
   // A batch already in the model when this view renders is in its nodes and edges (Graph.append keeps them there)
-  const laneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), vanish: new Map(), edgeVanish: new Map(), pulse: new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
-  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons", "action_edges", "remove", "totals"]);
+  const laneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), vanish: new Map(), edgeVanish: new Map(), sizeScale: new Map(), rows: new Map(), move: new Map(), labelled: new Map(), labelText: new Map(), quietLanes: new Set(), hoverNode: null, pulse: new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
+  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons", "action_edges", "remove", "totals", "force_layout", "lane_rows", "relayout", "type_colors", "lane_labels"]);
   model.save_changes();
 
   // The data drawn: the host's nodes and edges with the appended batches merged in. A redraw (new lanes, a style)
@@ -514,6 +535,7 @@ function render({ model, el }) {
     graph.clear();
     laneState.vanish.clear();
     laneState.edgeVanish.clear();
+    laneState.move.clear();
     laneState.lanes = model.get("lanes") || [];
     laneState.laneById = new Map();
     laneState.cross = [];
@@ -560,6 +582,8 @@ function render({ model, el }) {
     graph.clearEdges();
     laneState.cross = [];
     addEdges(drawn.edges, opts);
+    // New labels have new widths: choose a lane's labels again
+    pickLaneLabels();
   }
 
   rebuildGraph();
@@ -880,7 +904,7 @@ function render({ model, el }) {
   // The camera frames every band, also the ones without nodes (an action lane's glyph)
   function frameLanes() {
     if (!rendererRef) return;
-    rendererRef.setCustomBBox(laneState.lanes.length && laneState.bands.length ? lanesBBox(laneState.bands) : null);
+    rendererRef.setCustomBBox(laneState.lanes.length && laneState.bands.length ? laneFrame() : null);
   }
 
   // A column lane's nodes stacked in the middle of its band (in their order in the graph)
@@ -892,37 +916,196 @@ function render({ model, el }) {
     return columnPositions(ids, insetBand(laneState.bands[index]));
   }
 
-  // Each lane laid out on its own (forceAtlas2 from stable starting points), scaled into its band; pinned nodes stay.
-  // A column lane stacks its nodes; an action lane holds no nodes.
+  // Lanes are laid out left to right, each inside its band (so the lanes stay distinct graphs); pinned nodes stay.
+  // A column lane stacks its nodes, an action lane holds none. A lane with `layout: "force"` (or with `rows`) gets the
+  // force layout, which also pulls a node towards its partners in the lanes laid out before it; any other lane is laid
+  // out with forceAtlas2 scaled into its band, as before.
   function layoutLanes() {
-    const pinned = model.get("pinned_nodes") || {};
     computeBands();
+    const placed = new Map();
     laneState.lanes.forEach((lane, index) => {
-      if (lane.action) return;
-      if (lane.arrange === "column") {
-        for (const [node, position] of Object.entries(arrangeColumn(lane, index))) {
-          if (!pinned[node]) graph.mergeNodeAttributes(node, position);
-        }
-        return;
-      }
-      const sub = new Graph({ multi: true });
+      for (const [node, position] of layoutLane(lane, index, placed)) graph.mergeNodeAttributes(node, position);
       graph.forEachNode((node, attrs) => {
-        if (attrs.lane === lane.id) sub.addNode(node, { x: hashUnit(node + "x"), y: hashUnit(node + "y") });
+        if (attrs.lane === lane.id) placed.set(node, { x: attrs.x, y: attrs.y });
       });
+    });
+    pickLaneLabels();
+  }
+
+  // A lane uses the force layout when it asks for it; rows need it (each node is kept inside its row)
+  const forceLaid = (lane) => lane?.layout === "force" || Boolean(lane?.rows);
+
+  // The part of a lane a node goes in: its row when the lane has rows, else the lane's band less its margin
+  function nodeBand(lane, index, node) {
+    const rows = laneState.rows.get(lane.id);
+    if (!rows) return insetBand(laneState.bands[index]);
+    return (rows[rowOf(node || {}, lane.rows)] || rows.at(-1)).band;
+  }
+
+  // New positions for one lane's nodes (pinned ones stay); `placed` holds the nodes of the lanes laid out before it
+  function layoutLane(lane, index, placed) {
+    const pinned = model.get("pinned_nodes") || {};
+    const positions = new Map();
+    if (lane.action || !laneState.bands[index]) return positions;
+    if (lane.arrange === "column") {
+      for (const [node, position] of Object.entries(arrangeColumn(lane, index))) if (!pinned[node]) positions.set(node, position);
+      return positions;
+    }
+    const ids = graph.filterNodes((node, attrs) => attrs.lane === lane.id && !laneState.vanish.has(node));
+    const band = insetBand(laneState.bands[index]);
+    if (!forceLaid(lane)) {
+      laneState.sizeScale.delete(lane.id);
+      laneState.rows.delete(lane.id);
+      const sub = new Graph({ multi: true });
+      for (const id of ids) sub.addNode(id, { x: hashUnit(id + "x"), y: hashUnit(id + "y") });
       graph.forEachEdge((edge, attrs, source, target) => {
         if (sub.hasNode(source) && sub.hasNode(target)) sub.addEdge(source, target);
       });
-      if (sub.order === 0) return;
+      if (sub.order === 0) return positions;
       if (sub.order > 1) forceAtlas2.assign(sub, { iterations: 150, settings: { ...forceAtlas2.inferSettings(sub), gravity: 1 } });
-      const positions = {};
+      const raw = {};
       sub.forEachNode((node, attrs) => {
-        positions[node] = { x: attrs.x, y: attrs.y };
+        raw[node] = { x: attrs.x, y: attrs.y };
       });
       // Into the band less a margin, so no node sits under the lane's title or on its border
-      for (const [node, position] of Object.entries(fitToBand(positions, insetBand(laneState.bands[index])))) {
-        if (!pinned[node]) graph.mergeNodeAttributes(node, position);
-      }
+      for (const [node, position] of Object.entries(fitToBand(raw, band))) if (!pinned[node]) positions.set(node, position);
+      return positions;
+    }
+    // Rows: the band split top to bottom by the values of the lane's field, by node count
+    if (lane.rows) {
+      const counts = new Array(lane.rows.order.length + 1).fill(0);
+      for (const id of ids) counts[rowOf(drawn.nodes.get(id) || {}, lane.rows)]++;
+      laneState.rows.set(lane.id, rowBands(band, lane.rows.order, counts, 0.12, 0.1, LABEL_ROW / laneScale()));
+    } else {
+      laneState.rows.delete(lane.id);
+    }
+    const bandOf = (id) => nodeBand(lane, index, drawn.nodes.get(id));
+    // A crowded lane draws its nodes smaller, so the layout has room (see the node reducer)
+    const shrink = laneSizeScale(ids.map((id) => graph.getNodeAttribute(id, "size") || 5), band, laneScale());
+    laneState.sizeScale.set(lane.id, shrink);
+    const start = (id) => {
+      const own = bandOf(id);
+      return { x: own.x0 + (own.x1 - own.x0) * hashUnit(id + "x"), y: own.y0 + (own.y1 - own.y0) * hashUnit(id + "y") };
+    };
+    return forceLane(lane.id, ids, band, {
+      bandOf,
+      shrink,
+      start,
+      fixed: (id) => (pinned[id] ? graph.getNodeAttributes(id) : null),
+      partners: partnerHeights(ids, laneState.cross, placed),
+      ticks: 300,
     });
+  }
+
+  // The lanes' framing. When the rightmost lane is an action lane (its button and caption at the right edge), it
+  // leaves room on the right for the zoom controls over the canvas; other views are framed as before.
+  function laneFrame() {
+    const box = lanesBBox(laneState.bands);
+    if (!laneState.lanes.at(-1)?.action) return box;
+    const scale = fitScale(box, container.offsetWidth, container.offsetHeight, rendererRef?.getSetting("stagePadding") ?? 30);
+    const controls = (wrapper.querySelector(".awg-zoom-controls")?.offsetWidth || 100) + 20;
+    return scale > 0 ? lanesBBox(laneState.bands, 120, controls / scale) : box;
+  }
+
+  // Pixels per graph unit at the lanes' framed view (a fallback before the container has a size)
+  function laneScale() {
+    const scale = fitScale(laneFrame(), container.offsetWidth, container.offsetHeight, rendererRef?.getSetting("stagePadding") ?? 30);
+    return scale > 0 ? scale : 0.3;
+  }
+
+  // Lanes with `labels: {count}` show the labels of their largest nodes at the default zoom, where each label has room
+  const labelMeasure = document.createElement("canvas").getContext("2d");
+  // A lane label is at most this wide; a longer name is shortened with an ellipsis (the full name shows on hover)
+  const LANE_LABEL_MAX = 110;
+  function pickLaneLabels() {
+    laneState.labelled = new Map();
+    laneState.labelText = new Map();
+    laneState.quietLanes = new Set(laneState.lanes.filter((lane) => Number(lane.labels?.count) > 0).map((lane) => lane.id));
+    if (!laneState.lanes.some((lane) => Number(lane.labels?.count) > 0)) return;
+    const scale = laneScale();
+    // Label boxes in graph units: each label's own width in the label font, one line high, 3 px from its node
+    const size = rendererRef?.getSetting("labelSize") ?? 12;
+    labelMeasure.font = `${rendererRef?.getSetting("labelWeight") ?? "500"} ${size}px ${rendererRef?.getSetting("labelFont") ?? "Arial"}`;
+    const fit = { height: (size + 4) / scale, gap: 3 / scale, margin: 2 / scale };
+    laneState.lanes.forEach((lane, index) => {
+      const count = Number(lane.labels?.count) || 0;
+      if (count <= 0 || !laneState.bands[index]) return;
+      const shrink = laneState.sizeScale.get(lane.id) ?? 1;
+      const nodes = graph.filterNodes((node, attrs) => attrs.lane === lane.id && !laneState.vanish.has(node)).map((node) => {
+        const attrs = graph.getNodeAttributes(node);
+        const at = laneState.move.get(node)?.to || attrs;
+        const text = shortenLabel(attrs.label || "", LANE_LABEL_MAX, (t) => labelMeasure.measureText(t).width);
+        if (text !== attrs.label) laneState.labelText.set(node, text);
+        const width = labelMeasure.measureText(text).width / scale;
+        return { id: node, x: at.x, y: at.y, size: ((attrs.size || 0) * shrink) / scale, degree: graph.degree(node), width };
+      });
+      // A row's name (drawn in 10 px type at its top left) is taken space
+      labelMeasure.font = "500 10px system-ui, -apple-system, sans-serif";
+      const band = laneState.bands[index];
+      const taken = (laneState.rows.get(lane.id) || []).filter((row) => row.label).map((row) => ({
+        x0: band.x0, x1: band.x0 + (labelMeasure.measureText(row.label).width + 6) / scale, y0: row.y1 - 16 / scale, y1: row.y1,
+      }));
+      labelMeasure.font = `${rendererRef?.getSetting("labelWeight") ?? "500"} ${size}px ${rendererRef?.getSetting("labelFont") ?? "Arial"}`;
+      for (const { id, side } of labelsThatFit(nodes, count, { ...fit, band, taken })) laneState.labelled.set(id, side);
+    });
+  }
+
+  // Force strengths: charge and link length relative to the lane's natural spacing, the collision gap in pixels.
+  // Tuned on a 233-node intermediate graph with a tight core and 66 linked elements (Deriva's linked view).
+  const LANE_FORCES = { charge: 0.008, reach: 6, collideGap: 3, link: 0.8, linkStrength: 0.6, center: 0.04, partner: 0.12 };
+
+  // A d3-force simulation of one lane's nodes: repulsion scaled to the lane's natural spacing (so the nodes spread over
+  // it), collision by node size, springs for the edges inside the lane, a pull to the middle that follows the shape of
+  // the node's band (its row, or the lane), and a pull to its partner height. Every step clamps each node into its
+  // band. Seeded, so the same lane gives the same picture. `fixed(id)` gives a position for a node that must not move
+  // (pinned, or the older nodes while appended ones settle). Returns the free nodes' positions.
+  function forceLane(laneId, ids, band, { start, fixed, partners, ticks, alpha = 1, shrink = 1, bandOf = () => band }) {
+    const f = LANE_FORCES;
+    if (!ids.length) return new Map();
+    const pxToUnits = 1 / laneScale();
+    const spacing = laneSpacing(ids.length, band);
+    const width = band.x1 - band.x0;
+    const nodes = ids.map((id) => {
+      const pin = fixed(id);
+      const at = pin || start(id);
+      const own = bandOf(id);
+      const node = { id, x: at.x, y: at.y, band: own, radius: ((graph.getNodeAttribute(id, "size") || 5) * shrink + f.collideGap) * pxToUnits };
+      // The pull to the middle follows the band's shape (stronger across a narrow side), so the graph takes that shape
+      node.tall = Math.min(4, Math.max(0.25, (own.y1 - own.y0) / width));
+      // The partner height, mapped into the node's row the way it sits in the lane (a node in a row keeps its partners'
+      // order without piling up on the row's edge)
+      if (partners.has(id)) {
+        const mapped = own.y0 + ((partners.get(id) - band.y0) / (band.y1 - band.y0 || 1)) * (own.y1 - own.y0);
+        node.partner = Math.min(own.y1, Math.max(own.y0, mapped));
+      }
+      if (pin) Object.assign(node, { fx: pin.x, fy: pin.y });
+      return node;
+    });
+    const members = new Set(ids), degree = new Map();
+    const links = [];
+    graph.forEachEdge((edge, attrs, source, target) => {
+      if (source === target || !members.has(source) || !members.has(target)) return;
+      links.push({ source, target });
+      degree.set(source, (degree.get(source) || 0) + 1);
+      degree.set(target, (degree.get(target) || 0) + 1);
+    });
+    const midX = (band.x0 + band.x1) / 2;
+    const laneTall = Math.min(4, Math.max(0.25, (band.y1 - band.y0) / width));
+    const simulation = d3Force.forceSimulation(nodes)
+      .randomSource(seededRandom(laneId))
+      .alpha(alpha)
+      .stop()
+      .force("charge", d3Force.forceManyBody().strength(-f.charge * spacing * spacing).distanceMax(spacing * f.reach))
+      .force("collide", d3Force.forceCollide().radius((d) => d.radius).strength(0.9).iterations(2))
+      .force("link", d3Force.forceLink(links).id((d) => d.id).distance(spacing * f.link)
+        .strength((link) => f.linkStrength / Math.min(degree.get(link.source.id) || 1, degree.get(link.target.id) || 1)))
+      .force("x", d3Force.forceX(midX).strength(f.center * laneTall))
+      .force("y", d3Force.forceY((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => (d.partner !== undefined ? f.partner : f.center / d.tall)));
+    for (let i = 0; i < ticks; i++) {
+      simulation.tick();
+      for (const node of nodes) if (node.fx === undefined) clampInto(node, node.band);
+    }
+    return new Map(nodes.filter((node) => node.fx === undefined).map((node) => [node.id, { x: node.x, y: node.y }]));
   }
 
   // Apply initial layout
@@ -950,6 +1133,22 @@ function render({ model, el }) {
     allowInvalidContainer: true,
   });
   rendererRef = renderer;
+  // A lane's chosen labels (labels: {count}) sit on a soft backing in the canvas colour, so they read cleanly over the
+  // smaller nodes they may cover, on the left of their node when they would cross the lane's right edge; any other
+  // label is drawn as sigma draws it
+  const drawSigmaLabel = renderer.getSetting("defaultDrawNodeLabel");
+  renderer.setSetting("defaultDrawNodeLabel", (context, data, settings) => {
+    if (!data.labelBacking || !data.label) return drawSigmaLabel(context, data, settings);
+    context.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
+    const width = context.measureText(data.label).width;
+    const x = data.labelSide === "left" ? data.x - data.size - 3 - width : data.x + data.size + 3;
+    context.fillStyle = withAlpha(getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff", 0.82);
+    context.beginPath();
+    context.roundRect(x - 3, data.y - settings.labelSize / 2 - 3, width + 6, settings.labelSize + 6, 4);
+    context.fill();
+    context.fillStyle = settings.labelColor.attribute ? data[settings.labelColor.attribute] || settings.labelColor.color || "#000" : settings.labelColor.color;
+    context.fillText(data.label, x, data.y + settings.labelSize / 3);
+  });
   frameLanes();
   applyHostTheme();
 
@@ -995,6 +1194,32 @@ function render({ model, el }) {
       ctx.fillText(lane.title || lane.id, x, top - 14);
     });
     ctx.textAlign = "left";
+
+    // Rows (a lane's `rows`): the value's name at each row's top left, a faint dashed line between rows
+    ctx.font = "500 10px system-ui, -apple-system, sans-serif";
+    laneState.lanes.forEach((lane, index) => {
+      const rows = laneState.rows.get(lane.id), band = laneState.bands[index];
+      if (!rows || !band) return;
+      const left = laneToViewport({ x: band.x0, y: band.y0 }).x, right = laneToViewport({ x: band.x1, y: band.y0 }).x;
+      rows.forEach((row, i) => {
+        const top = Math.min(laneToViewport({ x: band.x0, y: row.y0 }).y, laneToViewport({ x: band.x0, y: row.y1 }).y);
+        if (i > 0) {
+          ctx.save();
+          ctx.strokeStyle = border;
+          ctx.setLineDash([3, 4]);
+          ctx.beginPath();
+          ctx.moveTo(left, top);
+          ctx.lineTo(right, top);
+          ctx.stroke();
+          ctx.restore();
+        }
+        if (row.label) {
+          ctx.fillStyle = muted;
+          ctx.fillText(row.label, left + 2, top + 12);
+        }
+      });
+    });
+    ctx.font = "600 12px system-ui, -apple-system, sans-serif";
 
     // Cross-lane curves (under the buttons, so a curve into an action lane ends at its button's edge); an appearing
     // one is drawn up to its progress
@@ -1090,7 +1315,7 @@ function render({ model, el }) {
   // A lane point in viewport pixels; sigma leaves its transform stale on an empty graph, so the overlay fits the lanes itself then
   function laneToViewport(point) {
     if (graph.order > 0 || !laneState.bands.length) return renderer.graphToViewport(point);
-    return fitBox(lanesBBox(laneState.bands), container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding"))(point);
+    return fitBox(laneFrame(), container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding"))(point);
   }
 
   // The middle of an action lane's band, in viewport pixels
@@ -1124,6 +1349,16 @@ function render({ model, el }) {
   let animating = false;
   function animate() {
     const now = performance.now();
+    // Nodes of a lane laid out again glide to their new places
+    for (const [node, move] of laneState.move) {
+      if (!graph.hasNode(node)) {
+        laneState.move.delete(node);
+        continue;
+      }
+      const t = progress(move.start, now, 700);
+      graph.mergeNodeAttributes(node, { x: move.from.x + (move.to.x - move.from.x) * t, y: move.from.y + (move.to.y - move.from.y) * t });
+      if (t >= 1) laneState.move.delete(node);
+    }
     // Removed items leave the graph once they have faded out
     for (const [key, start] of laneState.edgeVanish) {
       if (now - start < 450) continue;
@@ -1136,7 +1371,7 @@ function render({ model, el }) {
       laneState.laneById.delete(id);
       laneState.vanish.delete(id);
     }
-    const appearing = laneState.vanish.size > 0 || laneState.edgeVanish.size > 0
+    const appearing = laneState.vanish.size > 0 || laneState.edgeVanish.size > 0 || laneState.move.size > 0
       || [...laneState.appear.values(), ...laneState.edgeAppear.values(), ...laneState.crossAppear.values()].some((start) => now - start < 450);
     renderer.refresh();
     if (appearing || laneState.pulse.size) {
@@ -1189,6 +1424,10 @@ function render({ model, el }) {
       res.borderSize = 2;
     }
 
+    // A crowded lane's nodes are drawn smaller (relative sizes kept)
+    const shrink = data.lane === undefined ? undefined : laneState.sizeScale.get(data.lane);
+    if (shrink !== undefined && shrink < 1) res.size = (res.size || data.size) * shrink;
+
     // Appearing (append) and pulsing (pulse_nodes) nodes
     const appearAt = laneState.appear.get(node);
     if (appearAt !== undefined) {
@@ -1209,16 +1448,27 @@ function render({ model, el }) {
     // An appended node placed with room for its label shows it, also where sigma's label grid would drop it
     // (rows one label line apart share a grid cell); zoomed out the rows close up, and the grid decides again
     if (data.labelRoom && renderer.getCamera().ratio <= 1) res.forceLabel = true;
+    // A lane's largest nodes (its `labels: {count}`) show their labels, where they have room; at the default zoom the
+    // lane shows only those (and the hovered or selected node), so sigma's own label grid does not draw over them
+    const zoom = renderer.getCamera().ratio;
+    if (laneState.labelled.has(node) && zoom <= 1) {
+      res.forceLabel = true;
+      res.labelSide = laneState.labelled.get(node);
+      res.labelBacking = true;
+      if (laneState.labelText.has(node) && node !== laneState.hoverNode) res.label = laneState.labelText.get(node);
+    }
+    else if (laneState.quietLanes.has(data.lane) && zoom >= 1 - 1e-6 && node !== laneState.hoverNode && !selectedNodes.includes(node)) res.label = "";
 
     return res;
   });
 
   // Sigma runs the reducers on a refresh, not on a zoom: crossing the default view's scale refreshes, so labelRoom labels
   // give way to the label grid when zoomed out and come back when zoomed in again
-  let zoomedOut = false;
+  let zoomBand = 0;  // -1 zoomed in, 0 the default view, 1 zoomed out
   renderer.getCamera().on("updated", (state) => {
-    if (state.ratio > 1 === zoomedOut) return;
-    zoomedOut = state.ratio > 1;
+    const band = state.ratio > 1 + 1e-6 ? 1 : state.ratio < 1 - 1e-6 ? -1 : 0;
+    if (band === zoomBand) return;
+    zoomBand = band;
     renderer.refresh();
   });
 
@@ -1274,6 +1524,16 @@ function render({ model, el }) {
     drawn = applyBatchItems(drawn, batch);
     const opts = getStylingOpts(model, nodes, edges);
     const animated = model.get("append_animation") !== "none";
+    // Per lane: its nodes before this batch, and how many the batch removes (for a lane's `relayout`)
+    const before = new Map(), dropped = new Map();
+    graph.forEachNode((node, attrs) => {
+      if (attrs.lane !== undefined && !laneState.vanish.has(node)) before.set(attrs.lane, (before.get(attrs.lane) || 0) + 1);
+    });
+    for (const id of (batch.remove || {}).nodes || []) {
+      if (!graph.hasNode(id) || laneState.vanish.has(id)) continue;
+      const lane = graph.getNodeAttribute(id, "lane");
+      if (lane !== undefined) dropped.set(lane, (dropped.get(lane) || 0) + 1);
+    }
     const removed = removeDrawn(batch.remove || {}, animated);
     const schedule = staggerSchedule(nodes.length + edges.length, model.get("append_stagger_ms") ?? 60);
     const t0 = performance.now();
@@ -1287,10 +1547,11 @@ function render({ model, el }) {
       if (!removed.has(node)) taken(attrs.lane).push({ x: attrs.x, y: attrs.y });
     });
     // A label's room in graph units, at the framed view (the lanes, or the drawn area without lanes)
-    const frame = lanes.length ? lanesBBox(laneState.bands) : extent && { x: [extent.x0, extent.x1], y: [extent.y0, extent.y1] };
+    const frame = lanes.length ? laneFrame() : extent && { x: [extent.x0, extent.x1], y: [extent.y0, extent.y1] };
     const scale = frame ? fitScale(frame, container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding")) : 0;
     const unit = scale > 0 ? { x: LABEL_COLUMN / scale, y: LABEL_ROW / scale } : undefined;
     let item = 0;
+    const added = new Map();  // lane id -> ids of the nodes this batch adds to it
 
     nodes.forEach((node) => {
       const at = t0 + schedule[item++];
@@ -1302,7 +1563,8 @@ function render({ model, el }) {
       }
       const lane = lanes.length ? laneOf(node, lanes) : undefined;
       const laneIndex = lanes.length ? lanes.findIndex((l) => l.id === lane) : 0;
-      const band = lanes.length ? insetBand(laneState.bands[laneIndex] || laneBands(lanes)[laneIndex]) : extent || laneBands([{ id: "" }])[0];
+      const band = !lanes.length ? extent || laneBands([{ id: "" }])[0]
+        : laneState.bands[laneIndex] ? nodeBand(lanes[laneIndex], laneIndex, node) : insetBand(laneBands(lanes)[laneIndex]);
       const cross = [], laneNeighbours = [];
       for (const edge of edges) {
         const other = edge.source === node.id ? edge.target : edge.target === node.id ? edge.source : null;
@@ -1315,6 +1577,7 @@ function render({ model, el }) {
       // labelRoom: placed with its label clear of every other one, so the label shows (see the node reducer)
       graph.addNode(node.id, { ...buildNodeAttrs(node, opts), x: spot.x, y: spot.y, lane, labelRoom: Boolean(unit) && !spot.crowded });
       if (lane) laneState.laneById.set(node.id, lane);
+      if (lane && !lanes[laneIndex]?.arrange) (added.get(lane) || added.set(lane, []).get(lane)).push(node.id);
       if (lanes[laneIndex]?.arrange === "column") {
         for (const [id, position] of Object.entries(arrangeColumn(lanes[laneIndex], laneIndex))) graph.mergeNodeAttributes(id, position);
       }
@@ -1341,8 +1604,68 @@ function render({ model, el }) {
       if (animated) laneState.edgeAppear.set(key, at);
     });
 
+    // A lane with `relayout` (a share) lays out again when this batch removes or adds more than that share of its nodes
+    // (its older nodes glide to their new places); a lane with the force layout lets its new nodes settle
+    const settle = new Map();
+    for (const laneId of new Set([...added.keys(), ...dropped.keys()])) {
+      const index = lanes.findIndex((lane) => lane.id === laneId);
+      const lane = lanes[index];
+      if (!lane || lane.action || lane.arrange === "column") continue;
+      const fresh = added.get(laneId) || [];
+      if (lane.relayout > 0 && bigBatch(before.get(laneId) || 0, dropped.get(laneId) || 0, fresh.length, lane.relayout)) {
+        relayoutLane(lane, index, new Set(fresh), animated);
+      } else if (forceLaid(lane) && fresh.length) {
+        settle.set(laneId, fresh);
+      }
+    }
+    settleAppended(settle, unit);
+    pickLaneLabels();
+
     if (animated) startAnimating();
     else renderer.refresh();
+  }
+
+  // Appended nodes settle with the lane's forces from where they were placed: they spread over the lane while the
+  // older nodes stay fixed (they push, but do not move). A label is shown where its spot has room (labelRoom).
+  function settleAppended(added, unit) {
+    if (!added.size) return;
+    const positions = new Map(graph.mapNodes((node, attrs) => [node, { x: attrs.x, y: attrs.y }]));
+    for (const [laneId, fresh] of added) {
+      const index = laneState.lanes.findIndex((lane) => lane.id === laneId);
+      if (index < 0 || !laneState.bands[index]) continue;
+      const freshIds = new Set(fresh);
+      const ids = graph.filterNodes((node, attrs) => attrs.lane === laneId && !laneState.vanish.has(node));
+      const settled = forceLane(laneId, ids, insetBand(laneState.bands[index]), {
+        bandOf: (id) => nodeBand(laneState.lanes[index], index, drawn.nodes.get(id)),
+        start: (id) => positions.get(id),
+        fixed: (id) => (freshIds.has(id) ? null : positions.get(id)),
+        partners: partnerHeights(fresh, laneState.cross, positions),
+        shrink: laneState.sizeScale.get(laneId) ?? 1,
+        ticks: 120,
+        alpha: 0.5,
+      });
+      for (const [id, spot] of settled) positions.set(id, spot);
+      for (const [id, spot] of settled) {
+        const others = ids.filter((other) => other !== id).map((other) => positions.get(other));
+        graph.mergeNodeAttributes(id, { ...spot, labelRoom: Boolean(unit) && labelClear(spot, others, unit) });
+      }
+    }
+  }
+
+  // One lane laid out again after a big batch: its new nodes go straight to their places, the older ones glide there
+  // (at once without animation). The other lanes stay as they are. Labels are left to sigma's label grid again.
+  function relayoutLane(lane, index, fresh, animated) {
+    const placed = new Map(graph.filterNodes((node, attrs) => attrs.lane !== lane.id).map((node) => [node, graph.getNodeAttributes(node)]));
+    const start = performance.now();
+    for (const [node, to] of layoutLane(lane, index, placed)) {
+      if (!animated || fresh.has(node)) {
+        graph.mergeNodeAttributes(node, { ...to, labelRoom: false });
+        laneState.move.delete(node);
+      } else {
+        graph.setNodeAttribute(node, "labelRoom", false);
+        laneState.move.set(node, { from: { x: graph.getNodeAttribute(node, "x"), y: graph.getNodeAttribute(node, "y") }, to, start });
+      }
+    }
   }
 
   // A batch's removals: the nodes (with their edges and cross-lane curves) and edges fade out, then leave the graph
@@ -1684,6 +2007,9 @@ function render({ model, el }) {
 
   // Node hover handler
   renderer.on("enterNode", ({ node, event }) => {
+    // A quiet lane (labels: {count}) shows the hovered node's label: its cached display data needs a refresh
+    laneState.hoverNode = node;
+    if (laneState.quietLanes.has(graph.getNodeAttribute(node, "lane"))) renderer.refresh();
     const nodeData = graph.getNodeAttributes(node);
     const data = { id: node, ...nodeData };
     model.set("hovered_node", data);
@@ -1692,7 +2018,9 @@ function render({ model, el }) {
     container.style.cursor = "pointer";
   });
 
-  renderer.on("leaveNode", () => {
+  renderer.on("leaveNode", ({ node }) => {
+    laneState.hoverNode = null;
+    if (graph.hasNode(node) && laneState.quietLanes.has(graph.getNodeAttribute(node, "lane"))) renderer.refresh();
     model.set("hovered_node", null);
     model.save_changes();
     hideTooltip();
@@ -1859,6 +2187,10 @@ function render({ model, el }) {
         }
       }
     }
+    if (changed.has("colors") && !redraw) {
+      restyle();
+      renderer.refresh();
+    }
     if (redraw) redrawAll();
     if (fresh) {
       applyBatch(fresh);
@@ -1901,6 +2233,7 @@ function render({ model, el }) {
   model.on("change:lanes", () => queueSync("lanes"));
   model.on("change:append_batch", () => queueSync("batch"));
   model.on("change:pulse_nodes", () => queueSync("pulse"));
+  model.on("change:type_colors", () => queueSync("colors"));
   for (const name of ["color_field", "color_scale", "color_domain", "size_field", "size_range", "edge_color_field", "edge_color_scale", "edge_size_field", "edge_size_range"]) {
     model.on(`change:${name}`, () => queueSync("style"));
   }

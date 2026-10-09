@@ -223,3 +223,26 @@ def test_js_lookup_queries_run_on_the_engine(grafeo_db, ids, node_bin):
     node_query, edge_query = json.loads(_run_node(node_bin, "--input-type=module", "-e", _JS_LOOKUP_QUERIES, wanted))
     assert sorted(r["n"]["name"] for r in grafeo_db.execute(node_query)) == ["Alix", "Gus"]
     assert [str(r["r"]["_id"]) for r in grafeo_db.execute(edge_query)] == [edge_id]
+
+
+def _trait_defaults_js() -> dict:
+    source = (UI_DIR / "defaults.js").read_text(encoding="utf-8")
+    match = re.search(r"export const TRAIT_DEFAULTS = (\{.*?\});\s*$", source, re.DOTALL)
+    assert match, "defaults.js holds export const TRAIT_DEFAULTS = {...};"
+    return json.loads(match.group(1))
+
+
+def test_front_end_defaults_match_the_python_traits():
+    # A host without Python (an app's own model) gets these for the settings it leaves out
+    from anywidget_graph import Graph
+
+    graph = Graph()
+    expected = {
+        name: getattr(graph, name) for name in Graph.class_own_traits(sync=True) if name not in ("_esm", "_css")
+    }
+    assert _trait_defaults_js() == expected
+
+
+def test_bundle_carries_the_defaults(esm):
+    assert "const TRAIT_DEFAULTS = {" in esm
+    assert "export const TRAIT_DEFAULTS" not in esm

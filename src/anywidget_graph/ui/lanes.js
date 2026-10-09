@@ -35,10 +35,10 @@ export function insetBand(band, share = 0.06) {
   return { x0: band.x0 + dx, x1: band.x1 - dx, y0: band.y0 + dy, y1: band.y1 - dy };
 }
 
-/** The area the camera frames: every band (nodes or not) and a margin for titles and glyphs. */
-export function lanesBBox(bands, margin = 120) {
+/** The area the camera frames: every band (nodes or not) and a margin for titles and glyphs, plus room on the right. */
+export function lanesBBox(bands, margin = 120, right = 0) {
   return {
-    x: [Math.min(...bands.map((band) => band.x0)) - margin, Math.max(...bands.map((band) => band.x1)) + margin],
+    x: [Math.min(...bands.map((band) => band.x0)) - margin, Math.max(...bands.map((band) => band.x1)) + margin + right],
     y: [Math.min(...bands.map((band) => band.y0)) - margin, Math.max(...bands.map((band) => band.y1)) + margin],
   };
 }
@@ -64,7 +64,8 @@ export function fitBox(box, width, height, padding = 0) {
   const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
   const scale = fitScale(box, width, height, padding);
   const offsetX = (width - spanX * scale) / 2, offsetY = (height - spanY * scale) / 2;
-  return (point) => ({ x: offsetX + (point.x - box.x[0]) * scale, y: offsetY + (point.y - box.y[0]) * scale });
+  // Sigma's y axis points up: a higher y is drawn higher on the screen
+  return (point) => ({ x: offsetX + (point.x - box.x[0]) * scale, y: offsetY + (box.y[1] - point.y) * scale });
 }
 
 /** Pixels per graph unit when sigma frames the box whole in a width x height viewport (see fitBox). */
@@ -143,6 +144,10 @@ export function crossKey(edge) {
  * spreads ids that differ only at the end (y1, y2, ...), which FNV alone maps to nearly the same number.
  */
 export function hashUnit(text) {
+  return hash32(text) / 4294967296;
+}
+
+function hash32(text) {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
@@ -153,7 +158,174 @@ export function hashUnit(text) {
   h ^= h >>> 13;
   h = Math.imul(h, 0xc2b2ae35);
   h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
+  return h >>> 0;
+}
+
+/** A random source in [0, 1) seeded by a text (mulberry32), so a lane's force layout gives the same picture again. */
+export function seededRandom(seed) {
+  let state = hash32(String(seed));
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Keeps a simulated node inside its band (a lane stays its own graph): a node over an edge stops at it. */
+export function clampInto(node, band) {
+  if (node.x < band.x0 || node.x > band.x1) {
+    node.x = clamp(node.x, band.x0, band.x1);
+    if ("vx" in node) node.vx = 0;
+  }
+  if (node.y < band.y0 || node.y > band.y1) {
+    node.y = clamp(node.y, band.y0, band.y1);
+    if ("vy" in node) node.vy = 0;
+  }
+  return node;
+}
+
+/** The mean height of each node's cross-lane partners among the nodes already placed (lanes laid out before it). */
+export function partnerHeights(ids, cross, placed) {
+  const wanted = new Set(ids), sums = new Map();
+  for (const edge of cross) {
+    for (const [own, other] of [[edge.source, edge.target], [edge.target, edge.source]]) {
+      if (!wanted.has(own) || !placed.has(other)) continue;
+      const [sum, count] = sums.get(own) || [0, 0];
+      sums.set(own, [sum + placed.get(other).y, count + 1]);
+    }
+  }
+  return new Map(ids.filter((id) => sums.has(id)).map((id) => [id, sums.get(id)[0] / sums.get(id)[1]]));
+}
+
+/** A lane's natural spacing: the side of the square each node would get if its nodes shared the band evenly. */
+export function laneSpacing(count, band) {
+  const area = (band.x1 - band.x0) * (band.y1 - band.y0);
+  return Math.sqrt(area / Math.max(1, count));
+}
+
+/**
+ * How much smaller a lane draws its nodes (1 = as styled) so their discs take at most `share` of its area: a crowded
+ * lane would otherwise be a packed box with no room for the layout. Sizes are radii in pixels, the band in graph units.
+ */
+export function laneSizeScale(sizes, band, pxPerUnit, share = 0.35) {
+  const discs = sizes.reduce((sum, size) => sum + Math.PI * size * size, 0);
+  const area = (band.x1 - band.x0) * (band.y1 - band.y0) * pxPerUnit * pxPerUnit;
+  return discs > 0 ? Math.min(1, Math.sqrt((share * area) / discs)) : 1;
+}
+
+/** A node's row in a lane with rows ({field, order}): the index of its field's value, else the extra row after them. */
+export function rowOf(node, rows) {
+  const index = rows.order.indexOf(node[rows.field]);
+  return index >= 0 ? index : rows.order.length;
+}
+
+/**
+ * A band split into rows top to bottom on screen, one per value in `order` plus an extra (unlabelled) row when `counts` has
+ * nodes for it. Row heights follow the counts, each at least `minShare` of the band (equal when nothing is counted).
+ * Each row's `band` is inset from its top and bottom, so nodes keep away from the separators.
+ */
+export function rowBands(band, order, counts, minShare = 0.12, inset = 0.1, nameRoom = 0) {
+  const used = counts[order.length] > 0 ? order.length + 1 : order.length;
+  const least = Math.min(minShare, 1 / used);
+  // A row under the minimum gets the minimum; the others share the rest by count (repeated until none is under it)
+  const shares = new Array(used).fill(1 / used);
+  const fixed = new Set();
+  for (let changed = true; changed; ) {
+    changed = false;
+    const rest = 1 - fixed.size * least;
+    const free = [...shares.keys()].filter((i) => !fixed.has(i));
+    const counted = free.reduce((sum, i) => sum + (counts[i] || 0), 0);
+    for (const i of free) shares[i] = counted ? (rest * (counts[i] || 0)) / counted : rest / free.length;
+    for (const i of free) {
+      if (shares[i] < least - 1e-12) {
+        shares[i] = least;
+        fixed.add(i);
+        changed = true;
+      }
+    }
+  }
+  const sum = shares.reduce((a, b) => a + b, 0);
+  const height = band.y1 - band.y0;
+  // In screen order: sigma's y axis points up, so the first row takes the highest y
+  let y1 = band.y1;
+  return shares.map((share, i) => {
+    const y0 = i === used - 1 ? band.y0 : y1 - (height * share) / sum;
+    const pad = (y1 - y0) * inset;
+    // The row's top (its highest y) keeps room for its name, so no node sits under it (at most 60% of the row)
+    const top = Math.min(Math.max(pad, nameRoom), (y1 - y0) * 0.6);
+    const row = { label: i < order.length ? String(order[i]) : "", y0, y1, band: { x0: band.x0, x1: band.x1, y0: y0 + pad, y1: y1 - top } };
+    y1 = y0;
+    return row;
+  });
+}
+
+/** Whether a batch removes or adds more than `share` of a lane's nodes (or fills an empty lane): a whole new layout. */
+export function bigBatch(before, removed, added, share = 1 / 3) {
+  if (!removed && !added) return false;
+  return before === 0 || removed > before * share || added > before * share;
+}
+
+/** An item's colour: its own `color`, else its type's colour from the host (type_colors), else the palette's. */
+export function colorFor(item, type, typeColors, fallback) {
+  return item.color || typeColors?.[type] || fallback;
+}
+
+/**
+ * The labels to show for up to `count` nodes, largest first (by size, then degree). A label box is its text `width`
+ * by `height`, `gap` from its node's disc (radius `size`) on the right, or on the left when it would cross the
+ * band's right edge. A label may cover nodes smaller than its own (a hub's label over leaves), but not the inner half
+ * of a node as large or larger, not a node already labelled, and not (by `margin`) another label; a node under a
+ * label already chosen gets none. Nor may it cover `taken` space (boxes such as a row's name). Returns [{id, side}].
+ */
+export function labelsThatFit(nodes, count, { height, gap = 0, margin = 0, band, taken = [] } = {}) {
+  const ranked = [...nodes].sort((a, b) => (b.size || 0) - (a.size || 0) || (b.degree || 0) - (a.degree || 0));
+  const boxOf = (node, side) => {
+    const y0 = node.y - height / 2, y1 = node.y + height / 2;
+    if (side === "right") {
+      const x0 = node.x + (node.size || 0) + gap;
+      return { x0, x1: x0 + node.width, y0, y1 };
+    }
+    const x1 = node.x - (node.size || 0) - gap;
+    return { x0: x1 - node.width, x1, y0, y1 };
+  };
+  const overlap = (a, b) => a.x0 < b.x1 + margin && b.x0 < a.x1 + margin && a.y0 < b.y1 + margin && b.y0 < a.y1 + margin;
+  const coversDisc = (box, other) => {
+    const dx = Math.max(box.x0 - other.x, 0, other.x - box.x1), dy = Math.max(box.y0 - other.y, 0, other.y - box.y1);
+    return Math.hypot(dx, dy) < (other.size || 0) * 0.5;
+  };
+  const chosenIds = new Set();
+  const chosen = [];
+  for (const node of ranked) {
+    if (chosen.length >= count) break;
+    let side = "right", box = boxOf(node, "right");
+    if (band && box.x1 > band.x1) {
+      side = "left";
+      box = boxOf(node, "left");
+      if (box.x0 < band.x0) continue;
+    }
+    if (taken.some((space) => overlap(box, space))) continue;
+    if (chosen.some((other) => overlap(box, other.box) || coversDisc(other.box, node))) continue;
+    const blocked = (other) => other.id !== node.id && ((other.size || 0) >= (node.size || 0) || chosenIds.has(other.id)) && coversDisc(box, other);
+    if (nodes.some(blocked)) continue;
+    chosen.push({ id: node.id, side, box });
+    chosenIds.add(node.id);
+  }
+  return chosen.map(({ id, side }) => ({ id, side }));
+}
+
+/** A label cut to `maxWidth` (as `measure` gives widths) with an ellipsis; one that fits stays as it is. */
+export function shortenLabel(text, maxWidth, measure) {
+  if (!text || measure(text) <= maxWidth) return text;
+  let cut = text;
+  while (cut && measure(cut + "\u2026") > maxWidth) cut = cut.slice(0, -1);
+  return cut.trimEnd() + "\u2026";
+}
+
+/** Whether a label box (unit.x wide, unit.y high) at `spot` is clear of every occupied one. */
+export function labelClear(spot, occupied, unit) {
+  return occupied.every((o) => Math.abs(o.x - spot.x) >= unit.x * 0.999 || Math.abs(o.y - spot.y) >= unit.y * 0.999);
 }
 
 function clamp(value, low, high) {

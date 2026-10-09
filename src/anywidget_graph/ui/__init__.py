@@ -93,6 +93,7 @@ def _resolve_schema_imports(code: str) -> str:
 
 def get_esm() -> str:
     """Get aggregated ESM JavaScript."""
+    defaults_js = _read_file(_UI_DIR / "defaults.js")
     icons_js = _read_file(_UI_DIR / "icons.js")
     neo4j_js = _read_file(_UI_DIR / "neo4j.js")
     grafeo_result_js = _read_file(_UI_DIR / "grafeo-result.js")
@@ -115,6 +116,9 @@ import random from "https://esm.sh/graphology-layout@0.6.1/random.js";
 import forceAtlas2 from "https://esm.sh/graphology-layout-forceatlas2@0.10.1";
 import * as d3Force from "https://esm.sh/d3-force@3.0.0";
 import neo4j from "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";
+
+// === Defaults (for a host without Python) ===
+{_strip_imports_exports(defaults_js)}
 
 // === Icons ===
 {_strip_imports_exports(icons_js)}

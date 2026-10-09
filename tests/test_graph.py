@@ -790,6 +790,13 @@ def test_linked_lane_traits_default_off():
     assert graph.theme == {}
     assert graph.lane_action == {}
     assert graph.totals == {}
+    assert graph.type_colors == {}
+
+
+def test_type_colors_are_synced_for_the_front_end():
+    graph = Graph(type_colors={"nodes": {"File": "#112233"}, "edges": {"CONTAINS": "#445566"}})
+    assert graph.trait_metadata("type_colors", "sync") is True
+    assert graph.type_colors["nodes"]["File"] == "#112233"
 
 
 def test_totals_are_synced_for_the_front_end():
