@@ -27,6 +27,7 @@ uv add "anywidget-graph[networkx]"   # NetworkX support
 uv add "anywidget-graph[pandas]"     # pandas support
 uv add "anywidget-graph[grafeo]"     # Grafeo backend
 uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
+uv add "anywidget-graph[examples]"   # marimo, to run the apps in examples/
 ```
 
 ## Quick Start
