@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.4.2"
+version = "0.4.3"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -17,26 +17,28 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 
 dependencies = [
     "anywidget>=0.9.21",
-    "marimo>=0.19.9",
 ]
 
 [project.optional-dependencies]
 dev = [
     "prek>=0.5",
     "pytest>=9.1",
-    "ruff>=0.16",
+    "ruff>=0.17",
     "ty>=0.0",
-    "marimo>=0.20",
+    "marimo>=0.20; python_version < '3.15'",
 ]
 networkx = ["networkx>=3"]
 pandas = ["pandas>=3"]
 grafeo = ["grafeo>=0.5.44,<0.7"]
 cosmosdb = ["gremlinpython>=3.8"]
+# marimo, to run the apps in examples/; it pulls in loro, which has no Python 3.15 wheels yet
+examples = ["marimo>=0.19.9; python_version < '3.15'"]
 embed = []  # Marker extra: WASM loads from CDN on demand
 demo = []  # Marker extra: enables demo mode with pre-populated dataset
 

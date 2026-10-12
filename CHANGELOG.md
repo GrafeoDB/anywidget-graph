@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3 2026-10-12
+
+### Improvements
+
+- **Python 3.15**: supported, and tested in CI on 3.12 to 3.15. marimo, which the widget does not import, installs on 3.12 to 3.14 only for now: its dependency loro has no 3.15 wheels yet (the widget works in marimo as soon as marimo installs on 3.15)
+- **marimo moved to the `examples` extra**: the widget does not import marimo, so it is no longer a dependency; `pip install anywidget-graph[examples]` adds marimo to run the apps in `examples/`
+
 ## 0.4.2 2026-10-09
 
 ### Features
