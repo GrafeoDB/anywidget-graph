@@ -3,9 +3,8 @@
  * Orchestrates all UI components and graph rendering.
  */
 import { TRAIT_DEFAULTS } from "./defaults.js";
-import Graph from "https://esm.sh/graphology@0.25.4";
-import Sigma from "https://esm.sh/sigma@3.0.0";
-import * as d3Force from "https://esm.sh/d3-force@3.0.0";
+// Graph, Sigma, d3Force, circular, random and forceAtlas2 come from the bundled libraries
+// (vendor/graph-libs.min.js), which ui/__init__.py puts in front of the modules
 
 import { ICONS } from "./icons.js";
 import { createToolbar } from "./toolbar.js";

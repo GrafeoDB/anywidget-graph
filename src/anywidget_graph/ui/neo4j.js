@@ -1,9 +1,16 @@
 /**
  * Neo4j database connection and query execution (browser-side).
  */
-import neo4j from "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";
+// The driver loads when a Neo4j connection is made, so the widget itself needs no CDN
+const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";
 
 let driver = null;
+let neo4j = null;
+
+async function loadDriver() {
+  if (!neo4j) neo4j = (await import(NEO4J_DRIVER_URL)).default;
+  return neo4j;
+}
 
 /**
  * Connect to a Neo4j database.
@@ -18,6 +25,7 @@ export async function connect(uri, username, password, model) {
   model.save_changes();
 
   try {
+    const neo4j = await loadDriver();
     driver = neo4j.driver(uri, neo4j.auth.basic(username, password));
     await driver.verifyConnectivity();
     model.set("connection_status", "connected");

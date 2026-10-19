@@ -1,0 +1,19 @@
+{
+  "name": "anywidget-graph-vendor",
+  "private": true,
+  "description": "Builds src/anywidget_graph/ui/vendor/graph-libs.min.js: the graph libraries the widget bundles instead of loading them from a CDN",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "d3-force": "3.0.0",
+    "graphology": "0.25.4",
+    "graphology-layout": "0.6.1",
+    "graphology-layout-forceatlas2": "0.10.1",
+    "sigma": "3.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
