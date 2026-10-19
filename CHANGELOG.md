@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4 2026-10-19
+
+### Bug Fixes
+
+- **The widget loads without a CDN**: graphology, sigma, graphology-layout, graphology-layout-forceatlas2 and d3-force are bundled with the widget (`ui/vendor/graph-libs.min.js`, built from pinned npm versions by `scripts/vendor`, licenses in `ui/vendor/graph-libs.LICENSES.txt`) instead of loaded from esm.sh on every render. A page that could not reach esm.sh or cdn.jsdelivr.net (offline, a network filter, a blocker, a CDN outage) showed "Failed to fetch dynamically imported module" instead of the graph
+- **neo4j-driver loads when a Neo4j connection is made**: it was imported from cdn.jsdelivr.net with the widget, so every host needed the CDN even without Neo4j. The Neo4j backend and the Grafeo WASM backend are now the only parts that load code from the network, and only when they connect
+
 ## 0.4.3 2026-10-12
 
 ### Improvements

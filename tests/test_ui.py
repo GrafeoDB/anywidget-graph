@@ -95,11 +95,43 @@ def esm() -> str:
     return get_esm()
 
 
-def test_bundle_has_only_header_imports_and_one_default_export(esm):
-    import_lines = [line for line in esm.splitlines() if line.lstrip().startswith("import ")]
-    assert all(line.startswith("import ") and "https://" in line for line in import_lines), import_lines
-    assert len(import_lines) == 7
+def test_bundle_has_no_imports_and_one_default_export(esm):
+    """The libraries are bundled: a page that cannot reach a CDN still renders the widget."""
+    assert [line for line in esm.splitlines() if line.lstrip().startswith("import ")] == []
+    assert not re.search(r"""\bfrom\s*["']https?://""", esm)
     assert [line for line in esm.splitlines() if line.lstrip().startswith("export ")] == ["export default { render };"]
+
+
+def test_only_the_optional_backends_load_code_from_the_network(esm):
+    """neo4j-driver and the WASM engine load when their backend connects, never with the widget."""
+    # Dynamic imports only: graphology's own graph.import(...) method is no module load
+    dynamic = set(re.findall(r"""(?<![\w$.])import\(\s*([^)]+?)\s*\)""", esm))
+    assert dynamic == {"NEO4J_DRIVER_URL", "`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`"}
+    driver = (
+        'const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";'
+    )
+    assert esm.count(driver) == 1
+
+
+def test_bundle_loads_without_a_network(esm, node_bin, tmp_path):
+    """Node imports no https: URL, so the module loading at all shows that nothing comes from a CDN.
+
+    sigma reads WebGL constants when it loads; Node has no WebGL, so a stub stands in for them.
+    """
+    bundle = tmp_path / "widget.mjs"
+    bundle.write_text(esm, encoding="utf-8")
+    script = (
+        "globalThis.WebGL2RenderingContext = globalThis.WebGLRenderingContext = new Proxy({}, { get: () => 0 });"
+        f"const m = await import({json.dumps(bundle.as_uri())}); console.log(typeof m.default.render)"
+    )
+    out = _run_node(node_bin, "--input-type=module", "-e", script)
+    assert out.strip() == "function"
+
+
+def test_the_bundled_libraries_carry_their_licenses():
+    licenses = (UI_DIR / "vendor" / "graph-libs.LICENSES.txt").read_text(encoding="utf-8")
+    for package in ("graphology", "sigma", "graphology-layout", "graphology-layout-forceatlas2", "d3-force"):
+        assert f"\n== {package}@" in f"\n{licenses}", package
 
 
 def test_bundle_resolves_all_backend_namespaces(esm):
