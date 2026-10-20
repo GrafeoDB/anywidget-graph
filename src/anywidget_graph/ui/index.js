@@ -12,7 +12,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions } from "./lanes.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -337,11 +337,18 @@ function render({ model: host, el }) {
     return false;
   }
 
+  // The canvas colour that dimmed nodes and edges are mixed towards: read again when the theme changes, not per node
+  let canvasBackground = "";
+  function readCanvasBackground() {
+    canvasBackground = getComputedStyle(wrapper).getPropertyValue("--awg-bg").trim();
+  }
+
   // Host theme: the host's colours win over the widget's light and dark defaults
   function applyHostTheme() {
     // A key the theme leaves out is "" and removes its variable: the widget's light or dark colour shows again
     const variables = themeVariables(model.get("theme"));
     for (const [name, value] of Object.entries(variables)) wrapper.style.setProperty(name, value);
+    readCanvasBackground();
     rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), model.get("dark_mode")) });
     rendererRef?.refresh();
   }
@@ -350,6 +357,7 @@ function render({ model: host, el }) {
   function updateTheme() {
     const dark = model.get("dark_mode");
     wrapper.classList.toggle("awg-dark", dark);
+    readCanvasBackground();
     rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), dark) });
     rendererRef?.refresh();
   }
@@ -1473,7 +1481,7 @@ function render({ model: host, el }) {
 
     // Dim unselected nodes when there is an active selection (with highlight_neighbors not its neighbours)
     if (selectedNodes.length > 0 && !selectedNodes.includes(node) && !litNodes(selectedNodes).has(node)) {
-      res.color = (res.color || data.color) + "40";
+      res.color = dimColor(res.color || data.color, canvasBackground);
       res.label = "";
     }
 
@@ -1577,7 +1585,7 @@ function render({ model: host, el }) {
     const selected = model.get("selected_nodes") || [];
     const [from, to] = graph.extremities(edge);
     if (!res.hidden && model.get("highlight_neighbors") && selected.length === 1 && from !== selected[0] && to !== selected[0]) {
-      res.color = (res.color || data.color) + "30";
+      res.color = dimColor(res.color || data.color, canvasBackground);
       res.label = "";
     }
     // Sigma draws an edge from a node to itself as nothing: the overlay draws it as a loop (drawLoops)

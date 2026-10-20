@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.6 2026-10-20
+
+### Bug Fixes
+
+- **Dimmed items read the same on a light and a dark canvas**: a selection dims the other nodes and edges by mixing their colour towards the canvas colour (opaque) instead of making it translucent. Sigma's blending does not treat a colour's alpha as transparency, so the old translucent dimming barely dimmed on a dark canvas and all but vanished on a light one
+
 ## 0.4.5 2026-10-20
 
 ### Features

@@ -9,7 +9,7 @@ import {
   sameItems, extentBand, crossNeighbours, laneIcon, removeItems, edgeMatches, applyBatchItems,
   withTotals, shownOf, totalShown, nodeType, edgeType, insetBand,
   seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
-  colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions,
+  colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor,
 } from "../../src/anywidget_graph/ui/lanes.js";
 
 test("a node's neighbourhood holds the node and every node it shares an edge with, either way", () => {
@@ -488,4 +488,15 @@ test("an empty canvas keeps sigma's stage padding, so the lanes don't move when 
   assert.deepEqual(toViewport({ x: 1000, y: 500 }), { x: 500, y: 250 });
   // A container without a size yet maps everything to its corner instead of NaN
   assert.deepEqual(fitBox({ x: [0, 2000], y: [0, 1000] }, 0, 0, 30)({ x: 1000, y: 500 }), { x: 0, y: 0 });
+});
+
+test("a dimmed item is its colour mixed towards the canvas, opaque, so it reads the same on a light and a dark canvas", () => {
+  // Sigma's blending does not treat a colour's alpha as transparency: an opaque mix looks alike on every background
+  assert.equal(dimColor("#7d6be0", "#ffffff"), "#d2cbf4");
+  assert.equal(dimColor("#7d6be0", "#15171c"), "#393461");
+  assert.equal(dimColor("#8c93a0", "rgb(255, 255, 255)"), "#d7d9de");
+  // A colour with an alpha is mixed from its base colour; a colour or canvas that is not hex or rgb stays as it is
+  assert.equal(dimColor("#7d6be080", "#ffffff"), "#d2cbf4");
+  assert.equal(dimColor("steelblue", "#ffffff"), "steelblue");
+  assert.equal(dimColor("#7d6be0", "var(--x)"), "#7d6be0");
 });

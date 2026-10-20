@@ -616,3 +616,21 @@ export function presetPositions(nodes) {
   }
   return positions;
 }
+
+// A colour as [r, g, b]: #rrggbb (an #rrggbbaa's alpha is dropped) or rgb()/rgba(); null for anything else
+function rgbOf(color) {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(color || "");
+  if (hex) return hex.slice(1, 4).map((part) => parseInt(part, 16));
+  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color || "");
+  return rgb ? rgb.slice(1, 4).map(Number) : null;
+}
+
+// A dimmed node or edge (an active selection): its colour mixed most of the way towards the canvas, opaque. Sigma's
+// blending does not treat a colour's alpha as transparency (a translucent colour stays bright on a dark canvas and
+// all but vanishes on a light one), so an opaque mix is what reads the same on both.
+const DIM_MIX = 0.65;
+export function dimColor(color, background) {
+  const [from, to] = [rgbOf(color), rgbOf(background)];
+  if (!from || !to) return color;
+  return `#${from.map((v, i) => Math.round(v + (to[i] - v) * DIM_MIX).toString(16).padStart(2, "0")).join("")}`;
+}
