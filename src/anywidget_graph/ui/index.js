@@ -12,7 +12,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel } from "./lanes.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -616,6 +616,13 @@ function render({ model: host, el }) {
     });
 
     switch (layoutName) {
+      case "preset": {
+        // The host placed the nodes: back to the positions they came with (also after another layout was tried)
+        for (const [id, at] of presetPositions(drawn.nodes.values())) {
+          if (graph.hasNode(id)) graph.mergeNodeAttributes(id, at);
+        }
+        break;
+      }
       case "circular":
         circular.assign(graph);
         break;
@@ -1124,8 +1131,8 @@ function render({ model: host, el }) {
     labelRenderedSizeThreshold: nodeCount > 200 ? 8 : nodeCount > 50 ? 5 : 2,
     // Limit label density to reduce clutter on large graphs
     labelDensity: nodeCount > 200 ? 0.5 : nodeCount > 50 ? 1 : 2,
-    // Smoother edges
-    defaultEdgeType: "line",
+    // Plain lines, or arrows from source to target (edge_arrows)
+    defaultEdgeType: model.get("edge_arrows") ? "arrow" : "line",
     // Enable edge interaction events (click, hover)
     enableEdgeEvents: true,
     // A host may mount the widget in a hidden or not yet sized container (a closed panel, a tab)
@@ -1165,12 +1172,54 @@ function render({ model: host, el }) {
     overlay.style.height = `${height}px`;
   }
 
+  // Edges from a node to itself (the edge reducer hides them from sigma and marks them `loop`): a circle over the
+  // node's edge, nested when a node has several, with an arrowhead (edge_arrows) and the label (show_edge_labels)
+  function drawLoops(ctx) {
+    const perNode = new Map();
+    const arrows = model.get("edge_arrows"), labels = model.get("show_edge_labels");
+    graph.forEachEdge((edge, attrs, source, target) => {
+      if (source !== target) return;
+      const shown = renderer.getEdgeDisplayData(edge);
+      const node = renderer.getNodeDisplayData(source);
+      if (!shown?.loop || !node || node.hidden) return;
+      const index = perNode.get(source) || 0;
+      perNode.set(source, index + 1);
+      const circle = loopCircle(renderer.framedGraphToViewport(node), renderer.scaleSize(node.size), index);
+      const color = shown.color || "#94a3b8";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.min(4, Math.max(1, shown.size || 1));
+      ctx.beginPath();
+      ctx.arc(circle.x, circle.y, circle.r, 0, Math.PI * 2);
+      ctx.stroke();
+      if (arrows) {
+        // The head where the loop comes back into the node (lower left of the circle), pointing along the loop
+        const angle = Math.PI * 0.8, tip = { x: circle.x + circle.r * Math.cos(angle), y: circle.y + circle.r * Math.sin(angle) };
+        const heading = angle + Math.PI / 2, size = 6 + ctx.lineWidth;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(tip.x, tip.y);
+        ctx.lineTo(tip.x - size * Math.cos(heading - 0.45), tip.y - size * Math.sin(heading - 0.45));
+        ctx.lineTo(tip.x - size * Math.cos(heading + 0.45), tip.y - size * Math.sin(heading + 0.45));
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (labels && shown.label) {
+        ctx.font = "500 11px system-ui, -apple-system, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = color;
+        ctx.fillText(shown.label, circle.x, circle.y - circle.r - 4);
+        ctx.textAlign = "left";
+      }
+    });
+  }
+
   function drawOverlay() {
     const ctx = overlay.getContext("2d");
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
+    drawLoops(ctx);
     if (!laneState.lanes.length) return;
     // The widget's own colours: its light or dark defaults, or the host theme (applyHostTheme sets these variables)
     const css = getComputedStyle(wrapper);
@@ -1388,6 +1437,17 @@ function render({ model: host, el }) {
     requestAnimationFrame(animate);
   }
 
+  // The nodes a selection keeps lit (highlight_neighbors, one selected node): worked out once per selection, not per node
+  const NOTHING_LIT = new Set();
+  let lit = { selected: null, edges: null, nodes: NOTHING_LIT };
+  function litNodes(selectedNodes) {
+    if (!model.get("highlight_neighbors") || selectedNodes.length !== 1) return NOTHING_LIT;
+    if (lit.selected !== selectedNodes[0] || lit.edges !== drawn.edges) {
+      lit = { selected: selectedNodes[0], edges: drawn.edges, nodes: neighbourhood(drawn.edges, selectedNodes[0]) };
+    }
+    return lit.nodes;
+  }
+
   // Node reducer for type filtering, search filtering, selection, and pinned indicator
   renderer.setSetting("nodeReducer", (node, data) => {
     const selectedNodes = model.get("selected_nodes") || [];
@@ -1411,8 +1471,8 @@ function render({ model: host, el }) {
       res.color = data.color + "80";
     }
 
-    // Dim unselected nodes when there is an active selection
-    if (selectedNodes.length > 0 && !selectedNodes.includes(node)) {
+    // Dim unselected nodes when there is an active selection (with highlight_neighbors not its neighbours)
+    if (selectedNodes.length > 0 && !selectedNodes.includes(node) && !litNodes(selectedNodes).has(node)) {
       res.color = (res.color || data.color) + "40";
       res.label = "";
     }
@@ -1511,6 +1571,19 @@ function render({ model: host, el }) {
         if (t >= 1) res.hidden = true;
         res.size = (res.size || data.size) * (1 - t);
       }
+    }
+
+    // With highlight_neighbors a selected node's own edges stay lit, the others dim and lose their labels (as dimmed nodes do)
+    const selected = model.get("selected_nodes") || [];
+    const [from, to] = graph.extremities(edge);
+    if (!res.hidden && model.get("highlight_neighbors") && selected.length === 1 && from !== selected[0] && to !== selected[0]) {
+      res.color = (res.color || data.color) + "30";
+      res.label = "";
+    }
+    // Sigma draws an edge from a node to itself as nothing: the overlay draws it as a loop (drawLoops)
+    if (!res.hidden && from === to) {
+      res.hidden = true;
+      res.loop = true;
     }
 
     return res;
@@ -1786,7 +1859,9 @@ function render({ model: host, el }) {
   const layoutSelect = document.createElement("select");
   layoutSelect.className = "awg-layout-select";
   layoutSelect.title = "Layout algorithm";
-  [["spring", "Default"], ["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
+  // The host's own positions (layout "preset") stay one choice away after trying another layout
+  const presetChoice = model.get("layout") === "preset" ? [["preset", "Preset"]] : [];
+  [...presetChoice, ["spring", "Default"], ["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
     const opt = document.createElement("option");
     opt.value = val;
     opt.textContent = text;
@@ -2239,6 +2314,9 @@ function render({ model: host, el }) {
 
   // Layout change handler
   model.on("change:layout", refreshLayout);
+  model.on("change:edge_arrows", () => renderer.setSetting("defaultEdgeType", model.get("edge_arrows") ? "arrow" : "line"));
+  model.on("change:show_edge_labels", () => renderer.setSetting("renderEdgeLabels", model.get("show_edge_labels")));
+  model.on("change:highlight_neighbors", () => renderer.refresh());
 
   // === Demo Mode: auto-init WASM and populate data ===
   if (model.get("_demo_mode")) {

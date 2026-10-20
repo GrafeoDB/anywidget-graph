@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.5 2026-10-20
+
+### Features
+
+- **Arrows**: `edge_arrows=True` draws every edge as an arrow from source to target (also in `to_html()`)
+- **Self-loops**: an edge from a node to itself is drawn as a loop over the node's edge, nested when a node has several, with its label (`show_edge_labels`) and an arrowhead (`edge_arrows`); sigma drew such edges as nothing
+- **Neighbour highlight**: with `highlight_neighbors=True` a selected node keeps its neighbours and their edges lit; everything else dims and loses its labels
+- **`preset` layout**: `layout="preset"` keeps the positions the nodes bring (`x`, `y`), also after trying another layout from the toolbar, which then offers Preset to go back
+
+### Bug Fixes
+
+- **Settings follow the model**: `show_edge_labels` and the new `edge_arrows` and `highlight_neighbors` apply when they change after the widget is drawn
+- **`to_html()` and `save_html()` need no CDN**: the exported page carries the bundled graph libraries itself instead of loading graphology and sigma from esm.sh, so it opens offline and behind a network filter
+
 ## 0.4.4 2026-10-19
 
 ### Bug Fixes

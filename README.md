@@ -254,6 +254,7 @@ graph.edge_size_range = [1, 8]
 Graph.from_dict(data, layout="force")  # ForceAtlas2 (default)
 Graph.from_dict(data, layout="circular")
 Graph.from_dict(data, layout="random")
+Graph(nodes=[{"id": "a", "x": 0, "y": 0}, {"id": "b", "x": 10, "y": 5}], layout="preset")  # The nodes' own x and y
 ```
 
 ## Options
@@ -268,6 +269,8 @@ graph = Graph(
     background="#fafafa",  # Background color
     show_labels=True,  # Node labels
     show_edge_labels=False,  # Edge labels
+    edge_arrows=False,  # Edges as arrows from source to target
+    highlight_neighbors=False,  # A selected node keeps its neighbours and their edges lit
     show_toolbar=True,  # Toolbar visibility
     show_settings=True,  # Settings panel
     show_query_input=True,  # Query input box
