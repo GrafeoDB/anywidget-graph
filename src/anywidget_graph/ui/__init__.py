@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-__all__ = ["get_css", "get_esm"]
+__all__ = ["get_css", "get_esm", "get_vendor_js"]
 
 _UI_DIR = Path(__file__).parent
 
@@ -91,6 +91,11 @@ def _resolve_schema_imports(code: str) -> str:
     return _strip_imports_exports(code)
 
 
+def get_vendor_js() -> str:
+    """The bundled graph libraries (a script that sets the global ``anywidgetGraphVendor``)."""
+    return _read_file(_UI_DIR / "vendor" / "graph-libs.min.js")
+
+
 def get_esm() -> str:
     """Get aggregated ESM JavaScript."""
     defaults_js = _read_file(_UI_DIR / "defaults.js")
@@ -107,7 +112,7 @@ def get_esm() -> str:
     toolbar_js = _read_file(_UI_DIR / "toolbar.js")
     index_js = _read_file(_UI_DIR / "index.js")
 
-    vendor_js = _read_file(_UI_DIR / "vendor" / "graph-libs.min.js")
+    vendor_js = get_vendor_js()
 
     return f"""\
 // === Auto-generated ESM bundle for anywidget-graph ===

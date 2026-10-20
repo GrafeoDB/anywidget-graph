@@ -9,8 +9,31 @@ import {
   sameItems, extentBand, crossNeighbours, laneIcon, removeItems, edgeMatches, applyBatchItems,
   withTotals, shownOf, totalShown, nodeType, edgeType, insetBand,
   seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
-  colorFor, labelsThatFit, shortenLabel,
+  colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions,
 } from "../../src/anywidget_graph/ui/lanes.js";
+
+test("a node's neighbourhood holds the node and every node it shares an edge with, either way", () => {
+  const edges = [{ source: "a", target: "b" }, { source: "c", target: "a" }, { source: "b", target: "d" }, { source: "a", target: "a" }];
+  assert.deepEqual([...neighbourhood(edges, "a")].sort(), ["a", "b", "c"]);
+  assert.deepEqual([...neighbourhood(edges, "d")].sort(), ["b", "d"]);
+  assert.deepEqual([...neighbourhood(edges, "z")], ["z"]);
+  assert.equal(neighbourhood(edges, null).size, 0);
+});
+
+test("a self-loop is a circle over the node's upper right edge; a node's next loop is wider", () => {
+  const center = { x: 100, y: 100 }, radius = 10;
+  const first = loopCircle(center, radius, 0), second = loopCircle(center, radius, 1);
+  const distance = Math.hypot(first.x - center.x, first.y - center.y);
+  assert.ok(first.x > center.x && first.y < center.y, "up and to the right");
+  assert.ok(distance < radius + first.r && distance > radius - first.r, "the loop crosses the node's edge");
+  assert.ok(second.r > first.r);
+  assert.ok(loopCircle(center, 1, 0).r >= 7, "a tiny node still gets a visible loop");
+});
+
+test("preset positions are the nodes' own numeric x and y", () => {
+  const positions = presetPositions([{ id: "a", x: 1, y: 2 }, { id: "b", x: "3", y: 4 }, { id: "c" }, { id: "d", x: 0, y: Number.NaN }, { id: "e", x: 0, y: 0 }]);
+  assert.deepEqual([...positions], [["a", { x: 1, y: 2 }], ["e", { x: 0, y: 0 }]]);
+});
 
 const LANES = [{ id: "intermediate", title: "Intermediate graph" }, { id: "output", title: "Output graph" }];
 

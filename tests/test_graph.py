@@ -404,10 +404,32 @@ def test_to_html_contains_expected_structure():
     assert "<title>Graph Visualization</title>" in html
     assert 'id="container"' in html
     assert 'id="tooltip"' in html
-    assert "graphology@0.25.4" in html
-    assert "sigma@3.0.0" in html
-    assert "graphology-layout@0.6.1" in html
-    assert "graphology-layout-forceatlas2@0.10.1" in html
+
+
+def test_graph_arrows_and_neighbour_highlight_are_off_by_default():
+    """Edges stay plain lines and a selection dims everything else, as before, until a host asks."""
+    graph = Graph()
+    assert graph.edge_arrows is False
+    assert graph.highlight_neighbors is False
+    assert Graph(edge_arrows=True, highlight_neighbors=True, layout="preset").edge_arrows is True
+
+
+def test_to_html_draws_arrows_when_asked():
+    """The exported page draws arrowheads for a graph with edge_arrows, and plain lines otherwise."""
+    edges = [{"source": "a", "target": "b"}]
+    nodes = [{"id": "a"}, {"id": "b"}]
+    assert '"edge_arrows": true' in Graph(nodes=nodes, edges=edges, edge_arrows=True).to_html()
+    assert '"edge_arrows": false' in Graph(nodes=nodes, edges=edges).to_html()
+    assert 'OPTIONS.edge_arrows ? "arrow" : "line"' in Graph(nodes=nodes, edges=edges).to_html()
+
+
+def test_to_html_needs_no_cdn():
+    """The exported page carries the graph libraries itself, so it opens offline."""
+    html = Graph(nodes=[{"id": "n1"}], edges=[]).to_html()
+    assert "https://" not in html.split("<script", 1)[1]
+    assert "anywidgetGraphVendor" in html
+    # The inlined libraries do not end the script early
+    assert html.count("<script") == html.count("</script>") == 1
 
 
 def test_to_html_embeds_node_data():
@@ -499,7 +521,7 @@ def test_save_html(tmp_path):
     assert out.exists()
     content = out.read_text(encoding="utf-8")
     assert "<title>Saved Graph</title>" in content
-    assert "graphology@0.25.4" in content
+    assert "anywidgetGraphVendor" in content  # the graph libraries are inlined
 
 
 # ------------------------------------------------------------------ #

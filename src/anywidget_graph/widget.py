@@ -12,7 +12,7 @@ from traitlets import observe
 
 from anywidget_graph.backends import DatabaseBackend
 from anywidget_graph.backends.grafeo import GrafeoBackend
-from anywidget_graph.ui import get_css, get_esm
+from anywidget_graph.ui import get_css, get_esm, get_vendor_js
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,6 +63,10 @@ class Graph(anywidget.AnyWidget):
     background = traitlets.Unicode(default_value="#fafafa").tag(sync=True)
     show_labels = traitlets.Bool(default_value=True).tag(sync=True)
     show_edge_labels = traitlets.Bool(default_value=False).tag(sync=True)
+    # Draw edges as arrows (source to target); self-loops are drawn as loops either way
+    edge_arrows = traitlets.Bool(default_value=False).tag(sync=True)
+    # A selected node keeps its neighbours and their edges lit; everything else dims
+    highlight_neighbors = traitlets.Bool(default_value=False).tag(sync=True)
 
     # === Property-Based Styling (node) ===
     color_field = traitlets.Unicode(allow_none=True, default_value=None).tag(sync=True)
@@ -78,6 +82,7 @@ class Graph(anywidget.AnyWidget):
     edge_size_range = traitlets.List(default_value=[1, 8]).tag(sync=True)
 
     # === Layout ===
+    # spring, force, cluster, circular, random, or preset (the nodes' own x and y)
     layout = traitlets.Unicode(default_value="spring").tag(sync=True)
 
     # === Hover / Tooltip ===
@@ -859,11 +864,9 @@ body {{ margin: 0; background: {background}; font-family: sans-serif; }}
 <div id="container"></div>
 <div id="tooltip" class="tooltip"></div>
 <script type="module">
-import Graph from "https://esm.sh/graphology@0.25.4";
-import Sigma from "https://esm.sh/sigma@3.0.0";
-import circular from "https://esm.sh/graphology-layout@0.6.1/circular.js";
-import random from "https://esm.sh/graphology-layout@0.6.1/random.js";
-import forceAtlas2 from "https://esm.sh/graphology-layout-forceatlas2@0.10.1";
+// graphology, sigma and the layouts are inlined (the widget's bundled libraries): the page needs no CDN
+{vendor_js}
+const {{ Graph, Sigma, circular, random, forceAtlas2 }} = anywidgetGraphVendor;
 
 const DATA = {json_data};
 const OPTIONS = {json_options};
@@ -1047,6 +1050,7 @@ const renderer = new Sigma(graph, container, {{
   labelColor: {{ color: OPTIONS.dark_mode ? "#ccc" : "#333" }},
   labelSize: 12,
   labelWeight: "500",
+  defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line",
 }});
 
 // --- Tooltip ---
@@ -1108,7 +1112,7 @@ renderer.on("leaveEdge", () => {{
     ) -> str:
         """Export the current graph as a self-contained HTML string.
 
-        The resulting HTML loads Graphology and Sigma.js from the esm.sh CDN,
+        The resulting HTML carries Graphology and Sigma.js itself (no CDN, so it opens offline),
         embeds all current node/edge data plus visual settings, and renders the
         graph with layout, color/size mapping, labels, zoom/pan, and tooltips.
 
@@ -1131,6 +1135,7 @@ renderer.on("leaveEdge", () => {{
             "background": self.background,
             "show_labels": self.show_labels,
             "show_edge_labels": self.show_edge_labels,
+            "edge_arrows": self.edge_arrows,
             "dark_mode": self.dark_mode,
             "color_field": self.color_field,
             "color_scale": self.color_scale,
@@ -1150,6 +1155,7 @@ renderer.on("leaveEdge", () => {{
             height=height,
             json_data=json.dumps(data),
             json_options=json.dumps(options),
+            vendor_js=get_vendor_js(),
         )
 
     def save_html(self, path: str, **kwargs: Any) -> None:

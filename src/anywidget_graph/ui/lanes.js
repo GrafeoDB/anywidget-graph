@@ -586,3 +586,33 @@ export function withAlpha(hex, alpha) {
   const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+// A node and every node it shares an edge with (either direction); empty without a node
+export function neighbourhood(edges, id) {
+  if (id === null || id === undefined) return new Set();
+  const near = new Set([id]);
+  for (const edge of edges) {
+    if (edge.source === id) near.add(edge.target);
+    if (edge.target === id) near.add(edge.source);
+  }
+  return near;
+}
+
+// The circle a self-loop is drawn as (viewport pixels): over the node's upper right edge, each further loop of the
+// node a little wider, so they nest instead of overlapping
+export function loopCircle(center, radius, index) {
+  const r = Math.max(7, radius * 0.7) + index * 5;
+  const reach = (radius + r * 0.4) * Math.SQRT1_2;
+  return { x: center.x + reach, y: center.y - reach, r };
+}
+
+// The `preset` layout: the positions the nodes bring (numeric x and y); the others keep theirs
+export function presetPositions(nodes) {
+  const positions = new Map();
+  for (const node of nodes) {
+    if (typeof node.x === "number" && typeof node.y === "number" && Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      positions.set(node.id, { x: node.x, y: node.y });
+    }
+  }
+  return positions;
+}
