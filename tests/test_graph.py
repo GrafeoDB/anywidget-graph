@@ -432,6 +432,60 @@ def test_to_html_needs_no_cdn():
     assert html.count("<script") == html.count("</script>") == 1
 
 
+def test_to_html_keeps_hostile_data_inside_its_script():
+    """Markup in node and edge values cannot close the script element or run as HTML in the exported page."""
+    hostile = "</script><script>alert(1)</script>"
+    graph = Graph(
+        nodes=[{"id": hostile, "label": "<img src=x onerror=alert(1)>"}, {"id": "b"}],
+        edges=[{"source": hostile, "target": "b", "label": "<svg onload=alert(1)>"}],
+    )
+    html = graph.to_html(title="<b>title</b>")
+    assert html.count("<script") == html.count("</script>") == 1
+    assert "<img" not in html
+    assert "<svg onload" not in html
+    assert "<title>&lt;b&gt;title&lt;/b&gt;</title>" in html
+    data = json.loads(html.split("const DATA = ", 1)[1].split("const OPTIONS", 1)[0].strip().rstrip(";"))
+    assert data["nodes"][0] == {"id": hostile, "label": "<img src=x onerror=alert(1)>"}
+    assert data["edges"][0]["label"] == "<svg onload=alert(1)>"
+
+
+def _export_options(graph: Graph) -> dict:
+    html = graph.to_html()
+    return json.loads(html.split("const OPTIONS = ", 1)[1].split("\n", 1)[0].strip().rstrip(";"))
+
+
+def test_to_html_labels_read_on_the_page_background():
+    """The page uses the widget's canvas colour for its mode, so labels are never light on light."""
+    nodes = [{"id": "a"}]
+    dark = _export_options(Graph(nodes=nodes))
+    assert (dark["background"], dark["label_color"]) == ("#181c1a", "#e0e0e0")
+    light = _export_options(Graph(nodes=nodes, dark_mode=False))
+    assert (light["background"], light["label_color"]) == ("#ffffff", "#333333")
+    # A background set on the graph wins, with labels that contrast with it
+    chosen = _export_options(Graph(nodes=nodes, dark_mode=True, background="#f0f0f0"))
+    assert (chosen["background"], chosen["label_color"]) == ("#f0f0f0", "#333333")
+    # The host theme wins over both
+    themed = _export_options(Graph(nodes=nodes, theme={"background": "#0d1416", "text": "#dbe7e5"}))
+    assert (themed["background"], themed["label_color"]) == ("#0d1416", "#dbe7e5")
+    assert "background: #0d1416;" in Graph(nodes=nodes, theme={"background": "#0d1416"}).to_html()
+
+
+def test_to_html_keeps_css_values_plain():
+    """A colour or size that is not a plain CSS value cannot end the page's style element."""
+    graph = Graph(nodes=[{"id": "a"}], theme={"background": "red}</style><script>alert(1)</script>"})
+    html = graph.to_html(width="1px}</style><script>alert(2)</script>")
+    assert "alert" not in html
+    assert html.count("</style>") == 1
+    assert "width: 100%;" in html
+
+
+def test_to_html_tooltips_show_values_as_text():
+    """The exported page's tooltips build rows from text nodes, never innerHTML."""
+    html = Graph(nodes=[{"id": "a"}], edges=[]).to_html()
+    assert "innerHTML" not in html.split("// --- Tooltip ---", 1)[1]
+    assert "textContent" in html
+
+
 def test_to_html_embeds_node_data():
     """Node data is serialized into the HTML."""
     graph = Graph(

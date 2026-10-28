@@ -21,6 +21,7 @@ const QUERY_LANGUAGES = [
   { id: "sparql", name: "SPARQL" },
   { id: "gremlin", name: "Gremlin" },
   { id: "graphql", name: "GraphQL" },
+  { id: "sql", name: "SQL/PGQ" },
   { id: "aql", name: "AQL" },
 ];
 

@@ -289,7 +289,7 @@ graph = Graph(
 
 Grafeo runs in one of three modes, picked with `grafeo_connection_mode` or in the settings panel.
 
-**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.6.0b1,<0.7`).
+**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo~=0.6.0`).
 
 ```python
 import grafeo
@@ -304,7 +304,7 @@ graph = Graph(database_backend="grafeo", grafeo_db=db, query_language="gql")
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="server", grafeo_server_url="http://localhost:7474")
 ```
 
-**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.0-beta.1) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
+**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.0) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
 
 ```python
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="wasm", query_language="gql")
@@ -337,6 +337,8 @@ graph = Graph(
 )
 ```
 
+The browser connects to Neo4j itself, so the username and password are widget settings that reach the browser: anyone who can open the notebook page can read them, and a notebook saved with its widget state keeps them in the file. In a shared or published notebook, use a read-only database user, or query from Python (Neo4j's Python driver, then `Graph.from_cypher(result)`) so the credentials stay in the kernel.
+
 ### Generic backend
 
 ```python
@@ -358,9 +360,10 @@ New behaviour is opt-in and off by default: an update does not change a view tha
 An app can mount the bundled front end (`anywidget_graph.ui.get_esm()` and `get_css()`) with any model object that has `get`, `set`, `on`, `off`, `save_changes` and `send`, as anywidget's model does.
 
 - The host sets `nodes`, `edges`, `lanes`, `append_batch`, `pulse_nodes`, `theme`, `type_colors`, `totals`, `dark_mode`, and the size (`width` and `height`, or `fill`).
-- The widget sets `selected_node`, `selected_nodes`, `selected_edge`, `hovered_node`, `lane_action` and `_features`. After an `append_batch` it writes the merged `nodes` and `edges` back, unless they already hold the batch (as `Graph.append()` sends them).
+- The widget sets `selected_node`, `selected_nodes`, `selected_edge`, `hovered_node`, `lane_action` and `_features`. `selected_node`, `hovered_node` and `selected_edge` hold the item's own fields plus how it is drawn (`label` as displayed, `x`, `y`, `size`, `color`). After an `append_batch` it writes the merged `nodes` and `edges` back, unless they already hold the batch (as `Graph.append()` sends them).
 - A setting the host leaves out reads as the widget's default, the same as a fresh Python `Graph()` has it.
 - The widget sends no query when it mounts: the first view is the host's.
+- In server mode the widget connects to `grafeo_server_url` on its first query (or Connect) and expects grafeo-server's responses: `GET /health`, `GET /db/{connection_database}/schema`, and `POST /query` (body `{"query", "language", "database"}`, `database` left out for `default`) answering `{"columns": [...], "rows": [[value, ...], ...]}`, where a node is `{"_id", "_labels", ...properties}` and an edge `{"_id", "_type", "_source", "_target", ...properties}` (properties flat on the entity). A host that serves these endpoints itself sends the same shapes.
 
 ## Export
 

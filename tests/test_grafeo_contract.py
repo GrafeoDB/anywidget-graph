@@ -134,13 +134,10 @@ def test_start_and_end_node_return_nodes(grafeo_db):
 
 
 def test_number_with_a_point(grafeo_db):
-    """GQL `1.50` is an exact decimal in 0.6.0 (grafeo#610): Python gets Decimal("1.50").
-
-    0.6.0b1 still returns a float; either compares equal to 1.5. `1.5e0` is a float in both.
-    """
+    """GQL `1.50` is an exact decimal in 0.6.0 (grafeo#610): Python gets Decimal("1.50"); `1.5e0` is a float."""
     (row,) = _rows(grafeo_db.execute("RETURN 1.50 AS d, 1.5e0 AS f"))
-    assert type(row["d"]) in (Decimal, float)
-    assert row["d"] == Decimal("1.5")
+    assert type(row["d"]) is Decimal
+    assert str(row["d"]) == "1.50"
     assert type(row["f"]) is float
 
 

@@ -197,6 +197,17 @@ export function grafeoSchemaToTypes(schema) {
 }
 
 /**
+ * A note for a result whose rows hold no node, edge or path (the drawing then empties), or "" when there is
+ * something to draw or no rows at all (a write).
+ */
+export function nothingToDrawNote(rows, graph) {
+  const count = Array.isArray(rows) ? rows.length : 0;
+  if (count === 0 || graph.nodes.length > 0 || graph.edges.length > 0) return "";
+  const what = count === 1 ? "1 row" : `${count} rows`;
+  return `The query returned ${what} without nodes, edges or paths, so there is nothing to draw. Return graph elements (for example RETURN n, r, m) to see them.`;
+}
+
+/**
  * Convert result rows into {nodes, edges}, resolving missing entities through
  * `runLookup(gqlQuery) -> rows` (sync or async). Lookup failures are not fatal:
  * the entities that were returned directly are still shown.

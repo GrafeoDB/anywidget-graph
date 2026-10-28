@@ -14,6 +14,7 @@ import {
   isGrafeoNode,
   isGrafeoEdge,
   isGrafeoPath,
+  nothingToDrawNote,
 } from "../../src/anywidget_graph/ui/grafeo-result.js";
 import * as embed from "../../src/anywidget_graph/ui/grafeo-embed.js";
 import * as server from "../../src/anywidget_graph/ui/grafeo.js";
@@ -241,4 +242,15 @@ test("server: request body, schema URL and error messages", () => {
   assert.equal(server.errorMessage(500, '{"error":"internal_error","detail":null}'), "internal_error");
   assert.equal(server.errorMessage(502, "Bad Gateway"), "Bad Gateway");
   assert.equal(server.errorMessage(503, ""), "Query failed with status 503");
+});
+
+test("rows without nodes, edges or paths say there is nothing to draw; a write or a graph says nothing", async () => {
+  // A Neo4j-style shape ({id, labels, properties}) is not a grafeo entity, so it draws nothing
+  const neo4jShape = [[{ id: "0", labels: ["File"], properties: { name: "a.py" } }]];
+  const graph = await grafeoRowsToGraph(neo4jShape);
+  assert.equal(graph.nodes.length, 0);
+  assert.match(nothingToDrawNote(neo4jShape, graph), /^The query returned 1 row without nodes, edges or paths/);
+  assert.match(nothingToDrawNote([[1], [2]], { nodes: [], edges: [] }), /^The query returned 2 rows /);
+  assert.equal(nothingToDrawNote([], { nodes: [], edges: [] }), "");
+  assert.equal(nothingToDrawNote([[alix]], await grafeoRowsToGraph([[alix]])), "");
 });

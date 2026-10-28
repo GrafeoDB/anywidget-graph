@@ -1,4 +1,4 @@
-// Panels show node and edge data as text, never as markup. Run with: node --test tests/js/
+// Panels show node and edge data as text, never as markup. Run with: node --test "tests/js/*.test.mjs"
 // Node has no DOM, so a small fake stands in: it records every innerHTML write
 // (where markup would be parsed) and keeps textContent as plain text.
 import assert from "node:assert/strict";

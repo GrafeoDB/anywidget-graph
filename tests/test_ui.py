@@ -186,9 +186,10 @@ def test_bundle_parses_with_node(esm, node_bin, tmp_path):
 
 
 def test_js_unit_tests(node_bin):
-    _run_node(
-        node_bin, "--test", "tests/js/grafeo-result.test.mjs", "tests/js/lanes.test.mjs", "tests/js/panels.test.mjs"
-    )
+    # Every Node test file, so a new one cannot be left out (`node --test "tests/js/*.test.mjs"` by hand)
+    tests = sorted(path.relative_to(ROOT).as_posix() for path in (ROOT / "tests" / "js").glob("*.test.mjs"))
+    assert len(tests) >= 4
+    _run_node(node_bin, "--test", *tests)
 
 
 # ------------------------------------------------------------------ #
@@ -262,7 +263,7 @@ def test_js_lookup_queries_run_on_the_engine(grafeo_db, ids, node_bin):
 
 def _trait_defaults_js() -> dict:
     source = (UI_DIR / "defaults.js").read_text(encoding="utf-8")
-    match = re.search(r"export const TRAIT_DEFAULTS = (\{.*?\});\s*$", source, re.DOTALL)
+    match = re.search(r"export const TRAIT_DEFAULTS = (\{.*?\});\s*$", source, re.DOTALL | re.MULTILINE)
     assert match, "defaults.js holds export const TRAIT_DEFAULTS = {...};"
     return json.loads(match.group(1))
 

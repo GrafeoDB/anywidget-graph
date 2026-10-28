@@ -43,6 +43,8 @@
   overflow: hidden;
   background: var(--awg-bg);
   color: var(--awg-text);
+  /* The toolbar fits the widget's own width (a host's narrow pane), not the window's: see @container awg below */
+  container: awg / inline-size;
 }
 
 .awg-content {
@@ -54,6 +56,7 @@
 
 /* === TOOLBAR === */
 .awg-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -65,13 +68,51 @@
 
 .awg-query-container {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+/* A failed query's message, under the toolbar (its full width) and over the canvas */
+.awg-query-error {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  z-index: 30;
+  display: none;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  max-height: 120px;
+  overflow: auto;
+  background: var(--awg-bg);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-left: 3px solid #ef4444;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: #ef4444;
+  /* The query box's font: engine messages point at the failing column with a caret line */
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.awg-query-error > span {
+  flex: 1;
+  padding-top: 2px;
+}
+
+.awg-query-input.awg-query-input-error {
+  border-color: #ef4444;
+}
+
 .awg-query-input {
   flex: 1;
+  min-width: 0;
   padding: 8px 12px;
   border: 1px solid var(--awg-input-border);
   border-radius: 6px;
@@ -888,6 +929,38 @@
     font-size: 12px;
     padding: 6px 8px;
     min-width: 0;
+  }
+
+  .awg-btn {
+    min-width: 32px;
+    height: 32px;
+  }
+}
+
+/* === Narrow widget (a host pane, whatever the window's width) === */
+@container awg (max-width: 600px) {
+  .awg-toolbar {
+    padding: 6px 8px;
+    gap: 4px;
+  }
+
+  .awg-query-container {
+    gap: 4px;
+  }
+
+  /* The filter box makes room for the query box, and widens while it is in use */
+  .awg-search-input {
+    width: 56px;
+  }
+
+  .awg-search-input:focus,
+  .awg-search-input:not(:placeholder-shown) {
+    width: 120px;
+  }
+
+  /* The results bar shows the counts and the timing too */
+  .awg-toolbar .awg-count-badge {
+    display: none;
   }
 
   .awg-btn {
