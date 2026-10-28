@@ -19,9 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # setup-uv publishes no major tags since v8: pin the full version
+      # setup-uv publishes no major tags since v8: pin the release commit (its tag in the comment), as anywidget-vector does
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
 
       - name: Install dependencies
         run: uv sync --dev

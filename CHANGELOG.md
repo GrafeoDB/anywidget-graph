@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.2 2026-10-28
+
+### Features
+
+- **`max_query_nodes`**: a cap on what a query draws, off by default (`None`). Set, a query result with more nodes is cut to its best-connected nodes (the most edges within the result, ties in result order) with the edges between them, and `query_note` says how many the query returned. It applies in every mode: the Python-side backends and the browser-side grafeo-server, WASM and Neo4j clients. `max_nodes` stays what it was, the limit for node expansion
+
+### Improvements
+
+- CI pins astral-sh/setup-uv to the v10.3.3 release commit (was the v10.3.0 tag), as anywidget-vector does
+
+### Tests
+
+- Node and Python tests for the cut: off by default, the best-connected nodes kept with their edges, the note
+
 ## 0.5.1 2026-10-28
 
 ### Features

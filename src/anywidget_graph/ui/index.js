@@ -2,7 +2,7 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
-import { withDefaults, followHostTheme, queryResultNote, detectDark } from "./defaults.js";
+import { withDefaults, followHostTheme, queryResultNote, detectDark, capQueryResult } from "./defaults.js";
 import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.js";
 
 import { ICONS } from "./icons.js";
@@ -302,11 +302,14 @@ async function executeQuery(model) {
   if (!result || latestQuery.get(key) !== ticket) return;
   model.set("query_time", performance.now() - start);
   const note = queryResultNote(result.rows, result);
-  model.set("query_note", note);
-  // A result without nodes or edges keeps what is drawn
-  if (!note) {
-    model.set("nodes", result.nodes);
-    model.set("edges", result.edges);
+  // A result without nodes or edges keeps what is drawn; one past max_query_nodes is cut, and the note says so
+  if (note) {
+    model.set("query_note", note);
+  } else {
+    const capped = capQueryResult(result, model.get("max_query_nodes"));
+    model.set("query_note", capped.note);
+    model.set("nodes", capped.graph.nodes);
+    model.set("edges", capped.graph.edges);
   }
   model.save_changes();
 }

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TRAIT_DEFAULTS, detectDark, followHostTheme, queryResultNote, withDefaults } from "../../src/anywidget_graph/ui/defaults.js";
+import { TRAIT_DEFAULTS, capQueryResult, detectDark, followHostTheme, queryResultNote, withDefaults } from "../../src/anywidget_graph/ui/defaults.js";
 
 // A host model in the shape anywidget hands to render(): get/set/on/off/save_changes/send
 function fakeHost(values = {}) {
@@ -164,4 +164,18 @@ test("a second copy of the module (a cell run again) also sees the first copy's 
   page.dark = false;
   first.sync();
   assert.equal(host.values._theme_explicit, false);
+});
+
+test("max_query_nodes cuts a large result to its best-connected nodes and says so; off by default", () => {
+  // A star around hub with two loose nodes
+  const nodes = ["loose1", "a", "hub", "b", "loose2", "c"].map((id) => ({ id }));
+  const edges = ["a", "b", "c"].map((leaf) => ({ source: "hub", target: leaf }));
+  const graph = { nodes, edges, rows: 6 };
+  assert.deepEqual(capQueryResult(graph, null), { graph, note: "" });
+  assert.deepEqual(capQueryResult(graph, 0), { graph, note: "" });
+  assert.deepEqual(capQueryResult(graph, 6), { graph, note: "" });
+  const { graph: cut, note } = capQueryResult(graph, 3);
+  assert.deepEqual(cut.nodes.map((n) => n.id), ["a", "hub", "b"], "hub first by links, then a and b in result order");
+  assert.deepEqual(cut.edges, [edges[0], edges[1]], "only edges between kept nodes");
+  assert.equal(note, "The query returned 6 nodes; the 3 best connected are drawn (max_query_nodes).");
 });

@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.5.1"
+version = "0.5.2"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,7 +35,7 @@ dev = [
 ]
 networkx = ["networkx>=3"]
 pandas = ["pandas>=3"]
-grafeo = ["grafeo~=0.6.0"]
+grafeo = ["grafeo>=0.6.0"]
 cosmosdb = ["gremlinpython>=3.8"]
 neo4j = ["neo4j>=5"]
 arango = ["python-arango>=8"]
