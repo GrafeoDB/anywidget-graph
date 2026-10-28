@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 from anywidget_graph.backends.grafeo import GrafeoBackend
 
@@ -171,6 +174,7 @@ def test_process_entities_nested_in_maps():
 
 
 def test_process_path_ids_are_resolved():
+    """Paths of engines before 0.6 held bare ids; they are still resolved."""
     db = FakeDB([{"p": {"nodes": [1, 2], "edges": [10]}}], nodes=[ALIX, GUS], edges=[KNOWS])
     nodes, edges = GrafeoBackend(db).execute("q", language="gql")
     assert [(n["id"], n["name"]) for n in nodes] == [("1", "Alix"), ("2", "Gus")]
@@ -178,7 +182,7 @@ def test_process_path_ids_are_resolved():
 
 
 def test_process_path_with_inline_entities():
-    """Paths that already carry entities (a possible future encoding) need no lookups."""
+    """Paths carry their entities from grafeo 0.6 (Python, server and WASM): no lookups."""
     db = FakeDB([{"p": {"nodes": [_node(1, "P"), _node(2, "P")], "edges": [_edge(10, 1, 2)], "_type": "path"}}])
     nodes, edges = GrafeoBackend(db).execute("q", language="gql")
     assert len(nodes) == 2
@@ -256,6 +260,46 @@ def test_extract_items_variants():
     assert backend._extract_items({"a": 1}) == [("a", 1)]
     assert backend._extract_items(WithData()) == [("x", 1)]
     assert backend._extract_items(42) == []
+
+
+# ------------------------------------------------------------------ #
+#  Property values the widget model can sync                          #
+# ------------------------------------------------------------------ #
+
+
+def test_process_decimal_properties_become_floats():
+    """grafeo 0.6 returns GQL `1.50` as decimal.Decimal; the model syncs JSON and styling needs numbers."""
+    a = _node(1, "Item", price=Decimal("1.50"), history=[Decimal("0.1"), None], meta={"tax": Decimal("0.21")})
+    b = _node(2, "Item")
+    r = _edge(10, 1, 2, "LINK", weight=Decimal("0.75"))
+    nodes, edges = GrafeoBackend(FakeDB([{"a": a, "r": r, "b": b}])).execute("q", language="gql")
+    item = nodes[0]
+    assert item["price"] == 1.5
+    assert type(item["price"]) is float
+    assert item["history"] == [0.1, None]
+    assert item["meta"] == {"tax": 0.21}
+    assert edges[0]["weight"] == 0.75
+    assert type(edges[0]["weight"]) is float
+    json.dumps([nodes, edges])
+
+
+def test_process_temporal_properties_become_iso_text():
+    when = dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.timezone(dt.timedelta(hours=1)))
+    a = _node(1, "Event", day=dt.date(2024, 1, 2), at=dt.time(10, 0), when=when, span={"months": 0, "days": 1})
+    (node,), _ = GrafeoBackend(FakeDB([{"a": a}])).execute("q", language="gql")
+    assert node["day"] == "2024-01-02"
+    assert node["at"] == "10:00:00"
+    assert node["when"] == "2024-01-02T03:04:05+01:00"
+    assert node["span"] == {"months": 0, "days": 1}
+    json.dumps(node)
+
+
+def test_process_lookup_values_are_converted_too():
+    """Endpoints resolved through db.get_node() get the same conversion."""
+    db = FakeDB([{"r": _edge(10, 1, 2)}], nodes=[FakeNode(1, ["P"], {"w": Decimal("2.5")}), GUS])
+    nodes, _ = GrafeoBackend(db).execute("q", language="gql")
+    assert nodes[0]["w"] == 2.5
+    json.dumps(nodes)
 
 
 # ------------------------------------------------------------------ #

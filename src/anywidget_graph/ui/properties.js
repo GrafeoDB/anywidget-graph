@@ -68,40 +68,55 @@ export function createPropertiesPanel(model, callbacks) {
 }
 
 /**
+ * A span holding `text` as text, never as markup: node and edge values come from the data.
+ */
+function textSpan(className, text) {
+  const span = document.createElement("span");
+  span.className = className;
+  span.textContent = text;
+  return span;
+}
+
+/**
+ * A property row: the key, then a text span for a string value, or `value` itself when it is an element.
+ */
+function propertyItem(key, value, valueClass = "awg-property-value") {
+  const item = document.createElement("div");
+  item.className = "awg-property-item";
+  item.appendChild(textSpan("awg-property-key", key));
+  item.appendChild(typeof value === "string" ? textSpan(valueClass, value) : value);
+  return item;
+}
+
+/**
  * Render node properties.
  */
-function renderNodeProperties(content, node) {
+export function renderNodeProperties(content, node) {
   const nodeHeader = document.createElement("div");
   nodeHeader.className = "awg-properties-header";
   nodeHeader.innerHTML = `${ICONS.node} <span class="awg-properties-type">Node</span>`;
   content.appendChild(nodeHeader);
 
-  const idItem = document.createElement("div");
-  idItem.className = "awg-property-item";
-  idItem.innerHTML = `<span class="awg-property-key">id</span><span class="awg-property-value">${node.id || "N/A"}</span>`;
-  content.appendChild(idItem);
+  content.appendChild(propertyItem("id", String(node.id || "N/A")));
 
   if (node.labels && node.labels.length > 0) {
-    const labelsItem = document.createElement("div");
-    labelsItem.className = "awg-property-item";
-    labelsItem.innerHTML = `<span class="awg-property-key">labels</span><span class="awg-property-value awg-property-labels">${node.labels.map((l) => `<span class="awg-label-tag">${l}</span>`).join("")}</span>`;
-    content.appendChild(labelsItem);
+    const labels = document.createElement("span");
+    labels.className = "awg-property-value awg-property-labels";
+    node.labels.forEach((l) => labels.appendChild(textSpan("awg-label-tag", String(l))));
+    content.appendChild(propertyItem("labels", labels));
   }
 
   Object.entries(node).forEach(([key, value]) => {
     if (["id", "labels", "label", "x", "y", "size", "color", "nodeType"].includes(key)) return;
-    const item = document.createElement("div");
-    item.className = "awg-property-item";
     const displayValue = typeof value === "object" ? JSON.stringify(value) : String(value);
-    item.innerHTML = `<span class="awg-property-key">${key}</span><span class="awg-property-value">${displayValue}</span>`;
-    content.appendChild(item);
+    content.appendChild(propertyItem(key, displayValue));
   });
 }
 
 /**
  * Render edge properties.
  */
-function renderEdgeProperties(content, edge) {
+export function renderEdgeProperties(content, edge) {
   const edgeHeader = document.createElement("div");
   edgeHeader.className = "awg-properties-header";
   edgeHeader.innerHTML = `${ICONS.edge} <span class="awg-properties-type">Relationship</span>`;
@@ -109,28 +124,18 @@ function renderEdgeProperties(content, edge) {
 
   const edgeTypeName = edge.edgeType || edge.label || edge.type;
   if (edgeTypeName) {
-    const typeItem = document.createElement("div");
-    typeItem.className = "awg-property-item";
-    typeItem.innerHTML = `<span class="awg-property-key">type</span><span class="awg-property-value"><span class="awg-edge-tag">${edgeTypeName}</span></span>`;
-    content.appendChild(typeItem);
+    const type = document.createElement("span");
+    type.className = "awg-property-value";
+    type.appendChild(textSpan("awg-edge-tag", String(edgeTypeName)));
+    content.appendChild(propertyItem("type", type));
   }
 
-  const sourceItem = document.createElement("div");
-  sourceItem.className = "awg-property-item";
-  sourceItem.innerHTML = `<span class="awg-property-key">source</span><span class="awg-property-value awg-property-truncate">${edge.source}</span>`;
-  content.appendChild(sourceItem);
-
-  const targetItem = document.createElement("div");
-  targetItem.className = "awg-property-item";
-  targetItem.innerHTML = `<span class="awg-property-key">target</span><span class="awg-property-value awg-property-truncate">${edge.target}</span>`;
-  content.appendChild(targetItem);
+  content.appendChild(propertyItem("source", String(edge.source), "awg-property-value awg-property-truncate"));
+  content.appendChild(propertyItem("target", String(edge.target), "awg-property-value awg-property-truncate"));
 
   Object.entries(edge).forEach(([key, value]) => {
     if (["source", "target", "label", "size", "color", "edgeType"].includes(key)) return;
-    const item = document.createElement("div");
-    item.className = "awg-property-item";
     const displayValue = typeof value === "object" ? JSON.stringify(value) : String(value);
-    item.innerHTML = `<span class="awg-property-key">${key}</span><span class="awg-property-value">${displayValue}</span>`;
-    content.appendChild(item);
+    content.appendChild(propertyItem(key, displayValue));
   });
 }

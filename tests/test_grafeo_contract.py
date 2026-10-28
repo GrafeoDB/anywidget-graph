@@ -8,7 +8,9 @@ empty graph. Error assertions use the exception type, never the error code.
 
 from __future__ import annotations
 
+import json
 import tomllib
+from decimal import Decimal
 from pathlib import Path
 
 import grafeo
@@ -97,15 +99,64 @@ def test_edge_encoding(grafeo_db):
     assert {k: v for k, v in edge.items() if not k.startswith("_")} == {"since": 2020, "source": "school"}
 
 
-def test_path_encoding_carries_ids(grafeo_db, ids):
-    """Paths: {nodes: [int], edges: [int]}; the backend resolves the ids itself."""
-    rows = _rows(grafeo_db.execute("MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->{2}(b) RETURN p"))
-    (row,) = rows
+@pytest.mark.parametrize(
+    ("method", "query"),
+    [
+        ("execute", "MATCH p = (a:Person {name: 'Alix'})-[:KNOWS]->{2}(b) RETURN p"),
+        ("execute_cypher", "MATCH p = (a {name: 'Alix'})-[:KNOWS*2]->(b) RETURN p"),
+    ],
+    ids=["gql", "cypher"],
+)
+def test_path_encoding_carries_entities(grafeo_db, ids, method, query):
+    """Paths (0.6): {nodes: [node], edges: [edge]} in path order; 0.5.x held bare ids."""
+    (row,) = _rows(getattr(grafeo_db, method)(query))
     path = row["p"]
     assert set(path) >= {"nodes", "edges"}
-    assert [str(n) for n in path["nodes"]] == [ids["Alix"], ids["Gus"], ids["Vincent"]]
-    assert len(path["edges"]) == 2
-    assert all(isinstance(e, int) for e in path["edges"])
+    assert [str(n["_id"]) for n in path["nodes"]] == [ids["Alix"], ids["Gus"], ids["Vincent"]]
+    assert [n["name"] for n in path["nodes"]] == ["Alix", "Gus", "Vincent"]
+    assert [e["_type"] for e in path["edges"]] == ["KNOWS", "KNOWS"]
+    assert [str(e["_source"]) for e in path["edges"]] == [ids["Alix"], ids["Gus"]]
+
+
+def test_entities_stay_entities_in_list_and_map_literals(grafeo_db):
+    """`[n, 1]` and `{k: n}` hold the node (0.6); 0.5.x put its id there."""
+    (row,) = _rows(grafeo_db.execute("MATCH (n:Person {name: 'Alix'}) RETURN [n, 1] AS l, {k: n} AS m"))
+    assert row["l"][0]["_labels"] == ["Person"]
+    assert row["l"][1] == 1
+    assert row["m"]["k"]["name"] == "Alix"
+
+
+def test_start_and_end_node_return_nodes(grafeo_db):
+    (row,) = _rows(
+        grafeo_db.execute_cypher("MATCH (a {name: 'Alix'})-[r]->() RETURN startNode(r) AS s, endNode(r) AS e")
+    )
+    assert (row["s"]["name"], row["e"]["name"]) == ("Alix", "Gus")
+
+
+def test_number_with_a_point(grafeo_db):
+    """GQL `1.50` is an exact decimal in 0.6.0 (grafeo#610): Python gets Decimal("1.50").
+
+    0.6.0b1 still returns a float; either compares equal to 1.5. `1.5e0` is a float in both.
+    """
+    (row,) = _rows(grafeo_db.execute("RETURN 1.50 AS d, 1.5e0 AS f"))
+    assert type(row["d"]) in (Decimal, float)
+    assert row["d"] == Decimal("1.5")
+    assert type(row["f"]) is float
+
+
+def test_null_properties_do_not_exist(grafeo_db):
+    """A property set to null is absent from the node; nulls inside lists and maps stay."""
+    grafeo_db.execute("INSERT (:T {x: null, l: [1, null], mp: {a: null}})")
+    (row,) = _rows(grafeo_db.execute("MATCH (t:T) RETURN t"))
+    props = {k: v for k, v in row["t"].items() if not k.startswith("_")}
+    assert props == {"l": [1, None], "mp": {"a": None}}
+
+
+def test_gql_sorts_nulls_last_cypher_keeps_open_cypher_order(grafeo_db):
+    """GQL puts nulls last in both directions (0.6, grafeo#571); Cypher puts them first descending."""
+    query = "UNWIND [3, null, 1] AS x RETURN x ORDER BY x DESC"
+    assert [r["x"] for r in _rows(grafeo_db.execute(query))] == [3, 1, None]
+    assert [r["x"] for r in _rows(grafeo_db.execute_cypher(query))] == [None, 3, 1]
 
 
 def test_variable_length_edge_variable_is_list_of_edges(grafeo_db):
@@ -185,8 +236,10 @@ def test_schema_shape(grafeo_db):
         ("execute", "MATCH (n) RETURN n; MATCH (m) RETURN m"),
         ("execute", "MATCH (n) WHERE n.name = $name RETURN n"),
         ("execute_cypher", "MATCH (n) WITH n.name RETURN 1"),
+        # 0.6: a WHERE right after a write is an error (it used to filter the rows before the write)
+        ("execute", "MATCH (n) DETACH DELETE n WHERE n.age > 30"),
     ],
-    ids=["syntax", "multiple-statements", "unsupplied-parameter", "unaliased-with"],
+    ids=["syntax", "multiple-statements", "unsupplied-parameter", "unaliased-with", "where-after-write"],
 )
 def test_invalid_queries_raise(grafeo_db, method, query):
     with pytest.raises(grafeo.GrafeoError):
@@ -217,8 +270,24 @@ def _edge_set(edges: list[dict]) -> set[tuple[str, str, str]]:
         ("cypher", "MATCH p = (a {name: 'Alix'})-[:KNOWS*2]->(b) RETURN nodes(p), relationships(p)"),
         ("cypher", "MATCH ()-[r]->() RETURN r"),
         ("gremlin", "g.E()"),
+        ("cypher", "MATCH p = (a {name: 'Alix'})-[:KNOWS*2]->(b) RETURN p"),
+        ("gql", "MATCH (a)-[r]->(b) RETURN [a, r, b] AS l"),
+        ("cypher", "MATCH (a)-[r]->(b) RETURN {a: a, r: r, b: b} AS m"),
+        ("cypher", "MATCH ()-[r]->() RETURN startNode(r) AS s, r, endNode(r) AS e"),
     ],
-    ids=["gql", "undirected", "path", "var-length", "path-functions", "edges-only", "gremlin-edges"],
+    ids=[
+        "gql",
+        "undirected",
+        "path",
+        "var-length",
+        "path-functions",
+        "edges-only",
+        "gremlin-edges",
+        "cypher-path",
+        "list-literal",
+        "map-literal",
+        "start-end-node",
+    ],
 )
 def test_backend_builds_full_graph(grafeo_db, ids, language, query):
     """Every shape that describes the whole chain renders three nodes and two edges once each."""
@@ -315,3 +384,28 @@ def test_widget_expand_node_merges(grafeo_db, ids):
     graph.expand_node(ids["Gus"])
     assert sorted(n["id"] for n in graph.nodes) == sorted(ids.values())
     assert len(graph.edges) == 2
+
+
+def test_widget_syncs_decimals_dates_and_nulls(grafeo_db):
+    """Values grafeo 0.6 returns (Decimal, dates, nulls in lists) reach the model as JSON."""
+    grafeo_db.execute(
+        "INSERT (:Item {name: 'a', price: 1.50, day: date('2024-01-02'), hist: [0.5, null]})"
+        "-[:LINK {weight: 0.75}]->(:Item {name: 'b', price: 3})"
+    )
+    graph = Graph(
+        grafeo_db=grafeo_db,
+        query="MATCH (a:Item)-[r]->(b) RETURN a, r, b",
+        query_language="gql",
+        size_field="price",
+        edge_size_field="weight",
+    )
+    graph._execute_query += 1
+    assert graph.query_error == ""
+    item = next(n for n in graph.nodes if n["name"] == "a")
+    assert (item["price"], type(item["price"])) == (1.5, float)
+    assert item["day"] == "2024-01-02"
+    assert item["hist"] == [0.5, None]
+    (edge,) = graph.edges
+    assert (edge["weight"], type(edge["weight"])) == (0.75, float)
+    assert json.loads(graph.to_json())["edges"][0]["weight"] == 0.75
+    json.dumps([graph.nodes, graph.edges], allow_nan=False)

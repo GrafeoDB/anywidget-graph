@@ -2,7 +2,7 @@
  * Neo4j database connection and query execution (browser-side).
  */
 // The driver loads when a Neo4j connection is made, so the widget itself needs no CDN
-const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";
+const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.3/lib/browser/neo4j-web.esm.min.js";
 
 let driver = null;
 let neo4j = null;

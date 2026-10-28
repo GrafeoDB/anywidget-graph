@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 Unreleased
+
+Grafeo 0.6 release: the Grafeo backends move to grafeo 0.6 (embedded, grafeo-server and WASM). Stay on 0.4.x for grafeo 0.5.
+
+### Breaking
+
+- **grafeo 0.6**: the `grafeo` extra requires `grafeo>=0.6.0b1,<0.7` (was `>=0.5.44,<0.7`), and WASM mode loads `@grafeo-db/wasm@0.6.0-beta.1` (was 0.5.44) from jsDelivr. grafeo 0.6 changes behavior you see in the query box: a GQL number with a point (`1.50`) is an exact decimal, integer overflow and division by zero fail the query, a `WHERE` right after `INSERT`, `CREATE`, `MERGE` or `DELETE` is an error, and GQL sorts nulls last in both directions (see grafeo's [Upgrading to 0.6](https://grafeo.dev/upgrading/0.6/))
+- **Embedded databases migrate on first open**: grafeo 0.6 stores every database as one file in a new format. The first read-write open of a 0.5.x database (`grafeo.GrafeoDB(path)`) migrates it and keeps the old file as `<path>.pre-0.6`; 0.5.x cannot open the migrated file, so stop every 0.5.x process that uses it first and keep the copy as the way back. Opening a directory that is not a 0.5.x database (an empty one included) fails: pass a file path. See "Upgrading embedded databases from grafeo 0.5" in the README
+
+### Bug Fixes
+
+- **Security: data shows as text, never as markup**: the properties panel, the hover tooltip and the filter panel's property names put node and edge values (ids, labels, types, endpoints, property keys and values) into `innerHTML`, so a value such as `<img src=x onerror=...>` ran script in the page when the element was selected or hovered. They now build their rows from elements and text, so such a value shows literally. The Python-side backend name in the settings status is set as text too
+- **Decimal properties reach the widget**: grafeo 0.6 returns GQL numbers with a point as exact decimals (`decimal.Decimal` in Python, `{"$decimal": "1.50"}` from WASM and grafeo-server). The widget model syncs as JSON, so a node or edge with such a property broke the embedded backend's sync and `to_json()`, and showed as an object in WASM mode. Decimals now become numbers in all three modes, so `size_field`, `color_field`, `edge_size_field` and `edge_color_field` use them
+- **Dates and times in embedded mode**: `datetime.date`, `datetime.time` and `datetime.datetime` property values (which Python's JSON cannot write) become their ISO text; grafeo-server's tagged values (`{"$date": ...}`, `$time`, `$datetime`, `$duration`) become their text too, and in WASM mode integers past 2^53 become their text and vectors plain lists
+
+### Improvements
+
+- **Paths and literals carry their entities**: grafeo 0.6 returns paths with their nodes and edges, and nodes and edges inside list and map literals (`[n, 1]`, `{k: n}`) and from `startNode(r)` / `endNode(r)`; all of these draw without extra lookups. Paths with bare ids (grafeo 0.5) are still resolved
+- **Dependencies**: sigma 3.0.3 in the bundled graph libraries (was 3.0.0), neo4j-driver 5.28.3 (was 5.28.0), the lockfile refreshed (`uv lock --upgrade`), and CI on actions/checkout v7, astral-sh/setup-uv v10.3.0, actions/setup-node v7, actions/upload-artifact v7 and actions/download-artifact v8
+
+### Tests
+
+- The engine contract tests follow grafeo 0.6: paths with entities (GQL and Cypher), entities in list and map literals, `startNode` / `endNode`, numbers with a point, null properties, null ordering in GQL and Cypher, and a `WHERE` after a write as an error; widget tests for decimals, dates and nulls end to end, and the Node tests for 0.6 paths, `$decimal` values in node properties and edge weights, and the other tagged values
+- Node tests (`tests/js/panels.test.mjs`, a small fake DOM) that render a node, an edge and a filter item with markup in every value and check that no value reaches `innerHTML` and each shows literally
+
 ## 0.4.6 2026-10-20
 
 ### Bug Fixes

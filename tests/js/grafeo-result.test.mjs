@@ -1,12 +1,14 @@
 // Tests for the browser-side Grafeo modules. Run with: node --test tests/js/
-// (pytest runs them too, see tests/test_ui_bundle.py). The fixtures use the
-// value encoding that @grafeo-db/wasm 0.5.44 and grafeo-server 0.5.44 return.
+// (pytest runs them too, see tests/test_ui.py). The fixtures use the
+// value encoding that @grafeo-db/wasm and grafeo-server 0.6 return (paths with
+// their entities, exact decimals as {$decimal: "1.50"}); bare-id paths are 0.5.x.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
   grafeoRowsToGraph,
   grafeoSchemaToTypes,
+  grafeoValueToWidget,
   grafeoNodeLookupQuery,
   grafeoEdgeLookupQuery,
   isGrafeoNode,
@@ -98,6 +100,49 @@ test("paths with ids are resolved through lookups", async () => {
   assert.deepEqual(calls, [grafeoEdgeLookupQuery(["0", "1"]), grafeoNodeLookupQuery(["0", "1", "2"])]);
 });
 
+test("0.6 paths carry their entities and need no lookup", async () => {
+  const calls = [];
+  // As @grafeo-db/wasm 0.6 returns it (grafeo-server sends the same without _type)
+  const rows = [{ p: { nodes: [alix, gus, vincent], edges: [knows1, knows2], _type: "path" } }];
+  const graph = await grafeoRowsToGraph(rows, fakeLookup(calls));
+  assert.deepEqual(nodeIds(graph), ["0", "1", "2"]);
+  assert.deepEqual(edgeKeys(graph), ["0->1:KNOWS", "1->2:KNOWS"]);
+  assert.deepEqual(calls, []);
+});
+
+test("entities inside list and map literals ([n, 1], {k: n}) are found", async () => {
+  const graph = await grafeoRowsToGraph([{ l: [alix, 1, knows1, gus], m: { k: vincent, n: null } }]);
+  assert.deepEqual(nodeIds(graph), ["0", "1", "2"]);
+  assert.deepEqual(edgeKeys(graph), ["0->1:KNOWS"]);
+});
+
+test("exact decimals in node properties and edge weights become numbers", async () => {
+  const item = { _id: 5, _labels: ["Item"], name: "a", price: { $decimal: "1.50" }, hist: [{ $decimal: "0.1" }, null] };
+  const other = { _id: 6, _labels: ["Item"], name: "b", price: 3 };
+  const link = { _id: 9, _type: "LINK", _source: 5, _target: 6, weight: { $decimal: "0.75" } };
+  const graph = await grafeoRowsToGraph([{ a: item, r: link, b: other }]);
+  const node = graph.nodes.find((n) => n.name === "a");
+  assert.equal(node.price, 1.5);
+  assert.deepEqual(node.hist, [0.1, null]);
+  assert.equal(graph.edges[0].weight, 0.75);
+  assert.equal(typeof graph.edges[0].weight, "number");
+  JSON.stringify(graph); // the widget model syncs as JSON
+});
+
+test("property values: tagged temporals, big integers, typed arrays, nulls", () => {
+  assert.equal(grafeoValueToWidget({ $date: "2024-01-02" }), "2024-01-02");
+  assert.equal(grafeoValueToWidget({ $datetime: "2024-01-02T03:04:05+01:00" }), "2024-01-02T03:04:05+01:00");
+  assert.equal(grafeoValueToWidget({ $duration: "P1D" }), "P1D");
+  assert.equal(grafeoValueToWidget(9007199254740993n), "9007199254740993");
+  assert.equal(grafeoValueToWidget(42n), 42);
+  assert.deepEqual(grafeoValueToWidget(new Float32Array([0.5, 1])), [0.5, 1]);
+  assert.deepEqual(grafeoValueToWidget({ a: null, b: [null, { $decimal: "2" }] }), { a: null, b: [null, 2] });
+  // A user map that merely has a $decimal key next to others stays a map
+  assert.deepEqual(grafeoValueToWidget({ $decimal: "1", unit: "kg" }), { $decimal: "1", unit: "kg" });
+  assert.equal(grafeoValueToWidget(null), null);
+  assert.equal(grafeoValueToWidget("x"), "x");
+});
+
 test("edges without endpoints get their nodes looked up", async () => {
   const calls = [];
   const graph = await grafeoRowsToGraph([{ r: knows2 }], fakeLookup(calls));
@@ -158,7 +203,8 @@ test("schema conversion: flat 0.5.x shape and legacy nested shape", () => {
 });
 
 test("wasm: pinned CDN location", () => {
-  assert.match(embed.GRAFEO_WASM_VERSION, /^\d+\.\d+\.\d+$/);
+  // An exact npm version: 0.6.0, or a pre-release such as 0.6.0-beta.1 (never a range)
+  assert.match(embed.GRAFEO_WASM_VERSION, /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/);
   assert.equal(embed.GRAFEO_WASM_CDN, `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${embed.GRAFEO_WASM_VERSION}`);
 });
 

@@ -5,17 +5,25 @@ metadata keys, and that encoding is the contract this module depends on:
 
 - node: ``{"_id": int, "_labels": [str, ...], **properties}``
 - edge: ``{"_id": int, "_type": str, "_source": int, "_target": int, **properties}``
-- path: ``{"nodes": [int, ...], "edges": [int, ...]}`` (ids only)
+- path: ``{"nodes": [node, ...], "edges": [edge, ...]}`` (grafeo 0.6; before
+  0.6 the lists held ids, which are still accepted)
 
-Entities can also sit inside lists (``collect(n)``, variable-length edge
-variables, ``nodes(p)``). Ids that are referenced but not returned as
-entities (path members, edge endpoints) are resolved with
-``db.get_node(id)`` / ``db.get_edge(id)``.
+Entities can also sit inside lists and maps (``collect(n)``, variable-length
+edge variables, ``nodes(p)``, ``[n, 1]``, ``{k: n}``). Ids that are referenced
+but not returned as entities (edge endpoints, ids in an older path) are
+resolved with ``db.get_node(id)`` / ``db.get_edge(id)``.
+
+Property values are made JSON-safe, since the widget model syncs as JSON: an
+exact decimal (``decimal.Decimal``, which grafeo 0.6 returns for GQL numbers
+with a point) becomes a float, so styling by a property treats it as a number,
+and dates, times and datetimes become their ISO text.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, ClassVar
 
 from anywidget_graph.converters import (
@@ -25,6 +33,19 @@ from anywidget_graph.converters import (
     node_to_dict,
     relationship_to_dict,
 )
+
+
+def _json_value(value: Any) -> Any:
+    """A property value the widget model can sync (see the module docstring)."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dt.date | dt.time):  # datetime is a date
+        return value.isoformat()
+    if isinstance(value, list | tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    return value
 
 
 @dataclass(slots=True)
@@ -237,7 +258,7 @@ class GrafeoBackend:
         refer to.
         """
         labels = list(node.get("_labels") or [])
-        props = {key: value for key, value in node.items() if not key.startswith("_")}
+        props = {key: _json_value(value) for key, value in node.items() if not key.startswith("_")}
         result: dict = {}
         if labels:
             result["label"] = labels[0]
@@ -257,7 +278,7 @@ class GrafeoBackend:
         properties with the same name.
         """
         result: dict = {"label": str(rel["_type"])}
-        result.update({key: value for key, value in rel.items() if not key.startswith("_")})
+        result.update({key: _json_value(value) for key, value in rel.items() if not key.startswith("_")})
         result["source"] = str(rel["_source"])
         result["target"] = str(rel["_target"])
         return result

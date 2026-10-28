@@ -411,9 +411,8 @@ export function createSettingsPanel(model, callbacks) {
       connectBtn.textContent = "Python Backend";
       connectBtn.disabled = true;
       wasmStatus.style.display = "none";
-      statusIndicator.innerHTML =
-        '<span class="awg-status-dot-inline awg-status-connected"></span> ' +
-        (BACKENDS.find((b) => b.id === backend)?.name || backend);
+      statusIndicator.innerHTML = '<span class="awg-status-dot-inline awg-status-connected"></span> ';
+      statusIndicator.append(BACKENDS.find((b) => b.id === backend)?.name || String(backend));
     }
   }
 

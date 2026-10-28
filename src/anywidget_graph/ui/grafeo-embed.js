@@ -6,7 +6,7 @@ import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
 
 // The only place the browser engine version is set. Keep it exact and in
 // lockstep with the `grafeo` Python extra in pyproject.toml.
-export const GRAFEO_WASM_VERSION = "0.5.44";
+export const GRAFEO_WASM_VERSION = "0.6.0-beta.1";
 export const GRAFEO_WASM_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}`;
 
 let wasmDb = null;

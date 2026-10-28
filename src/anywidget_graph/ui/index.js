@@ -2064,17 +2064,27 @@ function render({ model: host, el }) {
   function showTooltip(event, data) {
     if (!model.get("show_tooltip")) return;
     const fields = model.get("tooltip_fields") || ["label", "id"];
-    let html = "";
+    // Built from text nodes: field names and values come from the data
+    const rows = [];
     fields.forEach((f) => {
       if (data[f] !== undefined) {
         let val = data[f];
         if (typeof val === "number") val = val.toFixed(3);
         if (Array.isArray(val)) val = val.join(", ");
-        html += `<div class="awg-tooltip-row"><span class="awg-tooltip-key">${f}:</span><span class="awg-tooltip-value">${val}</span></div>`;
+        const row = document.createElement("div");
+        row.className = "awg-tooltip-row";
+        const key = document.createElement("span");
+        key.className = "awg-tooltip-key";
+        key.textContent = `${f}:`;
+        const value = document.createElement("span");
+        value.className = "awg-tooltip-value";
+        value.textContent = String(val);
+        row.append(key, value);
+        rows.push(row);
       }
     });
-    if (!html) return;
-    tooltip.innerHTML = html;
+    if (rows.length === 0) return;
+    tooltip.replaceChildren(...rows);
     tooltip.style.display = "block";
     const rect = container.getBoundingClientRect();
     const x = event.clientX - rect.left + 15;

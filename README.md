@@ -25,10 +25,12 @@ Optional extras:
 ```bash
 uv add "anywidget-graph[networkx]"   # NetworkX support
 uv add "anywidget-graph[pandas]"     # pandas support
-uv add "anywidget-graph[grafeo]"     # Grafeo backend
+uv add "anywidget-graph[grafeo]"     # Grafeo backend (grafeo 0.6)
 uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
 uv add "anywidget-graph[examples]"   # marimo, to run the apps in examples/
 ```
+
+Requires Python 3.12 or newer. The Grafeo backends need grafeo 0.6: the `grafeo` extra for embedded mode, grafeo-server 0.6 for server mode, and WASM mode loads `@grafeo-db/wasm` 0.6 in the browser. anywidget-graph 0.4.x is the line for grafeo 0.5.
 
 ## Quick Start
 
@@ -287,7 +289,7 @@ graph = Graph(
 
 Grafeo runs in one of three modes, picked with `grafeo_connection_mode` or in the settings panel.
 
-**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.5.44,<0.7`).
+**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.6.0b1,<0.7`).
 
 ```python
 import grafeo
@@ -302,13 +304,19 @@ graph = Graph(database_backend="grafeo", grafeo_db=db, query_language="gql")
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="server", grafeo_server_url="http://localhost:7474")
 ```
 
-**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.5.44) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
+**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.0-beta.1) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
 
 ```python
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="wasm", query_language="gql")
 ```
 
-Query languages: GQL, Cypher, Gremlin, GraphQL and SPARQL. Nodes and edges are taken from every result column, including lists (`collect(n)`, variable-length relationships, `nodes(p)`) and paths (`RETURN p`); scalar columns are ignored. Run one statement per query: Grafeo rejects several `;`-separated statements in one call.
+Query languages: GQL, Cypher, Gremlin, GraphQL and SPARQL. Nodes and edges are taken from every result column, including lists and maps (`collect(n)`, variable-length relationships, `nodes(p)`, `[n, m]`, `{k: n}`) and paths (`RETURN p`); scalar columns are ignored. Run one statement per query: Grafeo rejects several `;`-separated statements in one call.
+
+Property values reach the widget as JSON: a GQL number with a point (`1.50`), which grafeo 0.6 returns as an exact decimal, becomes a number (so `size_field` and `color_field` can use it), and dates and times become their ISO text.
+
+#### Upgrading embedded databases from grafeo 0.5
+
+grafeo 0.6 stores every database as a single file in a new format. The first time 0.6 opens a 0.5.x database for writing (`grafeo.GrafeoDB(path)`), it migrates it and keeps the old file next to it as `<path>.pre-0.6` (a 0.5.x WAL directory becomes a file at the same path, the directory is kept as `<path>.pre-0.6/`). 0.5.x cannot open the migrated database, so stop every 0.5.x process that uses it first, and keep the `.pre-0.6` copy as the way back. Opening a directory that is not a 0.5.x database (an empty one included) now fails: pass a file path such as `data/graph.grafeo`. See grafeo's [Upgrading to 0.6](https://grafeo.dev/upgrading/0.6/) for the query changes (for example a `WHERE` right after `INSERT` or `DELETE` is now an error, GQL sorts nulls last, and integer overflow or division by zero fails the query).
 
 Try it without any setup:
 
