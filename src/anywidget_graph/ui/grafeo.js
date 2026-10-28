@@ -2,7 +2,7 @@
  * Grafeo Server browser-side client (HTTP mode).
  * Mirrors the neo4j.js pattern for connecting to grafeo-server.
  */
-import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
+import { grafeoRowsToGraph, grafeoSchemaToTypes, nothingToDrawNote } from "./grafeo-result.js";
 
 let serverUrl = null;
 let authHeaders = {};
@@ -116,6 +116,7 @@ export async function executeQuery(query, language, database, model) {
       return found.rows || [];
     });
     model.set("query_running", false);
+    model.set("query_error", nothingToDrawNote(result.rows, graph));
     model.save_changes();
     return graph;
   } catch (error) {

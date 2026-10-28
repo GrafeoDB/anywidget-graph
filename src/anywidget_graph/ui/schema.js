@@ -319,7 +319,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 /**
  * Create a single filter item with checkbox, color swatch, name, and count.
  */
-function createFilterItem({ name, count, total, color, kind, properties, isHidden, onToggle, onColorChange, onQuery }) {
+export function createFilterItem({ name, count, total, color, kind, properties, isHidden, onToggle, onColorChange, onQuery }) {
   const item = document.createElement("div");
   item.className = "awg-schema-item" + (isHidden ? " awg-filter-hidden" : "");
 
@@ -387,7 +387,10 @@ function createFilterItem({ name, count, total, color, kind, properties, isHidde
     properties.forEach((prop) => {
       const propItem = document.createElement("div");
       propItem.className = "awg-schema-prop";
-      propItem.innerHTML = `${ICONS.property} <span>${prop}</span>`;
+      propItem.innerHTML = `${ICONS.property} `;
+      const propName = document.createElement("span");
+      propName.textContent = prop;
+      propItem.appendChild(propName);
       propsList.appendChild(propItem);
     });
 

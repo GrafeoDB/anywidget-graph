@@ -55,6 +55,28 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
 
     queryContainer.appendChild(queryInput);
 
+    // A failed query says why under the toolbar (its full width, so a narrow pane cannot clip it), without opening the
+    // settings panel, which shows it too
+    const queryError = document.createElement("div");
+    queryError.className = "awg-query-error";
+    queryError.setAttribute("role", "alert");
+    const queryErrorText = document.createElement("span");
+    const queryErrorClose = document.createElement("button");
+    queryErrorClose.className = "awg-btn awg-btn-icon awg-btn-sm";
+    queryErrorClose.innerHTML = ICONS.close;
+    queryErrorClose.title = "Dismiss";
+    queryErrorClose.addEventListener("click", () => { queryError.style.display = "none"; });
+    queryError.append(queryErrorText, queryErrorClose);
+    function updateQueryError() {
+      const err = model.get("query_error");
+      queryErrorText.textContent = err || "";
+      queryError.style.display = err ? "flex" : "none";
+      queryInput.classList.toggle("awg-query-input-error", Boolean(err));
+    }
+    model.on("change:query_error", updateQueryError);
+    updateQueryError();
+    toolbar.appendChild(queryError);
+
     // Play button
     const playBtn = document.createElement("button");
     playBtn.className = "awg-btn awg-btn-primary";

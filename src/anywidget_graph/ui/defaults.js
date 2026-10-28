@@ -75,3 +75,30 @@ export const TRAIT_DEFAULTS = {
   "type_colors": {},
   "width": 800
 };
+
+/**
+ * The host's model, where a setting the host left out (an app without Python) reads as the widget's default.
+ * It remembers the listeners added through it, so `offAll()` removes this view's listeners and no other.
+ */
+export function withDefaults(host) {
+  const listeners = [];
+  return {
+    get: (name) => {
+      const value = host.get(name);
+      if (value !== undefined || !(name in TRAIT_DEFAULTS)) return value;
+      const fallback = TRAIT_DEFAULTS[name];
+      return fallback !== null && typeof fallback === "object" ? structuredClone(fallback) : fallback;
+    },
+    set: (...args) => host.set(...args),
+    on: (name, callback) => {
+      listeners.push([name, callback]);
+      host.on(name, callback);
+    },
+    off: (...args) => host.off(...args),
+    offAll: () => {
+      for (const [name, callback] of listeners.splice(0)) host.off(name, callback);
+    },
+    save_changes: (...args) => host.save_changes(...args),
+    send: (...args) => host.send(...args),
+  };
+}

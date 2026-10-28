@@ -108,7 +108,7 @@ def test_only_the_optional_backends_load_code_from_the_network(esm):
     dynamic = set(re.findall(r"""(?<![\w$.])import\(\s*([^)]+?)\s*\)""", esm))
     assert dynamic == {"NEO4J_DRIVER_URL", "`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`"}
     driver = (
-        'const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.0/lib/browser/neo4j-web.esm.min.js";'
+        'const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.3/lib/browser/neo4j-web.esm.min.js";'
     )
     assert esm.count(driver) == 1
 
@@ -152,12 +152,13 @@ def test_bundle_declares_no_duplicate_functions(esm):
 
 
 def test_wasm_version_is_pinned_exactly_once():
-    """The browser engine URL is built from one constant: the 0.6.0 bump is a one-line change."""
+    """The browser engine URL is built from one constant: an engine bump is a one-line change."""
     hits = {
         path.name: len(WASM_URL_RE.findall(path.read_text(encoding="utf-8"))) for path in sorted(UI_DIR.glob("*.js"))
     }
     assert {name: count for name, count in hits.items() if count} == {"grafeo-embed.js": 1}
-    assert re.fullmatch(r"\d+\.\d+\.\d+", _wasm_version()), "pin an exact version"
+    # An exact npm version (0.6.0, or a pre-release such as 0.6.0-beta.1), never a range
+    assert re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", _wasm_version()), "pin an exact version"
 
 
 def test_bundle_contains_pinned_wasm_url_once(esm):
@@ -185,7 +186,10 @@ def test_bundle_parses_with_node(esm, node_bin, tmp_path):
 
 
 def test_js_unit_tests(node_bin):
-    _run_node(node_bin, "--test", "tests/js/grafeo-result.test.mjs", "tests/js/lanes.test.mjs")
+    # Every Node test file, so a new one cannot be left out (`node --test "tests/js/*.test.mjs"` by hand)
+    tests = sorted(path.relative_to(ROOT).as_posix() for path in (ROOT / "tests" / "js").glob("*.test.mjs"))
+    assert len(tests) >= 4
+    _run_node(node_bin, "--test", *tests)
 
 
 # ------------------------------------------------------------------ #
@@ -259,7 +263,7 @@ def test_js_lookup_queries_run_on_the_engine(grafeo_db, ids, node_bin):
 
 def _trait_defaults_js() -> dict:
     source = (UI_DIR / "defaults.js").read_text(encoding="utf-8")
-    match = re.search(r"export const TRAIT_DEFAULTS = (\{.*?\});\s*$", source, re.DOTALL)
+    match = re.search(r"export const TRAIT_DEFAULTS = (\{.*?\});\s*$", source, re.DOTALL | re.MULTILINE)
     assert match, "defaults.js holds export const TRAIT_DEFAULTS = {...};"
     return json.loads(match.group(1))
 

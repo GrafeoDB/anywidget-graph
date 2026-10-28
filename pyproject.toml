@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.4.6"
+version = "0.5.0"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,7 +35,7 @@ dev = [
 ]
 networkx = ["networkx>=3"]
 pandas = ["pandas>=3"]
-grafeo = ["grafeo>=0.5.44,<0.7"]
+grafeo = ["grafeo~=0.6.0"]
 cosmosdb = ["gremlinpython>=3.8"]
 # marimo, to run the apps in examples/; it pulls in loro, which has no Python 3.15 wheels yet
 examples = ["marimo>=0.19.9; python_version < '3.15'"]
@@ -52,6 +52,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/anywidget_graph"]
+
+[tool.hatch.build.targets.sdist]
+# Local agent notes and settings (ignored only by a global gitignore) stay out of a locally built sdist
+exclude = [".claude"]
 
 [tool.ruff]
 line-length = 120

@@ -2,15 +2,21 @@
  * Grafeo WASM browser-side client (embed mode).
  * Lazy-loads @grafeo-db/wasm from the jsDelivr CDN on first use.
  */
-import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
+import { grafeoRowsToGraph, grafeoSchemaToTypes, nothingToDrawNote } from "./grafeo-result.js";
 
 // The only place the browser engine version is set. Keep it exact and in
 // lockstep with the `grafeo` Python extra in pyproject.toml.
-export const GRAFEO_WASM_VERSION = "0.5.44";
+export const GRAFEO_WASM_VERSION = "0.6.0";
 export const GRAFEO_WASM_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}`;
 
 let wasmDb = null;
-let wasmBindingsPromise = null;
+// The statement lists each database has loaded (see loadStatements)
+const loadedStatements = new WeakMap();
+
+// The loaded bindings live on the page, not in this module: a page can hold two copies of the widget's module (a
+// notebook that reconnects to a restarted kernel, a cell run again), and they share the one glue module the browser
+// caches for the CDN URL. A second instantiation would swap the glue's binary under the first copy's database.
+const WASM_BINDINGS_KEY = Symbol.for(`anywidget-graph.grafeo-wasm@${GRAFEO_WASM_VERSION}`);
 
 /**
  * Load the wasm-bindgen bindings once per page.
@@ -22,8 +28,8 @@ let wasmBindingsPromise = null;
  * instantiated here, the way wasm-bindgen's bundler entry point does it.
  */
 function loadWasmBindings() {
-  if (!wasmBindingsPromise) {
-    wasmBindingsPromise = (async () => {
+  if (!globalThis[WASM_BINDINGS_KEY]) {
+    globalThis[WASM_BINDINGS_KEY] = (async () => {
       const bindings = await import(`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`);
       const wasmUrl = `${GRAFEO_WASM_CDN}/grafeo_wasm_bg.wasm`;
       let module;
@@ -43,11 +49,11 @@ function loadWasmBindings() {
       if (typeof instance.exports.__wbindgen_start === "function") instance.exports.__wbindgen_start();
       return bindings;
     })().catch((err) => {
-      wasmBindingsPromise = null; // allow a retry after a network error
+      delete globalThis[WASM_BINDINGS_KEY]; // allow a retry after a network error
       throw err;
     });
   }
-  return wasmBindingsPromise;
+  return globalThis[WASM_BINDINGS_KEY];
 }
 
 /**
@@ -130,6 +136,7 @@ export async function executeQuery(query, language, model) {
     const rows = runStatement(db, query, language);
     const result = await grafeoRowsToGraph(rows, (lookup) => db.execute(lookup));
     model.set("query_running", false);
+    model.set("query_error", nothingToDrawNote(rows, result));
     model.save_changes();
     return result;
   } catch (error) {
@@ -147,6 +154,17 @@ export async function executeQuery(query, language, model) {
  */
 export async function loadStatements(statements, model) {
   if (!wasmDb) return statements.length;
+
+  // The same statements go into a database once: a widget drawn again (a second view of it, a notebook that
+  // reconnects) shares the page's database and would otherwise load its data twice
+  const key = JSON.stringify(statements);
+  const loaded = loadedStatements.get(wasmDb) || new Set();
+  loadedStatements.set(wasmDb, loaded);
+  if (loaded.has(key)) {
+    await fetchSchema(model);
+    return 0;
+  }
+  loaded.add(key);
 
   let failed = 0;
   for (const stmt of statements) {

@@ -2,7 +2,7 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
-import { TRAIT_DEFAULTS } from "./defaults.js";
+import { withDefaults } from "./defaults.js";
 // Graph, Sigma, d3Force, circular, random and forceAtlas2 come from the bundled libraries
 // (vendor/graph-libs.min.js), which ui/__init__.py puts in front of the modules
 
@@ -12,7 +12,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor } from "./lanes.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -226,6 +226,26 @@ function buildEdgeAttrs(edge, opts) {
   };
 }
 
+// The newest browser-side query of each model: an older one that finishes later must not replace its result
+const latestQuery = new WeakMap();
+
+/**
+ * A browser-side mode connects with the configured settings on its first query, so the query box works without
+ * pressing Connect in the settings panel first. False when the connection failed (its message is in query_error).
+ */
+async function connectForQuery(model, backend, mode) {
+  if (backend === "neo4j" && !neo4jBackend.isConnected()) {
+    return neo4jBackend.connect(model.get("connection_uri"), model.get("connection_username"), model.get("connection_password"), model);
+  }
+  if (backend === "grafeo" && mode === "server" && !grafeoBackend.isConnected()) {
+    return grafeoBackend.connect(model.get("grafeo_server_url"), model.get("connection_username"), model.get("connection_password"), model);
+  }
+  if (backend === "grafeo" && mode === "wasm" && !grafeoEmbedBackend.isConnected()) {
+    return grafeoEmbedBackend.connect(model);
+  }
+  return true;
+}
+
 /**
  * Execute a query based on the current backend and connection mode.
  */
@@ -241,69 +261,35 @@ async function executeQuery(model) {
     return;
   }
 
+  const ticket = (latestQuery.get(model) || 0) + 1;
+  latestQuery.set(model, ticket);
+  if (!(await connectForQuery(model, backend, mode))) return;
   const start = performance.now();
+  let result;
 
   if (backend === "neo4j") {
     // Browser-side Neo4j driver
-    const result = await neo4jBackend.executeQuery(
-      query,
-      model.get("connection_database"),
-      model
-    );
-    if (result) {
-      model.set("query_time", performance.now() - start);
-      model.set("nodes", result.nodes);
-      model.set("edges", result.edges);
-      model.save_changes();
-    }
+    result = await neo4jBackend.executeQuery(query, model.get("connection_database"), model);
   } else if (backend === "grafeo" && mode === "server") {
     // Browser-side Grafeo server HTTP
-    const result = await grafeoBackend.executeQuery(
-      query,
-      language,
-      model.get("connection_database"),
-      model
-    );
-    if (result) {
-      model.set("query_time", performance.now() - start);
-      model.set("nodes", result.nodes);
-      model.set("edges", result.edges);
-      model.save_changes();
-    }
+    result = await grafeoBackend.executeQuery(query, language, model.get("connection_database"), model);
   } else if (backend === "grafeo" && mode === "wasm") {
     // Browser-side Grafeo WASM
-    const result = await grafeoEmbedBackend.executeQuery(query, language, model);
-    if (result) {
-      model.set("query_time", performance.now() - start);
-      model.set("nodes", result.nodes);
-      model.set("edges", result.edges);
-      model.save_changes();
-    }
+    result = await grafeoEmbedBackend.executeQuery(query, language, model);
   } else {
-    // Python-side backends (grafeo-embedded, ladybug, arango, cosmosdb)
-    // Timing is handled on the Python side
+    // Python-side backends (grafeo-embedded, ladybug, arango, cosmosdb): the kernel runs queries one at a time
+    // and times them itself
     model.set("_execute_query", model.get("_execute_query") + 1);
     model.save_changes();
+    return;
   }
-}
 
-/**
- * The host's model, where a setting the host left out (an app without Python) reads as the widget's default.
- */
-function withDefaults(host) {
-  return {
-    get: (name) => {
-      const value = host.get(name);
-      if (value !== undefined || !(name in TRAIT_DEFAULTS)) return value;
-      const fallback = TRAIT_DEFAULTS[name];
-      return fallback !== null && typeof fallback === "object" ? structuredClone(fallback) : fallback;
-    },
-    set: (...args) => host.set(...args),
-    on: (...args) => host.on(...args),
-    off: (...args) => host.off(...args),
-    save_changes: (...args) => host.save_changes(...args),
-    send: (...args) => host.send(...args),
-  };
+  if (result && latestQuery.get(model) === ticket) {
+    model.set("query_time", performance.now() - start);
+    model.set("nodes", result.nodes);
+    model.set("edges", result.edges);
+    model.save_changes();
+  }
 }
 
 /**
@@ -381,17 +367,17 @@ function render({ model: host, el }) {
   if (document.body) {
     themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
   }
-  if (window.matchMedia) {
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-      if (!autoTheme) return;
-      const dark = detectHostDark();
-      if (model.get("dark_mode") !== dark) {
-        model.set("dark_mode", dark);
-        model.save_changes();
-        updateTheme();
-      }
-    });
+  const darkScheme = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function onSchemeChange() {
+    if (!autoTheme) return;
+    const dark = detectHostDark();
+    if (model.get("dark_mode") !== dark) {
+      model.set("dark_mode", dark);
+      model.save_changes();
+      updateTheme();
+    }
   }
+  darkScheme?.addEventListener("change", onSchemeChange);
 
   // Manual toggle from settings panel disables auto-theme
   model.on("change:dark_mode", () => {
@@ -528,6 +514,16 @@ function render({ model: host, el }) {
   // The data drawn: the host's nodes and edges with the appended batches merged in. A redraw (new lanes, a style)
   // keeps appended items; new nodes or edges from the host replace them, unless they are a copy of what is drawn.
   let drawn = mergeItems(undefined, model.get("nodes") || [], model.get("edges") || []);
+
+  // The data a drawn node or edge came from, so events, the tooltip and the properties panel carry its properties
+  // and not only how it is drawn. Graph keys are strings; the data's ids may be numbers.
+  function dataOfNode(node) {
+    return drawn.nodes.get(node) ?? [...drawn.nodes.values()].find((n) => String(n.id) === node) ?? {};
+  }
+  function dataOfEdge(source, target, label) {
+    const key = edgeKey({ source, target, label });
+    return drawn.edges.find((e) => edgeKey({ source: String(e.source), target: String(e.target), label: e.label }) === key) ?? {};
+  }
 
   // An edge end that is no node but an action lane's id: the edge ends at that lane's button (connect nodes to an action)
   function actionLaneIndex(id) {
@@ -1163,6 +1159,35 @@ function render({ model: host, el }) {
     context.fillStyle = settings.labelColor.attribute ? data[settings.labelColor.attribute] || settings.labelColor.color || "#000" : settings.labelColor.color;
     context.fillText(data.label, x, data.y + settings.labelSize / 3);
   });
+  // A hovered node's label sits on a card in the canvas colour, outlined in the label colour: sigma's own card is
+  // white, so on a dark canvas the light label vanished on it
+  renderer.setSetting("defaultDrawNodeHover", (context, data, settings) => {
+    const size = settings.labelSize, padding = 2;
+    const textColor = settings.labelColor.color || "#000";
+    context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
+    context.beginPath();
+    if (typeof data.label === "string" && data.label) {
+      const boxWidth = Math.round(context.measureText(data.label).width + 5);
+      const boxHeight = Math.round(size + 2 * padding);
+      const radius = Math.max(data.size, size / 2) + padding;
+      const angle = Math.asin(boxHeight / 2 / radius);
+      const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
+      context.moveTo(data.x + dx, data.y + boxHeight / 2);
+      context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
+      context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
+      context.lineTo(data.x + dx, data.y - boxHeight / 2);
+      context.arc(data.x, data.y, radius, angle, -angle);
+    } else {
+      context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
+    }
+    context.closePath();
+    context.fillStyle = getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff";
+    context.fill();
+    context.strokeStyle = withAlpha(textColor, 0.35);
+    context.lineWidth = 1;
+    context.stroke();
+    renderer.getSetting("defaultDrawNodeLabel")(context, data, settings);
+  });
   frameLanes();
   applyHostTheme();
 
@@ -1403,7 +1428,9 @@ function render({ model: host, el }) {
 
   // One requestAnimationFrame loop while something appears or pulses; sigma's refresh redraws the overlay too
   let animating = false;
+  let destroyed = false;
   function animate() {
+    if (destroyed) return;
     const now = performance.now();
     // Nodes of a lane laid out again glide to their new places
     for (const [node, move] of laneState.move) {
@@ -2064,23 +2091,36 @@ function render({ model: host, el }) {
   function showTooltip(event, data) {
     if (!model.get("show_tooltip")) return;
     const fields = model.get("tooltip_fields") || ["label", "id"];
-    let html = "";
+    // Built from text nodes: field names and values come from the data
+    const rows = [];
     fields.forEach((f) => {
       if (data[f] !== undefined) {
         let val = data[f];
         if (typeof val === "number") val = val.toFixed(3);
         if (Array.isArray(val)) val = val.join(", ");
-        html += `<div class="awg-tooltip-row"><span class="awg-tooltip-key">${f}:</span><span class="awg-tooltip-value">${val}</span></div>`;
+        const row = document.createElement("div");
+        row.className = "awg-tooltip-row";
+        const key = document.createElement("span");
+        key.className = "awg-tooltip-key";
+        key.textContent = `${f}:`;
+        const value = document.createElement("span");
+        value.className = "awg-tooltip-value";
+        value.textContent = String(val);
+        row.append(key, value);
+        rows.push(row);
       }
     });
-    if (!html) return;
-    tooltip.innerHTML = html;
+    if (rows.length === 0) return;
+    tooltip.replaceChildren(...rows);
     tooltip.style.display = "block";
+    // Below right of the pointer, or on the other side where the tooltip would leave the canvas
     const rect = container.getBoundingClientRect();
-    const x = event.clientX - rect.left + 15;
-    const y = event.clientY - rect.top + 15;
-    tooltip.style.left = Math.min(x, rect.width - 180) + "px";
-    tooltip.style.top = Math.min(y, rect.height - 60) + "px";
+    const px = event.clientX - rect.left, py = event.clientY - rect.top;
+    const width = tooltip.offsetWidth, height = tooltip.offsetHeight;
+    const x = px + 15 + width <= rect.width ? px + 15 : px - 15 - width;
+    const y = py + 15 + height <= rect.height ? py + 15 : py - 15 - height;
+    tooltip.style.left = Math.max(0, Math.min(x, rect.width - width)) + "px";
+    tooltip.style.top = Math.max(0, Math.min(y, rect.height - height)) + "px";
   }
 
   function hideTooltip() {
@@ -2093,7 +2133,7 @@ function render({ model: host, el }) {
     laneState.hoverNode = node;
     if (laneState.quietLanes.has(graph.getNodeAttribute(node, "lane"))) renderer.refresh();
     const nodeData = graph.getNodeAttributes(node);
-    const data = { id: node, ...nodeData };
+    const data = { ...dataOfNode(node), ...nodeData, id: node };
     model.set("hovered_node", data);
     model.save_changes();
     showTooltip(event.original, data);
@@ -2113,7 +2153,7 @@ function render({ model: host, el }) {
   renderer.on("enterEdge", ({ edge, event }) => {
     const edgeData = graph.getEdgeAttributes(edge);
     const [source, target] = graph.extremities(edge);
-    const data = { source, target, ...edgeData };
+    const data = { ...dataOfEdge(source, target, edgeData.label), source, target, ...edgeData };
     model.set("hovered_edge", data);
     model.save_changes();
     showTooltip(event.original, data);
@@ -2151,7 +2191,7 @@ function render({ model: host, el }) {
     // Skip click if this was a drag
     if (justDragged) { justDragged = false; return; }
     const nodeData = graph.getNodeAttributes(node);
-    model.set("selected_node", { id: node, ...nodeData });
+    model.set("selected_node", { ...dataOfNode(node), ...nodeData, id: node });
 
     const mode = model.get("selection_mode") || "click";
     const current = model.get("selected_nodes") || [];
@@ -2171,7 +2211,7 @@ function render({ model: host, el }) {
   renderer.on("clickEdge", ({ edge }) => {
     const edgeData = graph.getEdgeAttributes(edge);
     const [source, target] = graph.extremities(edge);
-    model.set("selected_edge", { source, target, ...edgeData });
+    model.set("selected_edge", { ...dataOfEdge(source, target, edgeData.label), source, target, ...edgeData });
     model.save_changes();
   });
 
@@ -2247,6 +2287,7 @@ function render({ model: host, el }) {
   }
 
   function sync() {
+    if (destroyed) return;
     const changed = new Set(pending);
     pending.clear();
     // The widget's own write-back of what it draws: nothing to do
@@ -2340,8 +2381,12 @@ function render({ model: host, el }) {
     })();
   }
 
-  // Cleanup on destroy
+  // Cleanup on destroy: a view the host re-renders leaves no listener, observer or frame loop behind
   return () => {
+    destroyed = true;
+    model.offAll();
+    themeObserver.disconnect();
+    darkScheme?.removeEventListener("change", onSchemeChange);
     resizeObserver.disconnect();
     renderer.kill();
   };

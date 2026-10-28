@@ -5,10 +5,19 @@
  * engine's value encoding:
  *   node: {_id, _labels, ...properties}
  *   edge: {_id, _type, _source, _target, ...properties}
- *   path: {nodes: [id | node], edges: [id | edge]} (WASM adds _type: "path")
- * Lists (collect, variable-length edges, nodes(p)) are walked recursively.
- * Paths carry bare ids, and an edge can arrive without its endpoints, so the
- * caller resolves `missingNodeIds` / `missingEdgeIds` with a follow-up lookup.
+ *   path: {nodes: [node], edges: [edge]} (WASM adds _type: "path"); engines
+ *         before 0.6 put bare ids there, which are still accepted
+ * Lists and maps (collect, variable-length edges, nodes(p), [n, 1], {k: n})
+ * are walked recursively. An edge can arrive without its endpoints (and an
+ * older path with bare ids), so the caller resolves `missingNodeIds` /
+ * `missingEdgeIds` with a follow-up lookup.
+ *
+ * Property values are made plain for the widget model: an exact decimal
+ * ({$decimal: "1.50"}, grafeo 0.6) becomes a number, so styling by a
+ * property and the tooltips treat it as one; the server's tagged temporal
+ * values ({$date: "..."} and the like) become their text; an integer past
+ * 2^53 (a BigInt from WASM) becomes its text, which the model can sync;
+ * vectors and bytes (typed arrays) become plain arrays.
  */
 
 export function isGrafeoNode(val) {
@@ -40,10 +49,26 @@ function isGrafeoId(val) {
   return (typeof val === "number" && Number.isInteger(val) && val >= 0) || typeof val === "bigint";
 }
 
+const TAGGED_TEXT_KEYS = new Set(["$date", "$time", "$datetime", "$duration"]);
+
+/** A property value as the widget model holds it (see the module comment). */
+export function grafeoValueToWidget(value) {
+  if (typeof value === "bigint") return Number.isSafeInteger(Number(value)) ? Number(value) : String(value);
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(grafeoValueToWidget);
+  if (ArrayBuffer.isView(value)) return Array.from(value);
+  const keys = Object.keys(value);
+  if (keys.length === 1 && keys[0] === "$decimal") return Number(value.$decimal);
+  if (keys.length === 1 && TAGGED_TEXT_KEYS.has(keys[0])) return String(value[keys[0]]);
+  const plain = {};
+  for (const key of keys) plain[key] = grafeoValueToWidget(value[key]);
+  return plain;
+}
+
 function userProperties(entity) {
   const props = {};
   for (const [key, value] of Object.entries(entity)) {
-    if (!key.startsWith("_")) props[key] = value;
+    if (!key.startsWith("_")) props[key] = grafeoValueToWidget(value);
   }
   return props;
 }
@@ -169,6 +194,17 @@ export function grafeoSchemaToTypes(schema) {
     nodeTypes: (source.labels || []).map((l) => toEntry(l, "label")),
     edgeTypes: (source.edge_types || source.edgeTypes || []).map((e) => toEntry(e, "type")),
   };
+}
+
+/**
+ * A note for a result whose rows hold no node, edge or path (the drawing then empties), or "" when there is
+ * something to draw or no rows at all (a write).
+ */
+export function nothingToDrawNote(rows, graph) {
+  const count = Array.isArray(rows) ? rows.length : 0;
+  if (count === 0 || graph.nodes.length > 0 || graph.edges.length > 0) return "";
+  const what = count === 1 ? "1 row" : `${count} rows`;
+  return `The query returned ${what} without nodes, edges or paths, so there is nothing to draw. Return graph elements (for example RETURN n, r, m) to see them.`;
 }
 
 /**

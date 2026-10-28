@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import html
 import json
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +18,35 @@ from anywidget_graph.ui import get_css, get_esm, get_vendor_js
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def _script_json(value: Any) -> str:
+    """JSON for a ``<script>`` element: ``<``, ``>`` and ``&`` are escaped, so a value cannot close the element."""
+    return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+# A CSS colour or length the page writes into its <style>: plain values only, so a value cannot end the element
+_CSS_VALUE = re.compile(r"^[#\w(),.%\s-]+$")
+# The widget's canvas colours (styles.css --awg-graph-bg) and its default `background`
+_CANVAS_LIGHT, _CANVAS_DARK, _DEFAULT_BACKGROUND = "#ffffff", "#181c1a", "#fafafa"
+
+
+def _css_value(value: Any, fallback: str) -> str:
+    return value if isinstance(value, str) and _CSS_VALUE.match(value) else fallback
+
+
+def _is_dark(color: str, fallback: bool) -> bool:
+    """Whether a ``#rgb`` or ``#rrggbb`` colour is dark; ``fallback`` for any other notation."""
+    digits = color.lstrip("#")
+    if not color.startswith("#") or len(digits) not in (3, 6):
+        return fallback
+    if len(digits) == 3:
+        digits = "".join(c * 2 for c in digits)
+    try:
+        r, g, b = (int(digits[k : k + 2], 16) for k in (0, 2, 4))
+    except ValueError:
+        return fallback
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
 
 
 class Graph(anywidget.AnyWidget):
@@ -1047,53 +1078,109 @@ const renderer = new Sigma(graph, container, {{
   renderEdgeLabels: OPTIONS.show_edge_labels,
   defaultNodeColor: "#6366f1",
   defaultEdgeColor: "#94a3b8",
-  labelColor: {{ color: OPTIONS.dark_mode ? "#ccc" : "#333" }},
+  labelColor: {{ color: OPTIONS.label_color }},
   labelSize: 12,
   labelWeight: "500",
   defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line",
 }});
 
+// A hovered node's label sits on a card in the page colour, outlined in the label colour (sigma's card is white)
+const drawLabel = renderer.getSetting("defaultDrawNodeLabel");
+renderer.setSetting("defaultDrawNodeHover", (context, data, settings) => {{
+  const size = settings.labelSize, padding = 2;
+  context.font = `${{settings.labelWeight}} ${{size}}px ${{settings.labelFont}}`;
+  context.beginPath();
+  if (typeof data.label === "string" && data.label) {{
+    const boxWidth = Math.round(context.measureText(data.label).width + 5);
+    const boxHeight = Math.round(size + 2 * padding);
+    const radius = Math.max(data.size, size / 2) + padding;
+    const angle = Math.asin(boxHeight / 2 / radius);
+    const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
+    context.moveTo(data.x + dx, data.y + boxHeight / 2);
+    context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
+    context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
+    context.lineTo(data.x + dx, data.y - boxHeight / 2);
+    context.arc(data.x, data.y, radius, angle, -angle);
+  }} else {{
+    context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
+  }}
+  context.closePath();
+  context.fillStyle = OPTIONS.background;
+  context.fill();
+  context.globalAlpha = 0.35;
+  context.strokeStyle = OPTIONS.label_color;
+  context.lineWidth = 1;
+  context.stroke();
+  context.globalAlpha = 1;
+  drawLabel(context, data, settings);
+}});
+
 // --- Tooltip ---
 const tooltip = document.getElementById("tooltip");
+
+// Below right of the pointer, or on the other side where the tooltip would leave the window
+function placeTooltip(x, y) {{
+  const width = tooltip.offsetWidth, height = tooltip.offsetHeight;
+  const left = x + 15 + width <= window.innerWidth ? x + 15 : x - 15 - width;
+  const top = y + 15 + height <= window.innerHeight ? y + 15 : y - 15 - height;
+  tooltip.style.left = Math.max(0, left) + window.scrollX + "px";
+  tooltip.style.top = Math.max(0, top) + window.scrollY + "px";
+}}
+
+// Sigma's pointer coordinates are relative to the graph container
+function pointerOnPage(event) {{
+  const rect = container.getBoundingClientRect();
+  return [rect.left + event.x, rect.top + event.y];
+}}
+
+// A tooltip row built from text: keys and values come from the data, so never from markup
+function tooltipRow(key, value) {{
+  const row = document.createElement("div");
+  row.className = "tooltip-row";
+  const keySpan = document.createElement("span");
+  keySpan.className = "tooltip-key";
+  keySpan.textContent = key + ":";
+  const valueSpan = document.createElement("span");
+  valueSpan.textContent = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+  row.append(keySpan, valueSpan);
+  return row;
+}}
 
 renderer.on("enterNode", ({{ node, event }}) => {{
   const attrs = graph.getNodeAttributes(node);
   const data = {{ id: node, ...attrs }};
   const original = nodes.find(n => n.id === node) || {{}};
-  let html = "";
+  const rows = [];
   for (const [k, v] of Object.entries(original)) {{
     if (k === "x" || k === "y") continue;
     let display = v;
     if (typeof v === "number") display = Number.isInteger(v) ? v : v.toFixed(3);
     if (Array.isArray(v)) display = v.join(", ");
-    html += `<div class="tooltip-row"><span class="tooltip-key">${{k}}:</span><span>${{display}}</span></div>`;
+    rows.push(tooltipRow(k, display));
   }}
-  if (html) {{
-    tooltip.innerHTML = html;
+  if (rows.length) {{
+    tooltip.replaceChildren(...rows);
     tooltip.style.display = "block";
+    placeTooltip(...pointerOnPage(event));
   }}
 }});
 
 renderer.getMouseCaptor().on("mousemovebody", (e) => {{
-  if (tooltip.style.display === "block") {{
-    tooltip.style.left = (e.x + 15) + "px";
-    tooltip.style.top = (e.y + 15) + "px";
-  }}
+  if (tooltip.style.display === "block") placeTooltip(...pointerOnPage(e));
 }});
 
 renderer.on("leaveNode", () => {{
   tooltip.style.display = "none";
 }});
 
-renderer.on("enterEdge", ({{ edge }}) => {{
+renderer.on("enterEdge", ({{ edge, event }}) => {{
   const attrs = graph.getEdgeAttributes(edge);
   const [source, target] = graph.extremities(edge);
-  let html = `<div class="tooltip-row"><span class="tooltip-key">source:</span><span>${{source}}</span></div>`;
-  html += `<div class="tooltip-row"><span class="tooltip-key">target:</span><span>${{target}}</span></div>`;
-  if (attrs.label) html += `<div class="tooltip-row">` +
-    `<span class="tooltip-key">label:</span><span>${{attrs.label}}</span></div>`;
-  tooltip.innerHTML = html;
+  const rows = [tooltipRow("source", source), tooltipRow("target", target)];
+  if (attrs.label) rows.push(tooltipRow("label", attrs.label));
+  tooltip.replaceChildren(...rows);
   tooltip.style.display = "block";
+  placeTooltip(...pointerOnPage(event));
 }});
 
 renderer.on("leaveEdge", () => {{
@@ -1131,8 +1218,18 @@ renderer.on("leaveEdge", () => {{
             A complete, self-contained HTML document.
         """
         data = {"nodes": list(self.nodes), "edges": list(self.edges)}
+        # The page looks like the widget: the host theme's colours, else the canvas of the light or dark mode (or a
+        # `background` set on the graph), with labels that read on it
+        theme = self.theme or {}
+        canvas = _CANVAS_DARK if self.dark_mode else _CANVAS_LIGHT
+        if self.background != _DEFAULT_BACKGROUND:
+            canvas = self.background
+        background = _css_value(theme.get("background") or canvas, canvas)
+        dark = _is_dark(background, self.dark_mode)
+        label_color = _css_value(theme.get("text"), "#e0e0e0" if dark else "#333333")
         options = {
-            "background": self.background,
+            "background": background,
+            "label_color": label_color,
             "show_labels": self.show_labels,
             "show_edge_labels": self.show_edge_labels,
             "edge_arrows": self.edge_arrows,
@@ -1149,12 +1246,12 @@ renderer.on("leaveEdge", () => {{
             "layout": self.layout,
         }
         return self._HTML_TEMPLATE.format(
-            title=title,
-            background=self.background,
-            width=width,
-            height=height,
-            json_data=json.dumps(data),
-            json_options=json.dumps(options),
+            title=html.escape(title),
+            background=background,
+            width=_css_value(width, "100%"),
+            height=_css_value(height, "600px"),
+            json_data=_script_json(data),
+            json_options=_script_json(options),
             vendor_js=get_vendor_js(),
         )
 
