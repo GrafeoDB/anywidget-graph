@@ -53,6 +53,29 @@ def _query_result_note(row_count: int | None, nodes: list, edges: list) -> str:
     )
 
 
+def _cap_query_result(nodes: list, edges: list, limit: int | None) -> tuple[list, list, str]:
+    """A query result cut to ``limit`` nodes: the best connected (most edges within it, ties in result order), with
+    the edges between them, and the note for query_note ("" when nothing was cut).
+
+    Mirrors ``capQueryResult`` in ui/defaults.js.
+    """
+    total = len(nodes)
+    if not limit or limit <= 0 or total <= limit:
+        return nodes, edges, ""
+    degree = {str(node["id"]): 0 for node in nodes}
+    for edge in edges:
+        for end in (str(edge["source"]), str(edge["target"])):
+            if end in degree:
+                degree[end] += 1
+    ranked = sorted(range(total), key=lambda i: (-degree[str(nodes[i]["id"])], i))
+    chosen = set(ranked[:limit])
+    kept_nodes = [node for i, node in enumerate(nodes) if i in chosen]
+    kept = {str(node["id"]) for node in kept_nodes}
+    kept_edges = [edge for edge in edges if str(edge["source"]) in kept and str(edge["target"]) in kept]
+    note = f"The query returned {total:,} nodes; the {limit:,} best connected are drawn (max_query_nodes)."
+    return kept_nodes, kept_edges, note
+
+
 def _css_value(value: Any, fallback: str) -> str:
     return value if isinstance(value, str) and _CSS_VALUE.match(value) else fallback
 
@@ -225,6 +248,8 @@ class Graph(anywidget.AnyWidget):
 
     # === Node Expansion ===
     max_nodes = traitlets.Int(default_value=300).tag(sync=True)
+    # A query result with more nodes is cut to its best connected ones (query_note says so); None draws every node
+    max_query_nodes = traitlets.Int(allow_none=True, default_value=None).tag(sync=True)
     _expand_request = traitlets.Dict(default_value={}).tag(sync=True)
 
     # === Query Execution Trigger (for Python backends) ===
@@ -460,9 +485,11 @@ class Graph(anywidget.AnyWidget):
             start = time.perf_counter()
             nodes, edges = self._backend.execute(self.query, language=self.query_language)
             self.query_time = (time.perf_counter() - start) * 1000
-            # A result without nodes or edges keeps what is drawn, and the note says why
+            # A result without nodes or edges keeps what is drawn, and the note says why; one past max_query_nodes
+            # is cut, and the note says so
             self.query_note = _query_result_note(getattr(self._backend, "last_row_count", None), nodes, edges)
             if not self.query_note:
+                nodes, edges, self.query_note = _cap_query_result(nodes, edges, self.max_query_nodes)
                 self.nodes = nodes
                 self.edges = edges
         except Exception as e:

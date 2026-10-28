@@ -434,6 +434,30 @@ def test_visibility_level_traits_default_to_showing_everything():
     assert graph.levels[0]["count"] == 10
 
 
+def test_max_query_nodes_cuts_a_query_result_to_its_best_connected_nodes():
+    """Off by default; set, a larger result keeps its best-connected nodes and their edges, and query_note says so."""
+    grafeo = pytest.importorskip("grafeo")
+    db = grafeo.GrafeoDB()
+    db.execute("INSERT (:Hub {name: 'hub'})")
+    for leaf in ("a", "b", "c"):
+        db.execute(f"MATCH (h:Hub) INSERT (h)-[:R]->(:Leaf {{name: '{leaf}'}})")
+    db.execute("INSERT (:Loose {name: 'x'}), (:Loose {name: 'y'})")
+    query = "MATCH (n) OPTIONAL MATCH (n)-[r]->(m) RETURN n, r, m"
+    graph = Graph(grafeo_db=db, query=query, query_language="gql")
+    assert graph.max_query_nodes is None
+    graph._execute_backend_query()
+    assert (len(graph.nodes), graph.query_note) == (6, "")
+    graph.max_query_nodes = 2
+    graph._execute_backend_query()
+    names = {node.get("name") for node in graph.nodes}
+    assert len(graph.nodes) == 2
+    assert "hub" in names
+    assert "x" not in names
+    assert "y" not in names
+    assert len(graph.edges) == 1
+    assert graph.query_note == "The query returned 6 nodes; the 2 best connected are drawn (max_query_nodes)."
+
+
 def test_server_mode_takes_an_http_connection_uri_as_the_server():
     """In server mode an http(s) connection_uri names the server; grafeo_server_url given wins."""
     served = Graph(grafeo_connection_mode="server", connection_uri="http://studio.local/grafeo")

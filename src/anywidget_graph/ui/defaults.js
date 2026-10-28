@@ -45,6 +45,7 @@ export const TRAIT_DEFAULTS = {
   "level_field": "level",
   "levels": [],
   "max_nodes": 300,
+  "max_query_nodes": null,
   "nodes": [],
   "pinned_nodes": {},
   "pulse_nodes": [],
@@ -176,4 +177,28 @@ export function queryResultNote(rowCount, graph) {
   if (!rowCount) return "The query returned nothing to draw, so the drawing is unchanged.";
   const what = rowCount === 1 ? "1 row" : `${rowCount} rows`;
   return `The query returned ${what} without nodes, edges or paths, so the drawing is unchanged. Return graph elements (for example RETURN n, r, m) to draw them.`;
+}
+
+/**
+ * A query result cut to `max` nodes (max_query_nodes; null or 0 draws every node): the best-connected nodes of the
+ * result (most edges within it, ties in result order), with the edges between them. Returns the graph to draw and the
+ * note to show (query_note), "" when nothing was cut. Mirrors _cap_query_result in widget.py.
+ */
+export function capQueryResult(graph, max) {
+  const total = graph.nodes.length;
+  if (!(max > 0) || total <= max) return { graph, note: "" };
+  const degree = new Map(graph.nodes.map((node) => [String(node.id), 0]));
+  for (const edge of graph.edges) {
+    for (const end of [String(edge.source), String(edge.target)]) {
+      if (degree.has(end)) degree.set(end, degree.get(end) + 1);
+    }
+  }
+  const ranked = graph.nodes.map((node, index) => ({ index, links: degree.get(String(node.id)) }));
+  ranked.sort((a, b) => b.links - a.links || a.index - b.index);
+  const chosen = new Set(ranked.slice(0, max).map((entry) => entry.index));
+  const nodes = graph.nodes.filter((_, index) => chosen.has(index));
+  const kept = new Set(nodes.map((node) => String(node.id)));
+  const edges = graph.edges.filter((edge) => kept.has(String(edge.source)) && kept.has(String(edge.target)));
+  const note = `The query returned ${total.toLocaleString("en-US")} nodes; the ${max.toLocaleString("en-US")} best connected are drawn (max_query_nodes).`;
+  return { graph: { ...graph, nodes, edges }, note };
 }

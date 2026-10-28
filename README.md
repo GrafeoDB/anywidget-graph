@@ -323,6 +323,7 @@ graph = Graph(
     show_tooltip=True,  # Hover tooltips
     tooltip_fields=["label", "id"],
     max_nodes=300,  # Limit for node expansion
+    max_query_nodes=None,  # Cut a query result to its N best-connected nodes (None draws every node)
 )
 ```
 
