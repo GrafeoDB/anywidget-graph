@@ -2,9 +2,8 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
-import { withDefaults } from "./defaults.js";
-// Graph, Sigma, d3Force, circular, random and forceAtlas2 come from the bundled libraries
-// (vendor/graph-libs.min.js), which ui/__init__.py puts in front of the modules
+import { withDefaults, followHostTheme, queryResultNote, detectDark } from "./defaults.js";
+import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.js";
 
 import { ICONS } from "./icons.js";
 import { createToolbar } from "./toolbar.js";
@@ -12,7 +11,7 @@ import { createSchemaPanel } from "./schema.js";
 import { createSettingsPanel } from "./settings.js";
 import { createPropertiesPanel } from "./properties.js";
 import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor } from "./lanes.js";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.js";
 import * as neo4jBackend from "./neo4j.js";
 import * as grafeoBackend from "./grafeo.js";
 import * as grafeoEmbedBackend from "./grafeo-embed.js";
@@ -187,6 +186,7 @@ function getStylingOpts(model, nodes, edges) {
     edgeSizeField, edgeSizeDomain, edgeSizeRange,
     degreeMap,
     typeColors: model.get("type_colors") || {},
+    levelField: model.get("level_field") || "level",
   };
 }
 
@@ -199,6 +199,15 @@ function buildNodeAttrs(node, opts) {
     y: node.y ?? Math.random() * 100,
     size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(node.id)),
     color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
+    // Per-item style fields a host sets on a node (each optional): drawn by the reducers and the overlay
+    opacity: node.opacity,
+    ring: node.ring || undefined,
+    ringWidth: node.ring_width,
+    badge: node.badge === undefined || node.badge === null || node.badge === "" ? undefined : String(node.badge),
+    badgeColor: node.badge_color,
+    outlineDash: dashPattern(node.dash),
+    // Its visibility level (see levelState), when the host gives levels
+    level: node[opts.levelField ?? "level"],
   };
 }
 
@@ -221,8 +230,11 @@ function buildEdgeAttrs(edge, opts) {
   return {
     label: edge.label || "",
     edgeType: edge.type || edge.label || "unknown",
-    size,
+    // A per-item `width` (pixels) wins over size and edge_size_field; `color` already wins in colorFor
+    size: typeof edge.width === "number" && edge.width > 0 ? edge.width : size,
     color,
+    opacity: edge.opacity,
+    dash: dashPattern(edge.dash),
   };
 }
 
@@ -234,13 +246,13 @@ const latestQuery = new WeakMap();
  * pressing Connect in the settings panel first. False when the connection failed (its message is in query_error).
  */
 async function connectForQuery(model, backend, mode) {
-  if (backend === "neo4j" && !neo4jBackend.isConnected()) {
+  if (backend === "neo4j" && !neo4jBackend.isConnected(model)) {
     return neo4jBackend.connect(model.get("connection_uri"), model.get("connection_username"), model.get("connection_password"), model);
   }
-  if (backend === "grafeo" && mode === "server" && !grafeoBackend.isConnected()) {
+  if (backend === "grafeo" && mode === "server" && !grafeoBackend.isConnected(model)) {
     return grafeoBackend.connect(model.get("grafeo_server_url"), model.get("connection_username"), model.get("connection_password"), model);
   }
-  if (backend === "grafeo" && mode === "wasm" && !grafeoEmbedBackend.isConnected()) {
+  if (backend === "grafeo" && mode === "wasm" && !grafeoEmbedBackend.isConnected(model)) {
     return grafeoEmbedBackend.connect(model);
   }
   return true;
@@ -261,8 +273,11 @@ async function executeQuery(model) {
     return;
   }
 
-  const ticket = (latestQuery.get(model) || 0) + 1;
-  latestQuery.set(model, ticket);
+  // Every view of a widget shares one count, so a view's older query cannot replace another view's newer result
+  const key = model.host ?? model;
+  const ticket = (latestQuery.get(key) || 0) + 1;
+  latestQuery.set(key, ticket);
+  model.set("query_note", "");
   if (!(await connectForQuery(model, backend, mode))) return;
   const start = performance.now();
   let result;
@@ -284,12 +299,16 @@ async function executeQuery(model) {
     return;
   }
 
-  if (result && latestQuery.get(model) === ticket) {
-    model.set("query_time", performance.now() - start);
+  if (!result || latestQuery.get(key) !== ticket) return;
+  model.set("query_time", performance.now() - start);
+  const note = queryResultNote(result.rows, result);
+  model.set("query_note", note);
+  // A result without nodes or edges keeps what is drawn
+  if (!note) {
     model.set("nodes", result.nodes);
     model.set("edges", result.edges);
-    model.save_changes();
   }
+  model.save_changes();
 }
 
 /**
@@ -313,15 +332,7 @@ function render({ model: host, el }) {
   let rendererRef = null;
 
   // Auto-detect host theme (Tailwind dark/dark-theme class, data-theme, or prefers-color-scheme)
-  function detectHostDark() {
-    const html = document.documentElement;
-    if (html.classList.contains("dark") || html.classList.contains("dark-theme")) return true;
-    if (html.dataset.theme === "dark") return true;
-    if (document.body?.classList.contains("dark") || document.body?.classList.contains("dark-theme")) return true;
-    if (document.body?.dataset.theme === "dark") return true;
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
-    return false;
-  }
+  const detectHostDark = () => detectDark(el);
 
   // The canvas colour that dimmed nodes and edges are mixed towards: read again when the theme changes, not per node
   let canvasBackground = "";
@@ -348,42 +359,26 @@ function render({ model: host, el }) {
     rendererRef?.refresh();
   }
 
-  // Always auto-detect and observe theme changes
-  let autoTheme = true;
-  model.set("dark_mode", detectHostDark());
-  model.save_changes();
+  // The page's light or dark theme, until dark_mode is a choice (see followHostTheme); the settings switch only sets
+  // dark_mode, and the listener records that as a choice
+  const hostTheme = followHostTheme(model, detectHostDark);
+  model.on("change:dark_mode", hostTheme.onChange);
+  model.on("change:dark_mode", updateTheme);
+  hostTheme.sync();
   updateTheme();
 
-  const themeObserver = new MutationObserver(() => {
-    if (!autoTheme) return;
-    const dark = detectHostDark();
-    if (model.get("dark_mode") !== dark) {
-      model.set("dark_mode", dark);
-      model.save_changes();
-      updateTheme();
-    }
-  });
+  const themeObserver = new MutationObserver(hostTheme.sync);
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
   if (document.body) {
     themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
   }
+  // A data-theme on any ancestor (a host's pane) counts too: its own observer (observing <html> again would replace
+  // the options above), watching only that attribute, so the page's other changes cost nothing
+  const paneThemeObserver = new MutationObserver(hostTheme.sync);
+  paneThemeObserver.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ["data-theme"] });
   const darkScheme = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-  function onSchemeChange() {
-    if (!autoTheme) return;
-    const dark = detectHostDark();
-    if (model.get("dark_mode") !== dark) {
-      model.set("dark_mode", dark);
-      model.save_changes();
-      updateTheme();
-    }
-  }
+  const onSchemeChange = hostTheme.sync;
   darkScheme?.addEventListener("change", onSchemeChange);
-
-  // Manual toggle from settings panel disables auto-theme
-  model.on("change:dark_mode", () => {
-    autoTheme = false;
-    updateTheme();
-  });
 
   // Create query executor callback
   const onExecuteQuery = () => executeQuery(model);
@@ -519,6 +514,16 @@ function render({ model: host, el }) {
   // and not only how it is drawn. Graph keys are strings; the data's ids may be numbers.
   function dataOfNode(node) {
     return drawn.nodes.get(node) ?? [...drawn.nodes.values()].find((n) => String(n.id) === node) ?? {};
+  }
+  // What clicks and hovers report (selected_node, hovered_node, selected_edge, hovered_edge): the item's own fields
+  // plus how it is drawn (label as displayed, position, size, colour), not the widget's internal attributes
+  function nodePayload(node, attrs) {
+    const { label, x, y, size, color } = attrs;
+    return { ...dataOfNode(node), label, x, y, size, color, id: node };
+  }
+  function edgePayload(source, target, attrs) {
+    const { label, size, color } = attrs;
+    return { ...dataOfEdge(source, target, attrs.label), source, target, label, size, color };
   }
   function dataOfEdge(source, target, label) {
     const key = edgeKey({ source, target, label });
@@ -898,6 +903,25 @@ function render({ model: host, el }) {
         graph.setNodeAttribute(id, "y", pos.y);
       }
     });
+    framePlain();
+  }
+
+  // Without lanes the camera frames the nodes with room for the largest node at every edge and for the zoom and
+  // selection controls over the right of the canvas, so no node is cut at the border or hidden under the controls
+  function framePlain() {
+    if (!rendererRef || laneState.lanes.length || graph.order === 0) return;
+    const width = container.offsetWidth, height = container.offsetHeight;
+    if (!width || !height) return;
+    const box = { x: [Infinity, -Infinity], y: [Infinity, -Infinity] };
+    let largest = 0;
+    graph.forEachNode((_, attrs) => {
+      box.x[0] = Math.min(box.x[0], attrs.x); box.x[1] = Math.max(box.x[1], attrs.x);
+      box.y[0] = Math.min(box.y[0], attrs.y); box.y[1] = Math.max(box.y[1], attrs.y);
+      largest = Math.max(largest, attrs.size || 0);
+    });
+    const controls = (wrapper.querySelector(".awg-zoom-controls")?.offsetWidth || 100) + 20;
+    const chips = (model.get("levels") || []).length ? (wrapper.querySelector(".awg-level-chips")?.offsetHeight || 24) + 10 : 0;
+    rendererRef.setCustomBBox(roomyFrame(box, largest, width, height, rendererRef.getSetting("stagePadding") ?? 30, controls, chips));
   }
 
   // Bands of all lanes; their height follows the canvas's shape (within limits) so the lanes fill it
@@ -1189,6 +1213,7 @@ function render({ model: host, el }) {
     renderer.getSetting("defaultDrawNodeLabel")(context, data, settings);
   });
   frameLanes();
+  framePlain();
   applyHostTheme();
 
   // Overlay for lane titles and cross-lane curves (2D canvas above sigma, redrawn after every sigma frame)
@@ -1207,6 +1232,91 @@ function render({ model: host, el }) {
 
   // Edges from a node to itself (the edge reducer hides them from sigma and marks them `loop`): a circle over the
   // node's edge, nested when a node has several, with an arrowhead (edge_arrows) and the label (show_edge_labels)
+  // What sigma's WebGL programs cannot draw: per-item marks a host sets (a node's ring, dashed outline and badge, a
+  // dashed edge) and the ring of a pinned node. Hidden items (a filter, a search, a level) have none.
+  function drawItemMarks(ctx) {
+    const pinned = model.get("pinned_nodes") || {};
+    const arrows = model.get("edge_arrows");
+    graph.forEachEdge((edge, attrs, source, target) => {
+      if (!attrs.dash || source === target) return;
+      const shown = renderer.getEdgeDisplayData(edge);
+      const a = renderer.getNodeDisplayData(source), b = renderer.getNodeDisplayData(target);
+      if (!shown || shown.hidden || !a || !b || a.hidden || b.hidden) return;
+      const p = renderer.framedGraphToViewport(a), q = renderer.framedGraphToViewport(b);
+      const ra = renderer.scaleSize(a.size), rb = renderer.scaleSize(b.size);
+      const length = Math.hypot(q.x - p.x, q.y - p.y);
+      if (length <= ra + rb) return;
+      const ux = (q.x - p.x) / length, uy = (q.y - p.y) / length;
+      const end = { x: q.x - ux * rb, y: q.y - uy * rb };
+      const color = shown.dashColor || attrs.color;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, shown.size || 1);
+      ctx.setLineDash(attrs.dash);
+      ctx.beginPath();
+      ctx.moveTo(p.x + ux * ra, p.y + uy * ra);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      if (arrows) {
+        const size = 6 + ctx.lineWidth, angle = Math.atan2(uy, ux);
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(end.x, end.y);
+        ctx.lineTo(end.x - size * Math.cos(angle - 0.45), end.y - size * Math.sin(angle - 0.45));
+        ctx.lineTo(end.x - size * Math.cos(angle + 0.45), end.y - size * Math.sin(angle + 0.45));
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    });
+    let accent = null;
+    graph.forEachNode((node, attrs) => {
+      const isPinned = Boolean(pinned[node]);
+      if (!attrs.ring && !attrs.outlineDash && attrs.badge === undefined && !isPinned) return;
+      const shown = renderer.getNodeDisplayData(node);
+      if (!shown || shown.hidden) return;
+      const p = renderer.framedGraphToViewport(shown), r = renderer.scaleSize(shown.size);
+      let outer = r;
+      ctx.save();
+      const ring = attrs.ring || (isPinned ? "#f59e0b" : null);
+      if (ring) {
+        const width = typeof attrs.ringWidth === "number" && attrs.ringWidth > 0 ? attrs.ringWidth : 2;
+        ctx.strokeStyle = ring;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 1 + width / 2, 0, Math.PI * 2);
+        ctx.stroke();
+        outer = r + 1 + width;
+      }
+      if (attrs.outlineDash) {
+        ctx.strokeStyle = shown.color || attrs.color;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash(attrs.outlineDash);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, outer + 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        outer += 3.5;
+      }
+      if (attrs.badge !== undefined) {
+        accent ??= getComputedStyle(wrapper).getPropertyValue("--awg-accent").trim() || "#0880ea";
+        const fill = attrs.badgeColor || accent;
+        ctx.font = "600 10px system-ui, -apple-system, sans-serif";
+        const width = Math.ceil(ctx.measureText(attrs.badge).width) + 8, height = 14;
+        const x = p.x + outer * 0.7, y = p.y - outer * 0.7 - height;
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, 7);
+        ctx.fill();
+        ctx.fillStyle = contrastText(fill);
+        ctx.textBaseline = "middle";
+        ctx.fillText(attrs.badge, x + 4, y + height / 2 + 0.5);
+      }
+      ctx.restore();
+    });
+  }
+
   function drawLoops(ctx) {
     const perNode = new Map();
     const arrows = model.get("edge_arrows"), labels = model.get("show_edge_labels");
@@ -1253,6 +1363,7 @@ function render({ model: host, el }) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
     drawLoops(ctx);
+    drawItemMarks(ctx);
     if (!laneState.lanes.length) return;
     // The widget's own colours: its light or dark defaults, or the host theme (applyHostTheme sets these variables)
     const css = getComputedStyle(wrapper);
@@ -1486,8 +1597,18 @@ function render({ model: host, el }) {
   // Node reducer for type filtering, search filtering, selection, and pinned indicator
   renderer.setSetting("nodeReducer", (node, data) => {
     const selectedNodes = model.get("selected_nodes") || [];
-    const pinnedNodes = model.get("pinned_nodes") || {};
     const res = { ...data };
+
+    // Visibility levels: below the current level a node is hidden, or dimmed one level down (filtered_style "dim")
+    const level = levelOf(data);
+    if (level === "hidden") {
+      res.hidden = true;
+      return res;
+    }
+    if (level === "dim") {
+      res.color = dimColor(data.color, canvasBackground);
+      res.label = "";
+    }
 
     // Hide nodes whose type is filtered out
     if (hiddenNodeTypes.size > 0 && hiddenNodeTypes.has(data.nodeType)) {
@@ -1512,11 +1633,8 @@ function render({ model: host, el }) {
       res.label = "";
     }
 
-    // Show ring on pinned nodes
-    if (pinnedNodes[node]) {
-      res.borderColor = "#f59e0b";
-      res.borderSize = 2;
-    }
+    // A per-item opacity: the colour mixed towards the canvas (pinned nodes and rings are drawn by drawItemMarks)
+    if (data.opacity !== undefined) res.color = fadeColor(res.color || data.color, canvasBackground, data.opacity);
 
     // A crowded lane's nodes are drawn smaller (relative sizes kept)
     const shrink = data.lane === undefined ? undefined : laneState.sizeScale.get(data.lane);
@@ -1570,6 +1688,17 @@ function render({ model: host, el }) {
   renderer.setSetting("edgeReducer", (edge, data) => {
     const res = { ...data };
 
+    // An edge to a node hidden by its level is hidden; one to a dimmed node is dimmed
+    const ends = graph.extremities(edge).map((end) => levelOf(graph.getNodeAttributes(end)));
+    if (ends.includes("hidden")) {
+      res.hidden = true;
+      return res;
+    }
+    if (ends.includes("dim")) {
+      res.color = dimColor(data.color, canvasBackground);
+      res.label = "";
+    }
+
     // Hide edges whose type is filtered out
     if (hiddenEdgeTypes.size > 0 && hiddenEdgeTypes.has(data.edgeType)) {
       res.hidden = true;
@@ -1620,9 +1749,55 @@ function render({ model: host, el }) {
       res.hidden = true;
       res.loop = true;
     }
+    if (data.opacity !== undefined) res.color = fadeColor(res.color || data.color, canvasBackground, data.opacity);
+    // A dashed edge: WebGL draws no dashes, so the overlay draws it (drawItemMarks) in its colour; sigma's own line
+    // takes the canvas colour, so the edge still answers to hover and click
+    if (!res.hidden && data.dash) {
+      res.dashColor = res.color || data.color;
+      res.color = canvasBackground || res.color;
+    }
 
     return res;
   });
+
+  // A node's visibility at the current level (levels, current_level, filtered_style)
+  function levelOf(attrs) {
+    return levelState(attrs.level, model.get("current_level"), model.get("levels") || [], model.get("filtered_style"));
+  }
+
+  // Level chips over the top left of the canvas: each level's label and the host's count; a click picks the level.
+  // Changing the level only changes what the reducers show, so nothing moves.
+  const levelChips = document.createElement("div");
+  levelChips.className = "awg-level-chips";
+  container.appendChild(levelChips);
+  function renderLevelChips() {
+    const levels = model.get("levels") || [];
+    levelChips.replaceChildren();
+    levelChips.style.display = levels.length ? "flex" : "none";
+    for (const entry of levels) {
+      const chip = document.createElement("button");
+      chip.className = "awg-level-chip" + (entry.id === model.get("current_level") ? " awg-level-chip-active" : "");
+      chip.title = `Show ${entry.label ?? entry.id} and above`;
+      const name = document.createElement("span");
+      name.textContent = String(entry.label ?? entry.id);
+      chip.appendChild(name);
+      if (entry.count !== undefined && entry.count !== null) {
+        const count = document.createElement("span");
+        count.className = "awg-level-count";
+        count.textContent = Number.isFinite(Number(entry.count)) ? Number(entry.count).toLocaleString() : String(entry.count);
+        chip.appendChild(count);
+      }
+      chip.addEventListener("click", () => {
+        model.set("current_level", entry.id);
+        model.save_changes();
+      });
+      levelChips.appendChild(chip);
+    }
+  }
+  renderLevelChips();
+  model.on("change:levels", () => { renderLevelChips(); framePlain(); renderer.refresh(); });
+  model.on("change:current_level", () => { renderLevelChips(); renderer.refresh(); });
+  model.on("change:filtered_style", () => renderer.refresh());
 
   // Incremental append: merge new nodes and edges without moving what is drawn; new items appear one after another
   function applyBatch(batch) {
@@ -1789,8 +1964,8 @@ function render({ model: host, el }) {
     }
     laneState.cross = laneState.cross.filter((c) => !ids.has(c.source) && !ids.has(c.target) && !specs.some((spec) => spec.source === c.source && spec.target === c.target));
     if (!ids.size && !edgeKeys.length) return ids;
-    // Without lanes sigma frames the drawn extent: keep that framing, so the rest does not move when these leave
-    if (!laneState.lanes.length) renderer.setCustomBBox(renderer.getBBox());
+    // Without lanes keep the current framing, so the rest does not move when these leave
+    if (!laneState.lanes.length) renderer.setCustomBBox(renderer.getCustomBBox() ?? renderer.getBBox());
     const start = performance.now();
     for (const key of edgeKeys) {
       if (animated) laneState.edgeVanish.set(key, start);
@@ -2133,7 +2308,7 @@ function render({ model: host, el }) {
     laneState.hoverNode = node;
     if (laneState.quietLanes.has(graph.getNodeAttribute(node, "lane"))) renderer.refresh();
     const nodeData = graph.getNodeAttributes(node);
-    const data = { ...dataOfNode(node), ...nodeData, id: node };
+    const data = nodePayload(node, nodeData);
     model.set("hovered_node", data);
     model.save_changes();
     showTooltip(event.original, data);
@@ -2153,7 +2328,7 @@ function render({ model: host, el }) {
   renderer.on("enterEdge", ({ edge, event }) => {
     const edgeData = graph.getEdgeAttributes(edge);
     const [source, target] = graph.extremities(edge);
-    const data = { ...dataOfEdge(source, target, edgeData.label), source, target, ...edgeData };
+    const data = edgePayload(source, target, edgeData);
     model.set("hovered_edge", data);
     model.save_changes();
     showTooltip(event.original, data);
@@ -2171,6 +2346,7 @@ function render({ model: host, el }) {
     if (!container.offsetWidth || !container.offsetHeight) return;
     renderer.resize();
     sizeOverlay();
+    framePlain();
     // Lanes whose height no longer fits the canvas's shape are laid out again
     if (laneState.lanes.length && laneState.bands.length) {
       const saved = laneState.bands;
@@ -2191,7 +2367,7 @@ function render({ model: host, el }) {
     // Skip click if this was a drag
     if (justDragged) { justDragged = false; return; }
     const nodeData = graph.getNodeAttributes(node);
-    model.set("selected_node", { ...dataOfNode(node), ...nodeData, id: node });
+    model.set("selected_node", nodePayload(node, nodeData));
 
     const mode = model.get("selection_mode") || "click";
     const current = model.get("selected_nodes") || [];
@@ -2211,7 +2387,7 @@ function render({ model: host, el }) {
   renderer.on("clickEdge", ({ edge }) => {
     const edgeData = graph.getEdgeAttributes(edge);
     const [source, target] = graph.extremities(edge);
-    model.set("selected_edge", { ...dataOfEdge(source, target, edgeData.label), source, target, ...edgeData });
+    model.set("selected_edge", edgePayload(source, target, edgeData));
     model.save_changes();
   });
 
@@ -2357,7 +2533,7 @@ function render({ model: host, el }) {
   model.on("change:append_batch", () => queueSync("batch"));
   model.on("change:pulse_nodes", () => queueSync("pulse"));
   model.on("change:type_colors", () => queueSync("colors"));
-  for (const name of ["color_field", "color_scale", "color_domain", "size_field", "size_range", "edge_color_field", "edge_color_scale", "edge_size_field", "edge_size_range"]) {
+  for (const name of ["color_field", "color_scale", "color_domain", "size_field", "size_range", "edge_color_field", "edge_color_scale", "edge_size_field", "edge_size_range", "level_field"]) {
     model.on(`change:${name}`, () => queueSync("style"));
   }
 
@@ -2386,6 +2562,7 @@ function render({ model: host, el }) {
     destroyed = true;
     model.offAll();
     themeObserver.disconnect();
+    paneThemeObserver.disconnect();
     darkScheme?.removeEventListener("change", onSchemeChange);
     resizeObserver.disconnect();
     renderer.kill();

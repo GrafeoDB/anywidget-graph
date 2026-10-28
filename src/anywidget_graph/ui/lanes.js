@@ -76,6 +76,24 @@ export function fitScale(box, width, height, padding = 0) {
   return Math.min(width / spanX, height / spanY) * shrink;
 }
 
+/**
+ * The box sigma frames for a graph without lanes: the nodes' extent with room for the largest node (`largest`, its
+ * size in pixels) at every edge, so a node sized by a field is not cut at the border, `right` pixels on the right for
+ * the controls over the canvas and `top` pixels at the top (the level chips). Two passes, since the room in graph
+ * units depends on the scale it changes.
+ */
+export function roomyFrame(box, largest, width, height, padding, right, top = 0) {
+  let frame = box;
+  for (let pass = 0; pass < 2; pass++) {
+    const scale = fitScale(frame, width, height, padding);
+    if (!(scale > 0)) return box;
+    const edge = largest / scale;
+    // Sigma's y axis points up: room at the top of the screen is room above the highest y
+    frame = { x: [box.x[0] - edge, box.x[1] + edge + right / scale], y: [box.y[0] - edge, box.y[1] + edge + top / scale] };
+  }
+  return frame;
+}
+
 /** Label spacing on screen, in pixels: one label line apart in a stack, one label width apart across columns. */
 export const LABEL_ROW = 18;
 export const LABEL_COLUMN = 120;
@@ -630,7 +648,51 @@ function rgbOf(color) {
 // all but vanishes on a light one), so an opaque mix is what reads the same on both.
 const DIM_MIX = 0.65;
 export function dimColor(color, background) {
+  return mixColor(color, background, DIM_MIX);
+}
+
+/** `color` mixed `amount` (0-1) of the way towards `background`, opaque; the colour itself when either is not #hex or rgb(). */
+export function mixColor(color, background, amount) {
   const [from, to] = [rgbOf(color), rgbOf(background)];
   if (!from || !to) return color;
-  return `#${from.map((v, i) => Math.round(v + (to[i] - v) * DIM_MIX).toString(16).padStart(2, "0")).join("")}`;
+  return `#${from.map((v, i) => Math.round(v + (to[i] - v) * amount).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * A per-item `opacity` (0-1) as an opaque colour on the canvas (see dimColor for why not alpha); the colour itself
+ * for 1, a missing value or anything that is not a number.
+ */
+export function fadeColor(color, background, opacity) {
+  if (typeof opacity !== "number" || !(opacity < 1)) return color;
+  return mixColor(color, background, 1 - Math.max(0, opacity));
+}
+
+/** A per-item `dash` as a canvas line dash: true is a plain dash, "4 3" or [4, 3] the given one; null for no dash. */
+export function dashPattern(dash) {
+  if (dash === true) return [5, 4];
+  const parts = Array.isArray(dash) ? dash : typeof dash === "string" ? dash.trim().split(/[\s,]+/) : [];
+  const pattern = parts.map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+  return pattern.length && pattern.some((n) => n > 0) ? pattern : null;
+}
+
+/** Text that reads on `color`: near black on a light colour, white on a dark one (or on one it cannot read). */
+export function contrastText(color) {
+  const rgb = rgbOf(color);
+  if (!rgb) return "#ffffff";
+  const [r, g, b] = rgb;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b >= 150 ? "#111111" : "#ffffff";
+}
+
+/**
+ * How a node shows at the current visibility level: "shown" at or above it (or without a level), "dim" one level
+ * below with filtered_style "dim", "hidden" further below (or one below with "hide"). Levels are compared by their
+ * position in `levels` when they name one, else as numbers.
+ */
+export function levelState(level, current, levels = [], style = "dim") {
+  if (level === undefined || level === null || !levels.length) return "shown";
+  const ids = levels.map((entry) => entry.id);
+  const rank = (value) => (ids.includes(value) ? ids.indexOf(value) : Number(value));
+  const gap = rank(current) - rank(level);
+  if (!(gap > 0)) return "shown";
+  return gap === 1 && style === "dim" ? "dim" : "hidden";
 }

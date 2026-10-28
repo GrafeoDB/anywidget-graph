@@ -14,7 +14,6 @@ import {
   isGrafeoNode,
   isGrafeoEdge,
   isGrafeoPath,
-  nothingToDrawNote,
 } from "../../src/anywidget_graph/ui/grafeo-result.js";
 import * as embed from "../../src/anywidget_graph/ui/grafeo-embed.js";
 import * as server from "../../src/anywidget_graph/ui/grafeo.js";
@@ -228,7 +227,7 @@ test("wasm: runStatement routes GQL to execute and others to executeWithLanguage
 test("wasm: queries before connect report an error instead of throwing", async () => {
   const state = {};
   const model = { set: (k, v) => (state[k] = v), get: (k) => state[k], save_changes() {} };
-  assert.equal(embed.isConnected(), false);
+  assert.equal(embed.isConnected(model), false);
   assert.equal(await embed.executeQuery("MATCH (n) RETURN n", "gql", model), null);
   assert.match(state.query_error, /not initialized/);
 });
@@ -244,13 +243,7 @@ test("server: request body, schema URL and error messages", () => {
   assert.equal(server.errorMessage(503, ""), "Query failed with status 503");
 });
 
-test("rows without nodes, edges or paths say there is nothing to draw; a write or a graph says nothing", async () => {
-  // A Neo4j-style shape ({id, labels, properties}) is not a grafeo entity, so it draws nothing
-  const neo4jShape = [[{ id: "0", labels: ["File"], properties: { name: "a.py" } }]];
-  const graph = await grafeoRowsToGraph(neo4jShape);
-  assert.equal(graph.nodes.length, 0);
-  assert.match(nothingToDrawNote(neo4jShape, graph), /^The query returned 1 row without nodes, edges or paths/);
-  assert.match(nothingToDrawNote([[1], [2]], { nodes: [], edges: [] }), /^The query returned 2 rows /);
-  assert.equal(nothingToDrawNote([], { nodes: [], edges: [] }), "");
-  assert.equal(nothingToDrawNote([[alix]], await grafeoRowsToGraph([[alix]])), "");
+test("a Neo4j-style shape ({id, labels, properties}) is not a grafeo entity, so it draws nothing", async () => {
+  const graph = await grafeoRowsToGraph([[{ id: "0", labels: ["File"], properties: { name: "a.py" } }]]);
+  assert.deepEqual(graph, { nodes: [], edges: [] });
 });

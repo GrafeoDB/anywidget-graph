@@ -35,11 +35,37 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      # esbuild, so the tests can check that ui/dist/widget.js is built from the current sources
+      - name: Install the bundler
+        run: npm ci --prefix scripts/vendor
+
       - name: Run ruff check
         run: uv run ruff check .
 
       - name: Run ruff format check
         run: uv run ruff format --check .
 
+      # The optional drivers (neo4j, python-arango, ...) are installed, so ty checks the backends against them
+      - name: Run ty check
+        run: uv run --all-extras ty check
+
       - name: Run tests
         run: uv run pytest -v
+
+  # The front end in Chromium, mounted through a plain model as an app hosts it (tests/e2e)
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Install Chromium for Playwright
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+
+      - name: Run browser tests
+        run: uv run --with playwright pytest tests/e2e -v

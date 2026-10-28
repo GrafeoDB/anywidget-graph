@@ -9,7 +9,8 @@ import {
   sameItems, extentBand, crossNeighbours, laneIcon, removeItems, edgeMatches, applyBatchItems,
   withTotals, shownOf, totalShown, nodeType, edgeType, insetBand,
   seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
-  colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor,
+  colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, roomyFrame,
+  mixColor, fadeColor, dashPattern, contrastText, levelState,
 } from "../../src/anywidget_graph/ui/lanes.js";
 
 test("a node's neighbourhood holds the node and every node it shares an edge with, either way", () => {
@@ -499,4 +500,56 @@ test("a dimmed item is its colour mixed towards the canvas, opaque, so it reads 
   assert.equal(dimColor("#7d6be080", "#ffffff"), "#d2cbf4");
   assert.equal(dimColor("steelblue", "#ffffff"), "steelblue");
   assert.equal(dimColor("#7d6be0", "var(--x)"), "#7d6be0");
+});
+
+test("a graph without lanes is framed with room for its largest node and for the controls on the right", () => {
+  const box = { x: [0, 100], y: [0, 100] };
+  const frame = roomyFrame(box, 30, 800, 400, 30, 120);
+  // Every node centre, drawn with its largest radius, stays inside the canvas and left of the controls
+  const place = fitBox(frame, 800, 400, 30);
+  for (const corner of [{ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 100, y: 0 }, { x: 0, y: 100 }]) {
+    const p = place(corner);
+    assert.ok(p.x - 30 >= 0 && p.y - 30 >= 0 && p.y + 30 <= 400, `inside: ${JSON.stringify(p)}`);
+    assert.ok(p.x + 30 <= 800 - 120 + 1, `left of the controls: ${p.x}`);
+  }
+  assert.deepEqual(roomyFrame(box, 0, 0, 0, 30, 120), box, "no size yet: the box as it is");
+  // Room at the top (the level chips): no node centre comes within that many pixels of the top
+  const below = fitBox(roomyFrame(box, 10, 800, 400, 30, 120, 40), 800, 400, 30);
+  assert.ok(below({ x: 50, y: 100 }).y - 10 >= 40);
+});
+
+test("a per-item opacity mixes the colour towards the canvas; 1, missing or not a number keeps it", () => {
+  assert.equal(fadeColor("#ff0000", "#ffffff", 0.5), mixColor("#ff0000", "#ffffff", 0.5));
+  assert.equal(fadeColor("#ff0000", "#000000", 0), "#000000");
+  for (const opacity of [1, undefined, "0.5", null]) assert.equal(fadeColor("#ff0000", "#ffffff", opacity), "#ff0000");
+  assert.equal(mixColor("#000000", "#ffffff", 0.5), "#808080");
+  assert.equal(dimColor("#000000", "#ffffff"), mixColor("#000000", "#ffffff", 0.65));
+});
+
+test("a per-item dash: true, \"4 3\", [4, 3]; anything else draws a plain line", () => {
+  assert.deepEqual(dashPattern(true), [5, 4]);
+  assert.deepEqual(dashPattern("4 3"), [4, 3]);
+  assert.deepEqual(dashPattern("4,3"), [4, 3]);
+  assert.deepEqual(dashPattern([2, 2]), [2, 2]);
+  for (const dash of [false, undefined, "", "solid", [0, 0], 4]) assert.equal(dashPattern(dash), null);
+});
+
+test("badge text reads on its fill", () => {
+  assert.equal(contrastText("#ffffff"), "#111111");
+  assert.equal(contrastText("#e3a33b"), "#111111");
+  assert.equal(contrastText("#1d4ed8"), "#ffffff");
+  assert.equal(contrastText("tomato"), "#ffffff");
+});
+
+test("visibility levels: at or above the current level shows, one below dims (or hides), further below hides", () => {
+  const levels = [{ id: 0, label: "All" }, { id: 1, label: "Inputs" }, { id: 2, label: "Filtered" }, { id: 3, label: "Used" }];
+  const at = (level, style) => levelState(level, 2, levels, style);
+  assert.deepEqual([0, 1, 2, 3].map((level) => at(level)), ["hidden", "dim", "shown", "shown"]);
+  assert.deepEqual([0, 1, 2, 3].map((level) => at(level, "hide")), ["hidden", "hidden", "shown", "shown"]);
+  assert.equal(at(undefined), "shown", "a node without a level always shows (another lane)");
+  assert.equal(levelState(0, 3, []), "shown", "no levels: everything shows");
+  // Level ids that are names rank by their place in the list
+  const named = [{ id: "all" }, { id: "inputs" }, { id: "used" }];
+  assert.equal(levelState("all", "used", named), "hidden");
+  assert.equal(levelState("inputs", "used", named), "dim");
 });

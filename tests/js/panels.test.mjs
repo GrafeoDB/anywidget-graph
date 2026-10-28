@@ -13,6 +13,7 @@ class FakeElement {
     this.children = [];
     this.title = "";
     this.classList = { add() {}, remove() {}, toggle() {}, contains: () => false };
+    this.style = {};
   }
   appendChild(child) {
     this.children.push(child);
@@ -21,7 +22,12 @@ class FakeElement {
   append(...nodes) {
     nodes.forEach((n) => this.appendChild(typeof n === "string" ? new FakeText(n) : n));
   }
-  addEventListener() {}
+  addEventListener(type, listener) {
+    (this.listeners ??= {})[type] = [...(this.listeners?.[type] || []), listener];
+  }
+  click() {
+    (this.listeners?.click || []).forEach((listener) => listener({ preventDefault() {}, stopPropagation() {} }));
+  }
   set innerHTML(html) {
     htmlWrites.push(html);
     this.children = [];
@@ -49,7 +55,7 @@ globalThis.document = {
 };
 
 const { renderNodeProperties, renderEdgeProperties } = await import("../../src/anywidget_graph/ui/properties.js");
-const { createFilterItem } = await import("../../src/anywidget_graph/ui/schema.js");
+const { createFilterItem, createSchemaPanel, FILTER_PAGE } = await import("../../src/anywidget_graph/ui/schema.js");
 
 const HOSTILE = {
   id: "<img src=x onerror=alert(1)>",
@@ -90,4 +96,18 @@ test("a filter item shows hostile type and property names as text", () => {
     onToggle() {}, onColorChange() {}, onQuery() {},
   });
   assertShownAsText(item, [HOSTILE.label, HOSTILE.name, HOSTILE.path]);
+});
+
+test("a large schema shows its first types per section, and \"Show more\" shows the rest", () => {
+  const nodes = Array.from({ length: FILTER_PAGE + 30 }, (_, i) => ({ id: `n${i}`, labels: [`Type${i}`] }));
+  const values = { nodes, edges: [], schema_node_types: [], schema_edge_types: [], type_colors: {}, totals: {} };
+  const model = { get: (k) => values[k], set: (k, v) => { values[k] = v; }, on() {}, save_changes() {} };
+  const panel = createSchemaPanel(model, () => {}, null, () => {}, () => {}, () => {});
+  const items = () => panel.element.descendants().filter((el) => el.className.split(" ")[0] === "awg-schema-item");
+  const more = () => panel.element.descendants().find((el) => el.className === "awg-filter-more");
+  assert.equal(items().length, FILTER_PAGE);
+  assert.equal(more().textContent, "Show 30 more");
+  more().click();
+  assert.equal(items().length, FILTER_PAGE + 30);
+  assert.equal(more(), undefined);
 });

@@ -2,21 +2,29 @@
  * Grafeo WASM browser-side client (embed mode).
  * Lazy-loads @grafeo-db/wasm from the jsDelivr CDN on first use.
  */
-import { grafeoRowsToGraph, grafeoSchemaToTypes, nothingToDrawNote } from "./grafeo-result.js";
+import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
 
 // The only place the browser engine version is set. Keep it exact and in
 // lockstep with the `grafeo` Python extra in pyproject.toml.
 export const GRAFEO_WASM_VERSION = "0.6.0";
 export const GRAFEO_WASM_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}`;
 
-let wasmDb = null;
+// Each widget's in-browser database, keyed by its host model: every view of a widget shares it, and two widgets on a
+// page each have their own (the engine itself is loaded once per page, see loadWasmBindings)
+const wasmDatabases = new WeakMap();
+
+function databaseOf(model) {
+  return wasmDatabases.get(model.host ?? model) ?? null;
+}
+
 // The statement lists each database has loaded (see loadStatements)
 const loadedStatements = new WeakMap();
 
 // The loaded bindings live on the page, not in this module: a page can hold two copies of the widget's module (a
-// notebook that reconnects to a restarted kernel, a cell run again), and they share the one glue module the browser
-// caches for the CDN URL. A second instantiation would swap the glue's binary under the first copy's database.
-const WASM_BINDINGS_KEY = Symbol.for(`anywidget-graph.grafeo-wasm@${GRAFEO_WASM_VERSION}`);
+// notebook that reconnects to a restarted kernel, a cell run again) or another widget on the same engine
+// (anywidget-vector), and they all share the one glue module the browser caches for its URL. A second instantiation
+// would swap the glue's binary under the first one's databases, so the key is the glue's URL, as anywidget-vector's.
+const WASM_BINDINGS_KEY = Symbol.for(`grafeo-wasm:${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`);
 
 /**
  * Load the wasm-bindgen bindings once per page.
@@ -64,9 +72,9 @@ export async function connect(model) {
   model.save_changes();
 
   try {
-    if (!wasmDb) {
+    if (!databaseOf(model)) {
       const bindings = await loadWasmBindings();
-      wasmDb = new bindings.Database();
+      wasmDatabases.set(model.host ?? model, new bindings.Database());
     }
 
     model.set("connection_status", "connected");
@@ -87,14 +95,15 @@ export async function connect(model) {
  * Close and disconnect the WASM database.
  */
 export async function disconnect(model) {
-  if (wasmDb) {
+  const db = databaseOf(model);
+  if (db) {
     try {
-      wasmDb.close();
-      wasmDb.free();
+      db.close();
+      db.free();
     } catch (_) {
       // ignore close errors
     }
-    wasmDb = null;
+    wasmDatabases.delete(model.host ?? model);
   }
   model.set("connection_status", "disconnected");
   model.save_changes();
@@ -103,8 +112,8 @@ export async function disconnect(model) {
 /**
  * Check if connected.
  */
-export function isConnected() {
-  return wasmDb !== null;
+export function isConnected(model) {
+  return databaseOf(model) !== null;
 }
 
 /**
@@ -121,7 +130,8 @@ export function runStatement(db, query, language) {
  * Execute a query against the WASM database.
  */
 export async function executeQuery(query, language, model) {
-  if (!wasmDb) {
+  const db = databaseOf(model);
+  if (!db) {
     model.set("query_error", "WASM database not initialized");
     model.save_changes();
     return null;
@@ -132,13 +142,11 @@ export async function executeQuery(query, language, model) {
   model.save_changes();
 
   try {
-    const db = wasmDb;
-    const rows = runStatement(db, query, language);
+    const rows = runStatement(db, query, language) || [];
     const result = await grafeoRowsToGraph(rows, (lookup) => db.execute(lookup));
     model.set("query_running", false);
-    model.set("query_error", nothingToDrawNote(rows, result));
     model.save_changes();
-    return result;
+    return { ...result, rows: rows.length };
   } catch (error) {
     model.set("query_running", false);
     model.set("query_error", "Query error: " + error.message);
@@ -153,13 +161,14 @@ export async function executeQuery(query, language, model) {
  * Returns the number of statements that failed.
  */
 export async function loadStatements(statements, model) {
-  if (!wasmDb) return statements.length;
+  const db = databaseOf(model);
+  if (!db) return statements.length;
 
   // The same statements go into a database once: a widget drawn again (a second view of it, a notebook that
-  // reconnects) shares the page's database and would otherwise load its data twice
+  // reconnects) shares its database and would otherwise load its data twice
   const key = JSON.stringify(statements);
-  const loaded = loadedStatements.get(wasmDb) || new Set();
-  loadedStatements.set(wasmDb, loaded);
+  const loaded = loadedStatements.get(db) || new Set();
+  loadedStatements.set(db, loaded);
   if (loaded.has(key)) {
     await fetchSchema(model);
     return 0;
@@ -171,7 +180,7 @@ export async function loadStatements(statements, model) {
     const text = stmt.trim().replace(/;$/, "");
     if (!text) continue;
     try {
-      runStatement(wasmDb, text, "gql");
+      runStatement(db, text, "gql");
     } catch (err) {
       failed += 1;
       console.warn("Grafeo WASM statement failed:", text, err);
@@ -185,10 +194,11 @@ export async function loadStatements(statements, model) {
  * Fetch schema from the WASM database.
  */
 export async function fetchSchema(model) {
-  if (!wasmDb) return;
+  const db = databaseOf(model);
+  if (!db) return;
 
   try {
-    const { nodeTypes, edgeTypes } = grafeoSchemaToTypes(wasmDb.schema());
+    const { nodeTypes, edgeTypes } = grafeoSchemaToTypes(db.schema());
     model.set("schema_node_types", nodeTypes);
     model.set("schema_edge_types", edgeTypes);
     model.save_changes();

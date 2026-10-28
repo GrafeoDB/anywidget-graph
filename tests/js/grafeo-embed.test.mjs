@@ -19,7 +19,8 @@ class FakeDatabase {
     return { nodeTypes: [], edgeTypes: [] };
   }
 }
-globalThis[Symbol.for(`anywidget-graph.grafeo-wasm@${embed.GRAFEO_WASM_VERSION}`)] = Promise.resolve({ Database: FakeDatabase });
+// The page-wide key anywidget-vector uses too: the glue module's URL
+globalThis[Symbol.for(`grafeo-wasm:${embed.GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`)] = Promise.resolve({ Database: FakeDatabase });
 
 function fakeModel() {
   const values = {};
@@ -32,14 +33,31 @@ test("every copy of the module on a page uses the one loaded engine", async () =
   assert.equal(model.values.connection_status, "connected");
   // A second copy of the module (a notebook that reconnected, a cell run again) finds the same bindings
   const copy = await import("../../src/anywidget_graph/ui/grafeo-embed.js?copy=2");
+  const before = created.length;
   assert.equal(await copy.connect(fakeModel()), true);
-  assert.equal(created.length, 2, "each copy opens its own database on the shared engine");
+  assert.equal(created.length, before + 1, "the copy opens a database on the shared engine");
+});
+
+test("each widget has its own database, and every view of a widget shares it", async () => {
+  const host = fakeModel();
+  const view = { ...fakeModel(), host };
+  const other = fakeModel();
+  const before = created.length;
+  await embed.connect(host);
+  await embed.connect(view);
+  await embed.connect(other);
+  assert.equal(created.length, before + 2, "the widget's two views share one database");
+  assert.equal(embed.isConnected(view), true);
+  assert.equal(embed.isConnected(fakeModel()), false);
+  await embed.disconnect(other);
+  assert.equal(embed.isConnected(other), false);
+  assert.equal(embed.isConnected(host), true, "closing one widget's database leaves the others");
 });
 
 test("the same statements load into a database once, however often a widget is drawn", async () => {
   const model = fakeModel();
   await embed.connect(model);
-  const db = created[0];
+  const db = created.at(-1);
   const before = db.ran.length;
   const statements = ["CREATE (:Movie {id: 'm1'});", "CREATE (:Person {id: 'p1'})", ""];
   assert.equal(await embed.loadStatements(statements, model), 0);
@@ -50,11 +68,10 @@ test("the same statements load into a database once, however often a widget is d
   assert.equal(db.ran.at(-1), "CREATE (:Movie {id: 'm2'})");
 });
 
-test("a query whose rows hold nothing to draw says so; a write says nothing", async () => {
+test("a query reports its row count, so the widget can tell a write from rows with nothing to draw", async () => {
   const model = fakeModel();
   await embed.connect(model);
-  assert.deepEqual(await embed.executeQuery("RETURN 1 AS x", "gql", model), { nodes: [], edges: [] });
-  assert.match(model.values.query_error, /nothing to draw/);
-  await embed.executeQuery("INSERT (:Movie)", "gql", model);
+  assert.deepEqual(await embed.executeQuery("RETURN 1 AS x", "gql", model), { nodes: [], edges: [], rows: 1 });
+  assert.deepEqual(await embed.executeQuery("INSERT (:Movie)", "gql", model), { nodes: [], edges: [], rows: 0 });
   assert.equal(model.values.query_error, "");
 });

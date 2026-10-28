@@ -154,13 +154,15 @@ class ArangoBackend:
             )
         return self._db
 
-    def execute(self, query: str) -> tuple[list[dict], list[dict]]:
+    def execute(self, query: str, *, language: str = "aql") -> tuple[list[dict], list[dict]]:
         """Execute AQL query and return (nodes, edges).
 
         Parameters
         ----------
         query : str
             AQL query to execute.
+        language : str
+            Accepted for the widget's call; this backend always runs AQL.
 
         Returns
         -------
@@ -182,7 +184,11 @@ class ArangoBackend:
         node_types: list[dict[str, Any]] = []
         edge_types: list[dict[str, Any]] = []
 
-        for coll in self.db.collections():
+        # A StandardDatabase answers with the list itself (async and batch databases answer with a job)
+        collections = self.db.collections()
+        if not isinstance(collections, list):
+            return node_types, edge_types
+        for coll in collections:
             if coll["system"]:
                 continue
 

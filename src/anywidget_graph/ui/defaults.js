@@ -6,6 +6,7 @@ export const TRAIT_DEFAULTS = {
   "_execute_query": 0,
   "_expand_request": {},
   "_features": [],
+  "_theme_explicit": false,
   "append_animation": "draw",
   "append_batch": {},
   "append_stagger_ms": 60,
@@ -18,6 +19,7 @@ export const TRAIT_DEFAULTS = {
   "connection_status": "disconnected",
   "connection_uri": "",
   "connection_username": "",
+  "current_level": 0,
   "dark_mode": true,
   "database_backend": "grafeo",
   "edge_arrows": false,
@@ -30,6 +32,7 @@ export const TRAIT_DEFAULTS = {
   ],
   "edges": [],
   "fill": false,
+  "filtered_style": "dim",
   "grafeo_connection_mode": "embedded",
   "grafeo_server_url": "http://localhost:7474",
   "height": 600,
@@ -39,6 +42,8 @@ export const TRAIT_DEFAULTS = {
   "lane_action": {},
   "lanes": [],
   "layout": "spring",
+  "level_field": "level",
+  "levels": [],
   "max_nodes": 300,
   "nodes": [],
   "pinned_nodes": {},
@@ -46,6 +51,7 @@ export const TRAIT_DEFAULTS = {
   "query": "",
   "query_error": "",
   "query_language": "cypher",
+  "query_note": "",
   "query_running": false,
   "query_time": 0.0,
   "schema_edge_types": [],
@@ -100,5 +106,74 @@ export function withDefaults(host) {
     },
     save_changes: (...args) => host.save_changes(...args),
     send: (...args) => host.send(...args),
+    // The widget behind this view: state shared by all its views (a connection, the newest query) is kept per host
+    host,
   };
+}
+
+/**
+ * Whether the page around `el` is dark. The nearest ancestor with data-theme="dark" or "light" decides (a host's
+ * pane can differ from its page); then a `dark` or `dark-theme` class or data-theme="dark" on <html> or <body>; then
+ * the system setting. Other data-theme values ("system", "auto") pass the question on.
+ */
+export function detectDark(el, matchMedia = globalThis.matchMedia) {
+  for (let node = el; node; node = node.parentElement) {
+    const theme = node.dataset?.theme;
+    if (theme === "dark") return true;
+    if (theme === "light") return false;
+  }
+  const doc = el?.ownerDocument ?? globalThis.document;
+  for (const node of [doc?.documentElement, doc?.body]) {
+    if (node?.classList?.contains("dark") || node?.classList?.contains("dark-theme")) return true;
+  }
+  return Boolean(matchMedia?.("(prefers-color-scheme: dark)").matches);
+}
+
+// Theme writes running now, counted on the page (the key anywidget-archimate and anywidget-vector use too). A write
+// is synchronous and model.set fires every view's listeners inside it, so a change seen while the count is above 0
+// is a widget following the page, not a choice: whatever model object (anywidget hands each view a proxy) or copy
+// of this module (a cell run again) the view has
+const THEME_WRITES = Symbol.for("anywidget.theme-writes");
+
+/**
+ * Following the page's light or dark theme, the same way anywidget-archimate and anywidget-vector do.
+ *
+ * Until dark_mode is a choice (`_theme_explicit`), `sync()` sets it to the page's theme: call it on render and
+ * whenever the page's theme may have changed. Any other change of dark_mode is a choice (Python after display, the
+ * settings switch): `onChange`, listening to change:dark_mode, stores that in `_theme_explicit`, so this view and
+ * later ones keep it. The model fires change events while `set` runs, which is how onChange tells the two apart
+ * (THEME_WRITES, counted on the page).
+ */
+export function followHostTheme(model, detectDark) {
+  function sync() {
+    if (model.get("_theme_explicit")) return;
+    const dark = detectDark();
+    if (model.get("dark_mode") === dark) return;
+    globalThis[THEME_WRITES] = (globalThis[THEME_WRITES] ?? 0) + 1;
+    try {
+      model.set("dark_mode", dark);
+      model.save_changes();
+    } finally {
+      globalThis[THEME_WRITES] -= 1;
+    }
+  }
+  function onChange() {
+    if ((globalThis[THEME_WRITES] ?? 0) > 0 || model.get("_theme_explicit")) return;
+    model.set("_theme_explicit", true);
+    model.save_changes();
+  }
+  return { sync, onChange };
+}
+
+/**
+ * What a finished query tells the viewer besides its result (query_note). A result without nodes or edges leaves the
+ * drawing as it is (a write, nothing matched, or rows of plain values), and the note says why; "" when the result is
+ * drawn. `rowCount` is undefined when the backend does not report it.
+ */
+export function queryResultNote(rowCount, graph) {
+  if (graph.nodes.length > 0 || graph.edges.length > 0) return "";
+  if (rowCount === 0) return "The query returned no rows, so the drawing is unchanged.";
+  if (!rowCount) return "The query returned nothing to draw, so the drawing is unchanged.";
+  const what = rowCount === 1 ? "1 row" : `${rowCount} rows`;
+  return `The query returned ${what} without nodes, edges or paths, so the drawing is unchanged. Return graph elements (for example RETURN n, r, m) to draw them.`;
 }

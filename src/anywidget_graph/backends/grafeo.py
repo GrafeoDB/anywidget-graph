@@ -73,6 +73,8 @@ class GrafeoBackend:
     def __init__(self, db: Any) -> None:
         """Initialize with a GrafeoDB instance."""
         self._db = db
+        # Rows of the last query, so the widget can tell a write (no rows) from rows with nothing to draw
+        self.last_row_count: int | None = None
 
     @property
     def db(self) -> Any:
@@ -121,6 +123,7 @@ class GrafeoBackend:
         acc = _GraphAccumulator()
 
         records = list(result) if hasattr(result, "__iter__") else [result]
+        self.last_row_count = len(records)
         for record in records:
             for _key, value in self._extract_items(record):
                 self._add_top_level(acc, value)

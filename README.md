@@ -27,6 +27,8 @@ uv add "anywidget-graph[networkx]"   # NetworkX support
 uv add "anywidget-graph[pandas]"     # pandas support
 uv add "anywidget-graph[grafeo]"     # Grafeo backend (grafeo 0.6)
 uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
+uv add "anywidget-graph[neo4j]"      # Neo4j Python driver (Neo4jBackend)
+uv add "anywidget-graph[arango]"     # ArangoDB (ArangoBackend)
 uv add "anywidget-graph[examples]"   # marimo, to run the apps in examples/
 ```
 
@@ -250,6 +252,47 @@ graph.edge_size_field = "weight"
 graph.edge_size_range = [1, 8]
 ```
 
+### Per-item style
+
+A node or edge can carry its own style; each field is optional and wins over the field mappings above. Changing them on items with the same ids restyles in place, without a new layout.
+
+```python
+nodes = [
+    {"id": "a", "opacity": 0.45, "badge": "2/3"},  # faded, with a small badge
+    {"id": "b", "ring": "#e3a33b", "ring_width": 3},  # a ring around the node
+    {"id": "c", "dash": True},  # a dashed outline
+]
+edges = [
+    {"source": "a", "target": "b", "dash": "4 3", "width": 1},  # dashed, 1 px
+    {"source": "b", "target": "c", "width": 3, "opacity": 0.5, "color": "#888"},
+]
+```
+
+- Node: `opacity` (0 to 1), `ring` (a colour), `ring_width` (px, default 2), `badge` (short text), `badge_color`, `dash` (`True`, `"4 3"` or `[4, 3]`).
+- Edge: `opacity`, `width` (px), `dash`, `color`.
+- Opacity mixes the colour towards the canvas (the renderer draws colours opaque), so it reads the same on a light and a dark canvas. A pinned node shows an amber ring.
+
+### Visibility levels
+
+Show a large graph one level of detail at a time. Each node holds the highest level it survives in `level_field`; the widget shows nodes at or above `current_level`, with chips over the canvas that show each level's count and switch the level. Nodes without a level always show (so levels can apply to one lane), and switching levels moves nothing.
+
+```python
+graph = Graph(
+    nodes=nodes,  # each with "level": 0..3
+    edges=edges,
+    levels=[
+        {"id": 0, "label": "All", "count": 5230},
+        {"id": 1, "label": "Derivation inputs", "count": 1031},
+        {"id": 2, "label": "After filters", "count": 412},
+        {"id": 3, "label": "Sources used", "count": 98},
+    ],
+    current_level=2,
+    filtered_style="dim",  # the level just below is dimmed; "hide" hides it
+)
+```
+
+The counts come from the host (the whole graph need not be loaded); edges to a hidden node are hidden.
+
 ### Layouts
 
 ```python
@@ -276,7 +319,7 @@ graph = Graph(
     show_toolbar=True,  # Toolbar visibility
     show_settings=True,  # Settings panel
     show_query_input=True,  # Query input box
-    dark_mode=True,  # Dark theme
+    dark_mode=None,  # None follows the page's light or dark theme; True or False keeps that theme
     show_tooltip=True,  # Hover tooltips
     tooltip_fields=["label", "id"],
     max_nodes=300,  # Limit for node expansion
@@ -359,10 +402,11 @@ New behaviour is opt-in and off by default: an update does not change a view tha
 
 An app can mount the bundled front end (`anywidget_graph.ui.get_esm()` and `get_css()`) with any model object that has `get`, `set`, `on`, `off`, `save_changes` and `send`, as anywidget's model does.
 
-- The host sets `nodes`, `edges`, `lanes`, `append_batch`, `pulse_nodes`, `theme`, `type_colors`, `totals`, `dark_mode`, and the size (`width` and `height`, or `fill`).
+- The host sets `nodes`, `edges`, `lanes`, `append_batch`, `pulse_nodes`, `theme`, `type_colors`, `totals`, `dark_mode` (with `_theme_explicit: true` to keep it; without, the widget follows the page's light or dark theme and reports it in `dark_mode`), and the size (`width` and `height`, or `fill`).
 - The widget sets `selected_node`, `selected_nodes`, `selected_edge`, `hovered_node`, `lane_action` and `_features`. `selected_node`, `hovered_node` and `selected_edge` hold the item's own fields plus how it is drawn (`label` as displayed, `x`, `y`, `size`, `color`). After an `append_batch` it writes the merged `nodes` and `edges` back, unless they already hold the batch (as `Graph.append()` sends them).
 - A setting the host leaves out reads as the widget's default, the same as a fresh Python `Graph()` has it.
 - The widget sends no query when it mounts: the first view is the host's.
+- A query's error is in `query_error`; `query_note` holds what a finished query tells besides its result (a result without nodes or edges keeps the drawing and the note says why; a cut at `max_nodes`). In the browser-side modes the first query connects with the configured settings, and each widget keeps its own connection (two widgets on a page can use two servers).
 - In server mode the widget connects to `grafeo_server_url` on its first query (or Connect) and expects grafeo-server's responses: `GET /health`, `GET /db/{connection_database}/schema`, and `POST /query` (body `{"query", "language", "database"}`, `database` left out for `default`) answering `{"columns": [...], "rows": [[value, ...], ...]}`, where a node is `{"_id", "_labels", ...properties}` and an edge `{"_id", "_type", "_source", "_target", ...properties}` (properties flat on the entity). A host that serves these endpoints itself sends the same shapes.
 
 ## Export
@@ -384,6 +428,28 @@ graph.save_html("graph.html")  # Write HTML to file
 | VS Code | Yes |
 | Google Colab | Yes |
 | Databricks | Yes |
+
+## Development
+
+```bash
+uv sync --all-extras --all-groups
+uv run pytest                      # Python tests, and the Node tests in tests/js
+```
+
+The front end is written as ES modules in `src/anywidget_graph/ui/`; the widget loads them bundled into `ui/dist/widget.js`. After editing them, rebuild the bundle (CI fails on a stale one):
+
+```bash
+cd scripts/vendor
+npm ci
+npm run build:esm                  # npm run check:esm only checks
+```
+
+Browser tests (Playwright and Chromium) run the bundle in a real page:
+
+```bash
+uv run --with playwright python -m playwright install chromium
+uv run --with playwright pytest tests/e2e
+```
 
 ## Related
 

@@ -9,6 +9,9 @@ import { fetchSchema as grafeoFetchSchema } from "./grafeo.js";
 import { fetchSchema as grafeoEmbedFetchSchema } from "./grafeo-embed.js";
 import { withTotals, shownOf, nodeType, edgeType } from "./lanes.js";
 
+// Types a filter section shows before "Show more"
+export const FILTER_PAGE = 50;
+
 const FILTER_COLORS = [
   "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
   "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
@@ -65,6 +68,8 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 
   // Filter state
   const hiddenNodeTypes = new Set();
+  // Sections show their first FILTER_PAGE types; "Show more" lifts the cap for that section from then on
+  const showAllTypes = { node: false, edge: false };
   const hiddenEdgeTypes = new Set();
 
   // Custom color overrides per type
@@ -112,6 +117,23 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 
   function emitColorChange() {
     onColorChange?.(typeColorMap);
+  }
+
+  // A large schema draws its first FILTER_PAGE types per section, so the panel stays quick to build and scroll
+  function pageOf(types, kind) {
+    return showAllTypes[kind] ? types : types.slice(0, FILTER_PAGE);
+  }
+
+  function appendShowMore(section, total, kind) {
+    if (showAllTypes[kind] || total <= FILTER_PAGE) return;
+    const more = document.createElement("button");
+    more.className = "awg-filter-more";
+    more.textContent = `Show ${total - FILTER_PAGE} more`;
+    more.addEventListener("click", () => {
+      showAllTypes[kind] = true;
+      renderFilters();
+    });
+    section.appendChild(more);
   }
 
   function renderFilters() {
@@ -204,7 +226,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 
       section.appendChild(sectionHeader);
 
-      nodeTypes.forEach(({ label, count, total }) => {
+      pageOf(nodeTypes, "node").forEach(({ label, count, total }) => {
         const props = nodePropsMap.get(label) || [];
         const item = createFilterItem({
           name: label,
@@ -227,6 +249,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
         });
         section.appendChild(item);
       });
+      appendShowMore(section, nodeTypes.length, "node");
 
       content.appendChild(section);
     }
@@ -269,7 +292,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
 
       section.appendChild(sectionHeader);
 
-      edgeTypes.forEach(({ type, count, total }) => {
+      pageOf(edgeTypes, "edge").forEach(({ type, count, total }) => {
         const props = edgePropsMap.get(type) || [];
         const item = createFilterItem({
           name: type,
@@ -292,6 +315,7 @@ export function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChan
         });
         section.appendChild(item);
       });
+      appendShowMore(section, edgeTypes.length, "edge");
 
       content.appendChild(section);
     }

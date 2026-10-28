@@ -4,8 +4,13 @@
 // The driver loads when a Neo4j connection is made, so the widget itself needs no CDN
 const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.3/lib/browser/neo4j-web.esm.min.js";
 
-let driver = null;
 let neo4j = null;
+// Each widget's driver, keyed by its host model: every view of a widget shares it, two widgets connect on their own
+const neo4jDrivers = new WeakMap();
+
+function driverOf(model) {
+  return neo4jDrivers.get(model.host ?? model) ?? null;
+}
 
 async function loadDriver() {
   if (!neo4j) neo4j = (await import(NEO4J_DRIVER_URL)).default;
@@ -16,9 +21,10 @@ async function loadDriver() {
  * Connect to a Neo4j database.
  */
 export async function connect(uri, username, password, model) {
-  if (driver) {
-    await driver.close();
-    driver = null;
+  const previous = driverOf(model);
+  if (previous) {
+    neo4jDrivers.delete(model.host ?? model);
+    await previous.close();
   }
 
   model.set("connection_status", "connecting");
@@ -26,7 +32,8 @@ export async function connect(uri, username, password, model) {
 
   try {
     const neo4j = await loadDriver();
-    driver = neo4j.driver(uri, neo4j.auth.basic(username, password));
+    const driver = neo4j.driver(uri, neo4j.auth.basic(username, password));
+    neo4jDrivers.set(model.host ?? model, driver);
     await driver.verifyConnectivity();
     model.set("connection_status", "connected");
     model.set("query_error", "");
@@ -38,7 +45,7 @@ export async function connect(uri, username, password, model) {
     model.set("connection_status", "error");
     model.set("query_error", "Connection failed: " + error.message);
     model.save_changes();
-    driver = null;
+    neo4jDrivers.delete(model.host ?? model);
     return false;
   }
 }
@@ -47,9 +54,10 @@ export async function connect(uri, username, password, model) {
  * Disconnect from Neo4j database.
  */
 export async function disconnect(model) {
+  const driver = driverOf(model);
   if (driver) {
+    neo4jDrivers.delete(model.host ?? model);
     await driver.close();
-    driver = null;
   }
   model.set("connection_status", "disconnected");
   model.save_changes();
@@ -58,14 +66,15 @@ export async function disconnect(model) {
 /**
  * Check if connected to Neo4j.
  */
-export function isConnected() {
-  return driver !== null;
+export function isConnected(model) {
+  return driverOf(model) !== null;
 }
 
 /**
  * Fetch database schema (labels and relationship types).
  */
 export async function fetchSchema(model) {
+  const driver = driverOf(model);
   if (!driver) return;
 
   const database = model.get("connection_database") || "neo4j";
@@ -112,6 +121,7 @@ export async function fetchSchema(model) {
  * Execute a Cypher query.
  */
 export async function executeQuery(query, database, model) {
+  const driver = driverOf(model);
   if (!driver) {
     model.set("query_error", "Not connected to database");
     model.save_changes();
@@ -128,7 +138,7 @@ export async function executeQuery(query, database, model) {
     const result = await session.run(query);
     model.set("query_running", false);
     model.save_changes();
-    return processRecords(result.records);
+    return { ...processRecords(result.records), rows: result.records.length };
   } catch (error) {
     model.set("query_running", false);
     model.set("query_error", "Query error: " + error.message);

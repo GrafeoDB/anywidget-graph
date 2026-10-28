@@ -20,7 +20,7 @@ __pycache__/
 *.so
 *.egg-info/
 *.egg
-dist/
+/dist/
 build/
 .eggs/
 .venv/

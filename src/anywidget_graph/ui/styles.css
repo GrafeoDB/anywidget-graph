@@ -101,6 +101,13 @@
   overflow-wrap: anywhere;
 }
 
+/* A note (nothing to draw, a cut at max_nodes): the same place, in the panel's quiet colours */
+.awg-query-error.awg-query-note {
+  border-color: var(--awg-border);
+  border-left-color: var(--awg-accent);
+  color: var(--awg-text-secondary);
+}
+
 .awg-query-error > span {
   flex: 1;
   padding-top: 2px;
@@ -302,6 +309,47 @@
 }
 
 /* === ZOOM CONTROLS === */
+/* Visibility level chips over the top left of the canvas */
+.awg-level-chips {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: calc(100% - 140px);
+}
+
+.awg-level-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--awg-border);
+  border-radius: 12px;
+  background: var(--awg-bg);
+  color: var(--awg-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.awg-level-chip:hover {
+  border-color: var(--awg-accent);
+  color: var(--awg-text);
+}
+
+.awg-level-chip-active {
+  border-color: var(--awg-accent);
+  background: var(--awg-accent);
+  color: #ffffff;
+}
+
+.awg-level-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
 .awg-zoom-controls {
   position: absolute;
   bottom: 40px;
@@ -739,6 +787,24 @@
 .awg-filter-hidden .awg-filter-swatch,
 .awg-filter-hidden .awg-filter-count {
   opacity: 0.4;
+}
+
+.awg-filter-more {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 1px dashed var(--awg-border);
+  border-radius: 4px;
+  background: none;
+  color: var(--awg-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.awg-filter-more:hover {
+  color: var(--awg-text);
+  border-color: var(--awg-accent);
 }
 
 .awg-filter-toggle-links {

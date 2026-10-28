@@ -45,13 +45,15 @@ class LadybugBackend:
         """Get the underlying database instance."""
         return self._db
 
-    def execute(self, query: str) -> tuple[list[dict], list[dict]]:
+    def execute(self, query: str, *, language: str = "cypher") -> tuple[list[dict], list[dict]]:
         """Execute Cypher query and return (nodes, edges).
 
         Parameters
         ----------
         query : str
             Cypher query to execute.
+        language : str
+            Accepted for the widget's call; this backend always runs Cypher.
 
         Returns
         -------

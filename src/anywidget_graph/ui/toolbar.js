@@ -56,10 +56,10 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
     queryContainer.appendChild(queryInput);
 
     // A failed query says why under the toolbar (its full width, so a narrow pane cannot clip it), without opening the
-    // settings panel, which shows it too
+    // settings panel, which shows errors too; a note (query_note: nothing to draw, a cut at max_nodes) shows there in
+    // a quieter style when there is no error
     const queryError = document.createElement("div");
     queryError.className = "awg-query-error";
-    queryError.setAttribute("role", "alert");
     const queryErrorText = document.createElement("span");
     const queryErrorClose = document.createElement("button");
     queryErrorClose.className = "awg-btn awg-btn-icon awg-btn-sm";
@@ -69,11 +69,15 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
     queryError.append(queryErrorText, queryErrorClose);
     function updateQueryError() {
       const err = model.get("query_error");
-      queryErrorText.textContent = err || "";
-      queryError.style.display = err ? "flex" : "none";
+      const message = err || model.get("query_note");
+      queryErrorText.textContent = message || "";
+      queryError.style.display = message ? "flex" : "none";
+      queryError.classList.toggle("awg-query-note", !err && Boolean(message));
+      queryError.setAttribute("role", err ? "alert" : "status");
       queryInput.classList.toggle("awg-query-input-error", Boolean(err));
     }
     model.on("change:query_error", updateQueryError);
+    model.on("change:query_note", updateQueryError);
     updateQueryError();
     toolbar.appendChild(queryError);
 

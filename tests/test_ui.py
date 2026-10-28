@@ -20,13 +20,7 @@ from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 from anywidget_graph.backends.grafeo import GrafeoBackend
-from anywidget_graph.ui import (
-    _declared_functions,
-    _prefix_functions,
-    _resolve_namespaces,
-    _strip_imports_exports,
-    get_esm,
-)
+from anywidget_graph.ui import get_esm
 
 ROOT = Path(__file__).resolve().parent.parent
 UI_DIR = ROOT / "src" / "anywidget_graph" / "ui"
@@ -49,43 +43,6 @@ def _run_node(node_bin: str, *args: str, stdin: str | None = None) -> str:
 
 
 # ------------------------------------------------------------------ #
-#  Bundler helpers                                                     #
-# ------------------------------------------------------------------ #
-
-
-def test_strip_imports_exports():
-    code = 'import { a } from "./a.js";\nexport function f() {}\nexport async function g() {}\nexport const X = 1;\n'
-    code += "export default { f };\n"
-    assert _strip_imports_exports(code) == "function f() {}\nasync function g() {}\nconst X = 1;\n"
-
-
-def test_declared_functions():
-    code = "\n".join(
-        [
-            "export async function connect(a) {}",
-            "function helper() {}",
-            "  function nested() {}",
-            "const x = function () {};",
-        ]
-    )
-    assert _declared_functions(code) == ["connect", "helper"]
-
-
-def test_prefix_functions_renames_whole_identifiers_only():
-    code = "function connect(m) { disconnect(m); driver.connect(m); reconnect(m); connect(m); }"
-    assert _prefix_functions(code, "grafeo", ["connect"]) == (
-        "function grafeoConnect(m) { disconnect(m); driver.connect(m); reconnect(m); grafeoConnect(m); }"
-    )
-
-
-def test_resolve_namespaces():
-    code = "await grafeoEmbedBackend.connect(model);\nneo4jBackend.fetchSchema(m);\ngrafeoBackend.executeQuery(q);"
-    assert _resolve_namespaces(code) == (
-        "await grafeoEmbedConnect(model);\nneo4jFetchSchema(m);\ngrafeoExecuteQuery(q);"
-    )
-
-
-# ------------------------------------------------------------------ #
 #  Produced bundle                                                     #
 # ------------------------------------------------------------------ #
 
@@ -99,7 +56,15 @@ def test_bundle_has_no_imports_and_one_default_export(esm):
     """The libraries are bundled: a page that cannot reach a CDN still renders the widget."""
     assert [line for line in esm.splitlines() if line.lstrip().startswith("import ")] == []
     assert not re.search(r"""\bfrom\s*["']https?://""", esm)
-    assert [line for line in esm.splitlines() if line.lstrip().startswith("export ")] == ["export default { render };"]
+    assert re.search(r"export \{\s*(\w+) as default\s*\};\s*$", esm)
+    assert esm.count("export ") == 1
+
+
+def test_bundle_is_built_from_the_current_sources(node_bin):
+    """ui/dist/widget.js is what esbuild makes of the modules now (CI installs esbuild in scripts/vendor)."""
+    if not (ROOT / "scripts" / "vendor" / "node_modules" / "esbuild").exists():
+        pytest.skip("esbuild is not installed: npm ci in scripts/vendor")
+    _run_node(node_bin, "scripts/vendor/build-esm.mjs", "--check")
 
 
 def test_only_the_optional_backends_load_code_from_the_network(esm):
@@ -107,10 +72,8 @@ def test_only_the_optional_backends_load_code_from_the_network(esm):
     # Dynamic imports only: graphology's own graph.import(...) method is no module load
     dynamic = set(re.findall(r"""(?<![\w$.])import\(\s*([^)]+?)\s*\)""", esm))
     assert dynamic == {"NEO4J_DRIVER_URL", "`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`"}
-    driver = (
-        'const NEO4J_DRIVER_URL = "https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.3/lib/browser/neo4j-web.esm.min.js";'
-    )
-    assert esm.count(driver) == 1
+    driver = '"https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.3/lib/browser/neo4j-web.esm.min.js";'
+    assert esm.count(f"NEO4J_DRIVER_URL = {driver}") == 1
 
 
 def test_bundle_loads_without_a_network(esm, node_bin, tmp_path):
@@ -134,23 +97,6 @@ def test_the_bundled_libraries_carry_their_licenses():
         assert f"\n== {package}@" in f"\n{licenses}", package
 
 
-def test_bundle_resolves_all_backend_namespaces(esm):
-    assert not re.search(r"\b(neo4j|grafeo|grafeoEmbed)Backend\.", esm)
-
-
-def test_bundle_calls_only_declared_backend_functions(esm):
-    """Every renamed backend call must point at a function the bundle declares."""
-    declared = set(_declared_functions(esm))
-    called = set(re.findall(r"(?<![\w$.])((?:neo4j|grafeoEmbed|grafeo)[A-Z][\w$]*)\(", esm))
-    assert called, "no backend calls found"
-    assert called - declared == set()
-
-
-def test_bundle_declares_no_duplicate_functions(esm):
-    names = _declared_functions(esm)
-    assert len(names) == len(set(names)), sorted({n for n in names if names.count(n) > 1})
-
-
 def test_wasm_version_is_pinned_exactly_once():
     """The browser engine URL is built from one constant: an engine bump is a one-line change."""
     hits = {
@@ -163,7 +109,7 @@ def test_wasm_version_is_pinned_exactly_once():
 
 def test_bundle_contains_pinned_wasm_url_once(esm):
     version = _wasm_version()
-    assert esm.count(f'const GRAFEO_WASM_VERSION = "{version}";') == 1
+    assert esm.count(f'GRAFEO_WASM_VERSION = "{version}";') == 1
     assert esm.count("https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}") == 1
     assert len(WASM_URL_RE.findall(esm)) == 1
     # esm.sh cannot serve the wasm-pack bundler build (no init, wasm never instantiated)
@@ -280,5 +226,5 @@ def test_front_end_defaults_match_the_python_traits():
 
 
 def test_bundle_carries_the_defaults(esm):
-    assert "const TRAIT_DEFAULTS = {" in esm
+    assert re.search(r"\b(var|const|let) TRAIT_DEFAULTS = \{", esm)
     assert "export const TRAIT_DEFAULTS" not in esm

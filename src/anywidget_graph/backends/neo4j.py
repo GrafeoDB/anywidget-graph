@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, LiteralString, cast
 
 from anywidget_graph.converters.cypher import CypherConverter
 
 if TYPE_CHECKING:
     from neo4j import Driver
+
+
+def _quoted(name: str) -> str:
+    """A label or type as a Cypher identifier: in backticks, with a backtick inside doubled."""
+    return "`" + str(name).replace("`", "``") + "`"
 
 
 class Neo4jBackend:
@@ -74,21 +79,25 @@ class Neo4jBackend:
             self._driver = GraphDatabase.driver(self._uri, auth=self._auth)
         return self._driver
 
-    def execute(self, query: str) -> tuple[list[dict], list[dict]]:
+    def execute(self, query: str, *, language: str = "cypher") -> tuple[list[dict], list[dict]]:
         """Execute Cypher query and return (nodes, edges).
 
         Parameters
         ----------
         query : str
             Cypher query to execute.
+        language : str
+            Accepted for the widget's call; this backend always runs Cypher.
 
         Returns
         -------
         tuple[list[dict], list[dict]]
             Tuple of (nodes, edges) lists.
         """
+        # The user's own query is the point of this backend; the driver types ask for literals to discourage building
+        # queries from text, so the cast says this one is meant
         with self.driver.session(database=self._database) as session:
-            result = session.run(query)
+            result = session.run(cast("LiteralString", query))
             records = list(result)  # Consume within session
 
         data = self._converter.convert(records)
@@ -111,7 +120,12 @@ class Neo4jBackend:
             for record in labels_result:
                 label = record[0]
                 # Get properties for this label
-                props_result = session.run(f"MATCH (n:`{label}`) UNWIND keys(n) AS key RETURN DISTINCT key LIMIT 20")
+                props_result = session.run(
+                    cast(
+                        "LiteralString",
+                        f"MATCH (n:{_quoted(label)}) UNWIND keys(n) AS key RETURN DISTINCT key LIMIT 20",
+                    )
+                )
                 properties = [r[0] for r in props_result]
                 node_types.append({"label": label, "properties": properties})
 
@@ -121,7 +135,10 @@ class Neo4jBackend:
                 rel_type = record[0]
                 # Get properties for this type
                 props_result = session.run(
-                    f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS key RETURN DISTINCT key LIMIT 20"
+                    cast(
+                        "LiteralString",
+                        f"MATCH ()-[r:{_quoted(rel_type)}]->() UNWIND keys(r) AS key RETURN DISTINCT key LIMIT 20",
+                    )
                 )
                 properties = [r[0] for r in props_result]
                 edge_types.append({"type": rel_type, "properties": properties})

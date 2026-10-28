@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.5.0"
+version = "0.5.1"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -22,21 +22,23 @@ classifiers = [
 ]
 
 dependencies = [
-    "anywidget>=0.9.21",
+    "anywidget>=0.11.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "prek>=0.5",
-    "pytest>=9.1",
-    "ruff>=0.17",
-    "ty>=0.0",
-    "marimo>=0.20; python_version < '3.15'",
+    "prek>=0.5.7",
+    "pytest>=9.2",
+    "ruff>=0.17.3",
+    "ty>=0.0.94",
+    "marimo>=0.25.2; python_version < '3.15'",
 ]
 networkx = ["networkx>=3"]
 pandas = ["pandas>=3"]
 grafeo = ["grafeo~=0.6.0"]
 cosmosdb = ["gremlinpython>=3.8"]
+neo4j = ["neo4j>=5"]
+arango = ["python-arango>=8"]
 # marimo, to run the apps in examples/; it pulls in loro, which has no Python 3.15 wheels yet
 examples = ["marimo>=0.19.9; python_version < '3.15'"]
 embed = []  # Marker extra: WASM loads from CDN on demand
@@ -67,6 +69,10 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 [tool.ty.environment]
 python-version = "3.12"
 
+[tool.ty.analysis]
+# The marimo apps in examples/ import marimo, which does not install on Python 3.15 yet (loro has no 3.15 wheels)
+allowed-unresolved-imports = ["marimo"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
@@ -83,6 +89,6 @@ repos = [
 [dependency-groups]
 dev = [
     "anywidget-graph[grafeo]",  # Engine contract tests run against the pinned grafeo extra
-    "pytest>=9.1",
-    "ruff>=0.16",
+    "pytest>=9.2",
+    "ruff>=0.17.3",
 ]

@@ -4,7 +4,9 @@
   "description": "Builds src/anywidget_graph/ui/vendor/graph-libs.min.js: the graph libraries the widget bundles instead of loading them from a CDN",
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "build:esm": "node build-esm.mjs",
+    "check:esm": "node build-esm.mjs --check"
   },
   "dependencies": {
     "d3-force": "3.0.0",

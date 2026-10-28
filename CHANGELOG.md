@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.1 2026-10-28
+
+### Features
+
+- **Per-item style**: a node can carry `opacity`, `ring`, `ring_width`, `badge`, `badge_color` and `dash` (a dashed outline), an edge `opacity`, `width`, `dash` and `color`; each is optional and wins over the field mappings. Changing them on the same items restyles in place, without a new layout. Opacity mixes the colour towards the canvas, as the selection's dimming does, so it reads the same on a light and a dark canvas; rings, badges and dashes are drawn over the canvas (a dashed edge still answers to hover and click)
+- **Visibility levels**: `levels` (each level's id, label and the host's count), `level_field` (default `level`), `current_level` and `filtered_style` (`"dim"` or `"hide"` for the level just below). Nodes below the current level are hidden, edges to them too; nodes without a level always show, so levels can apply to one lane. Chips over the canvas show each level's count and switch the level; switching moves nothing
+- **`query_note`**: what a finished query tells besides its result, shown under the toolbar in a quieter style than an error. A result without nodes or edges (a write, nothing matched, rows of plain values) now keeps the drawing, and the note says why, in every mode; the cut at `max_nodes` is a note too (it was in `query_error`)
+- **Driver extras**: `anywidget-graph[neo4j]` and `anywidget-graph[arango]` install the drivers the Python-side Neo4j and ArangoDB backends need
+
+### Bug Fixes
+
+- **`dark_mode` is kept, and the page's theme is followed until then**: the widget set `dark_mode` to the page's theme when it rendered, so `Graph(dark_mode=False)` on a dark page showed dark; and its own first write counted as a manual switch, so it followed the page once and then stopped. Now `dark_mode` left out (the new default, `None`) follows every change of the page's light or dark theme and reports it in `dark_mode`; `dark_mode` given to the constructor or assigned from Python (before or after display, also to the value it has) or switched in the settings is a choice (`_theme_explicit`) the page no longer changes. One widget shown twice, or a cell run again, follows the page in every view. The nearest `data-theme="dark"` or `"light"` on an ancestor (a host's pane) decides first. The same contract as anywidget-archimate and anywidget-vector
+- **Each widget keeps its own connection**: the grafeo-server URL and credentials, the Neo4j driver and the WASM database were one per page, so a second widget connecting elsewhere took over the first one's connection. They are now kept per widget (shared by every view of it); the WASM engine is still loaded once per page, under the key anywidget-vector uses, so both widgets on one page share it
+- **The Python-side Neo4j, ArangoDB and Ladybug backends ran no query from the widget**: the widget passes the query language and their `execute` did not take it, so every query failed with a TypeError. They take it now (each runs its one language). The Neo4j backend's schema queries quote labels and types, so a name with a backtick cannot change the query
+- **`connection_uri` in server mode**: server mode reads `grafeo_server_url`; an http(s) `connection_uri` given instead (and no `grafeo_server_url`) now names the server rather than being ignored
+- **Nodes are no longer cut at the border or hidden under the controls**: without lanes the camera frames the nodes with room for the largest node at every edge (a node sized by `size_field` stuck out past the padding) and for the zoom and selection controls on the right
+- **Pinned nodes show their ring**: the amber ring was set as a node border, which the renderer does not draw; it is drawn over the canvas now
+- **The filter panel pages a large schema**: a section shows its first 50 types and a "Show N more" button for the rest
+- **`max_nodes` keeps the neighbours that connect**: when an expansion passes `max_nodes`, the room left goes to the new nodes with the most links to the drawn graph, not to whichever came first
+- **Clicks and hovers report the item's fields and how it is drawn** (`label`, `x`, `y`, `size`, `color`), not the widget's internal attributes
+
+### Improvements
+
+- **The front end is bundled by esbuild**: the widget loads `ui/dist/widget.js`, built from the modules in `ui/` by `scripts/vendor/build-esm.mjs` (`npm run build:esm`), instead of the modules joined as text with their imports stripped and their functions renamed. Module imports resolve as in any bundle, the output is readable for stack traces, and CI fails when the bundle is stale
+- The HTML export template lives in `ui/export.html` instead of a string in `widget.py`
+- `ty check` is clean and runs in CI with the optional drivers installed
+- **Dependencies**: anywidget 0.11 or newer (was 0.9.21), dev tools raised to their current releases (pytest 9.2, ruff 0.17.3, ty 0.0.94, prek 0.5.7, marimo 0.25.2) and the lockfile refreshed (`uv lock --upgrade`)
+
+### Tests
+
+- Node tests for the theme follower (a chosen theme stays through page flips; the page is followed on every change; a later `dark_mode` becomes a choice; two views with their own model proxies and a second copy of the module do not take the first view's update for a choice) and for theme detection from an ancestor's `data-theme`; Python tests for `_theme_explicit` from the constructor, from an assignment (also of the value it has) and not from `set_state`
+- The grafeo-server client against a fake `fetch` answering grafeo-server's endpoints with pinned responses (health, schema, query, paths, tagged values, an error, two widgets with two servers); per-widget WASM databases; the notes; level, colour and dash rules; the frame with room for the controls; filter paging; the cut at `max_nodes`; every backend taking the language; the Neo4j schema quoting
+- Browser tests (`tests/e2e`, Playwright and Chromium, their own CI job): the widget mounted through a plain model with no network, hostile values as text in the tooltip and the properties panel, no listener left after destroy and redraw, the theme following the page in two views and kept when chosen, level chips, the server-mode query box (connect on the first query, a note for a write, an error), a narrow pane's toolbar, per-item marks, and an HTML export that runs no markup from the data
+
 ## 0.5.0 2026-10-28
 
 Grafeo 0.6 release: the Grafeo backends move to grafeo 0.6 (embedded, grafeo-server and WASM). Stay on 0.4.x for grafeo 0.5.

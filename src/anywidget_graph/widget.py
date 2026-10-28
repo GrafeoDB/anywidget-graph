@@ -6,6 +6,7 @@ import html
 import json
 import re
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import anywidget
@@ -25,10 +26,31 @@ def _script_json(value: Any) -> str:
     return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
+# The page to_html() fills in (a str.format template: literal braces are doubled)
+_EXPORT_TEMPLATE = Path(__file__).parent / "ui" / "export.html"
+
 # A CSS colour or length the page writes into its <style>: plain values only, so a value cannot end the element
 _CSS_VALUE = re.compile(r"^[#\w(),.%\s-]+$")
 # The widget's canvas colours (styles.css --awg-graph-bg) and its default `background`
 _CANVAS_LIGHT, _CANVAS_DARK, _DEFAULT_BACKGROUND = "#ffffff", "#181c1a", "#fafafa"
+
+
+def _query_result_note(row_count: int | None, nodes: list, edges: list) -> str:
+    """The note for a result without nodes or edges (the drawing stays), "" when the result is drawn.
+
+    Mirrors ``queryResultNote`` in ui/defaults.js; ``row_count`` is None when the backend does not report it.
+    """
+    if nodes or edges:
+        return ""
+    if row_count == 0:
+        return "The query returned no rows, so the drawing is unchanged."
+    if not row_count:
+        return "The query returned nothing to draw, so the drawing is unchanged."
+    what = "1 row" if row_count == 1 else f"{row_count} rows"
+    return (
+        f"The query returned {what} without nodes, edges or paths, so the drawing is unchanged. "
+        "Return graph elements (for example RETURN n, r, m) to draw them."
+    )
 
 
 def _css_value(value: Any, fallback: str) -> str:
@@ -47,6 +69,24 @@ def _is_dark(color: str, fallback: bool) -> bool:
     except ValueError:
         return fallback
     return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
+
+
+class _ChosenBool(traitlets.Bool):
+    """A theme trait that records a choice in its `flag` trait whenever Python assigns it.
+
+    Assigning the value the trait already has counts too: `graph.dark_mode = True` on a dark page keeps the widget dark
+    after the page turns light. Values the widget writes from the browser arrive through `set_state` and are not a
+    choice. The same contract as anywidget-archimate and anywidget-vector.
+    """
+
+    def __init__(self, *args: Any, flag: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.flag = flag
+
+    def set(self, obj: Any, value: Any) -> None:
+        super().set(obj, value)
+        if not obj._applying_frontend_state:
+            obj.set_trait(self.flag, True)
 
 
 class Graph(anywidget.AnyWidget):
@@ -134,8 +174,22 @@ class Graph(anywidget.AnyWidget):
     show_settings = traitlets.Bool(default_value=True).tag(sync=True)
     show_query_input = traitlets.Bool(default_value=True).tag(sync=True)
 
+    # === Visibility levels ===
+    # Levels of detail, lowest first: [{"id": 0, "label": "All", "count": 5230}, ...]; `count` comes from the host.
+    # A node's `level_field` holds the highest level it survives; the widget shows nodes with a level >= current_level
+    # (the level just below dimmed with filtered_style="dim", hidden with "hide"); nodes without a level always show.
+    levels = traitlets.List(trait=traitlets.Dict()).tag(sync=True)
+    level_field = traitlets.Unicode(default_value="level").tag(sync=True)
+    current_level = traitlets.Int(default_value=0).tag(sync=True)
+    filtered_style = traitlets.Unicode(default_value="dim").tag(sync=True)
+
     # === Theme ===
-    dark_mode = traitlets.Bool(default_value=True).tag(sync=True)
+    dark_mode = _ChosenBool(default_value=True, flag="_theme_explicit").tag(sync=True)
+    # True when dark_mode is a choice (given to the constructor, set after display, or switched in the settings);
+    # until then the front end follows the page's light or dark theme and reports it in dark_mode
+    _theme_explicit = traitlets.Bool(default_value=False).tag(sync=True)
+    # True while set_state applies the browser's state, so its dark_mode is not taken for a choice made in Python
+    _applying_frontend_state = False
 
     # === Database Backend ===
     database_backend = traitlets.Unicode(default_value="grafeo").tag(sync=True)
@@ -156,6 +210,8 @@ class Graph(anywidget.AnyWidget):
     query_running = traitlets.Bool(default_value=False).tag(sync=True)
     query_time = traitlets.Float(default_value=0.0).tag(sync=True)
     query_error = traitlets.Unicode(default_value="").tag(sync=True)
+    # What a finished query tells the viewer besides its result (nothing to draw, a cut at max_nodes); not an error
+    query_note = traitlets.Unicode(default_value="").tag(sync=True)
 
     # === Connection State ===
     connection_status = traitlets.Unicode(default_value="disconnected").tag(sync=True)
@@ -208,7 +264,7 @@ class Graph(anywidget.AnyWidget):
         show_toolbar: bool = True,
         show_settings: bool = True,
         show_query_input: bool = True,
-        dark_mode: bool = True,
+        dark_mode: bool | None = None,
         database_backend: str = "grafeo",
         connection_uri: str = "",
         connection_username: str = "",
@@ -242,8 +298,9 @@ class Graph(anywidget.AnyWidget):
             Whether to show the settings button.
         show_query_input : bool
             Whether to show the query input.
-        dark_mode : bool
-            Whether to use dark theme.
+        dark_mode : bool, optional
+            Whether to use dark theme. Left out (None), the widget follows the page's light or dark theme and
+            reports it here; given, it keeps that theme.
         database_backend : str
             Database backend: "neo4j" or "grafeo".
         connection_uri : str
@@ -259,6 +316,17 @@ class Graph(anywidget.AnyWidget):
         backend : DatabaseBackend | None
             Generic database backend implementing the DatabaseBackend protocol.
         """
+        # dark_mode left out follows the page (the trait keeps its default until the front end reports the page's);
+        # given, the trait records it as a choice, as for any later assignment from Python
+        if dark_mode is not None:
+            kwargs["dark_mode"] = dark_mode
+        # Server mode reads grafeo_server_url; an http(s) connection_uri given instead names that server
+        if (
+            kwargs.get("grafeo_connection_mode") == "server"
+            and "grafeo_server_url" not in kwargs
+            and connection_uri.startswith(("http://", "https://"))
+        ):
+            kwargs["grafeo_server_url"] = connection_uri
         super().__init__(
             nodes=nodes or [],
             edges=edges or [],
@@ -270,7 +338,6 @@ class Graph(anywidget.AnyWidget):
             show_toolbar=show_toolbar,
             show_settings=show_settings,
             show_query_input=show_query_input,
-            dark_mode=dark_mode,
             database_backend=database_backend,
             connection_uri=connection_uri,
             connection_username=connection_username,
@@ -363,6 +430,15 @@ class Graph(anywidget.AnyWidget):
         """Set the Grafeo database instance (legacy property)."""
         self._backend = GrafeoBackend(value) if value else None
 
+    def set_state(self, sync_data: dict[str, Any]) -> None:
+        """Apply state from the browser (Jupyter and marimo both call this): a dark_mode it carries is the widget
+        following the page, or a choice the browser already recorded, not a choice made in Python."""
+        self._applying_frontend_state = True
+        try:
+            super().set_state(sync_data)
+        finally:
+            self._applying_frontend_state = False
+
     @observe("_execute_query")
     def _on_execute_query(self, change: dict) -> None:
         """Handle query execution trigger from JavaScript."""
@@ -380,11 +456,15 @@ class Graph(anywidget.AnyWidget):
         try:
             self.query_running = True
             self.query_error = ""
+            self.query_note = ""
             start = time.perf_counter()
             nodes, edges = self._backend.execute(self.query, language=self.query_language)
             self.query_time = (time.perf_counter() - start) * 1000
-            self.nodes = nodes
-            self.edges = edges
+            # A result without nodes or edges keeps what is drawn, and the note says why
+            self.query_note = _query_result_note(getattr(self._backend, "last_row_count", None), nodes, edges)
+            if not self.query_note:
+                self.nodes = nodes
+                self.edges = edges
         except Exception as e:
             self.query_error = str(e)
         finally:
@@ -455,16 +535,27 @@ class Graph(anywidget.AnyWidget):
         existing_node_ids = {n["id"] for n in self.nodes}
         existing_edge_keys = {(e["source"], e["target"], e.get("label", "")) for e in self.edges}
 
-        merged_nodes = list(self.nodes) + [n for n in new_nodes if n["id"] not in existing_node_ids]
+        added = [n for n in new_nodes if n["id"] not in existing_node_ids]
+        merged_nodes = list(self.nodes) + added
         merged_edges = list(self.edges) + [
             e for e in new_edges if (e["source"], e["target"], e.get("label", "")) not in existing_edge_keys
         ]
 
         if len(merged_nodes) > self.max_nodes:
-            merged_nodes = merged_nodes[: self.max_nodes]
+            # The drawn graph stays; the room left goes to the new nodes with the most links to it, so the cut keeps
+            # the neighbours that connect rather than whichever came first
+            room = max(self.max_nodes - len(self.nodes), 0)
+            links = dict.fromkeys((n["id"] for n in added), 0)
+            for e in merged_edges:
+                for end, other in ((e["source"], e["target"]), (e["target"], e["source"])):
+                    if end in links and other in existing_node_ids:
+                        links[end] += 1
+            ranked = sorted(range(len(added)), key=lambda i: -links[added[i]["id"]])
+            chosen = sorted(ranked[:room])
+            merged_nodes = list(self.nodes)[: self.max_nodes] + [added[i] for i in chosen]
             kept_ids = {n["id"] for n in merged_nodes}
             merged_edges = [e for e in merged_edges if e["source"] in kept_ids and e["target"] in kept_ids]
-            self.query_error = f"Graph truncated to {self.max_nodes} nodes. Call clear() or increase max_nodes."
+            self.query_note = f"Graph truncated to {self.max_nodes} nodes. Call clear() or increase max_nodes."
 
         self.nodes = merged_nodes
         self.edges = merged_edges
@@ -477,8 +568,9 @@ class Graph(anywidget.AnyWidget):
         """Clear the graph and reset selection."""
         self.nodes = []
         self.edges = []
-        self.selected_node = None
-        self.selected_edge = None
+        # The traits allow None (nothing selected); set_trait says so where the attribute's type cannot
+        self.set_trait("selected_node", None)
+        self.set_trait("selected_edge", None)
         self.pinned_nodes = {}
         self.query_error = ""
 
@@ -869,328 +961,6 @@ class Graph(anywidget.AnyWidget):
         """Export the graph data (nodes and edges) as a JSON string."""
         return json.dumps({"nodes": list(self.nodes), "edges": list(self.edges)})
 
-    _HTML_TEMPLATE = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{title}</title>
-<style>
-body {{ margin: 0; background: {background}; font-family: sans-serif; }}
-#container {{ width: {width}; height: {height}; }}
-.tooltip {{
-  position: absolute; display: none;
-  background: rgba(0,0,0,0.85); color: #fff;
-  padding: 8px 12px; border-radius: 6px; font-size: 12px;
-  pointer-events: none; z-index: 100; max-width: 220px;
-}}
-.tooltip-row {{
-  display: flex; justify-content: space-between;
-  gap: 12px; padding: 1px 0;
-}}
-.tooltip-key {{ color: #999; font-weight: 500; white-space: nowrap; }}
-</style>
-</head>
-<body>
-<div id="container"></div>
-<div id="tooltip" class="tooltip"></div>
-<script type="module">
-// graphology, sigma and the layouts are inlined (the widget's bundled libraries): the page needs no CDN
-{vendor_js}
-const {{ Graph, Sigma, circular, random, forceAtlas2 }} = anywidgetGraphVendor;
-
-const DATA = {json_data};
-const OPTIONS = {json_options};
-
-const COLOR_SCALES = {{
-  viridis: [
-    [0.267,0.004,0.329],[0.282,0.141,0.458],[0.253,0.265,0.530],[0.207,0.372,0.553],
-    [0.164,0.471,0.558],[0.128,0.567,0.551],[0.134,0.658,0.517],[0.267,0.749,0.441],
-    [0.478,0.821,0.318],[0.741,0.873,0.150],[0.993,0.906,0.144]],
-  plasma: [
-    [0.050,0.030,0.528],[0.295,0.012,0.615],[0.492,0.012,0.658],[0.654,0.072,0.639],
-    [0.798,0.195,0.561],[0.897,0.329,0.445],[0.963,0.480,0.314],[0.993,0.640,0.186],
-    [0.980,0.807,0.086],[0.940,0.975,0.131],[0.940,0.975,0.131]],
-  inferno: [
-    [0.001,0.000,0.014],[0.110,0.066,0.290],[0.280,0.086,0.470],[0.447,0.096,0.460],
-    [0.612,0.140,0.381],[0.762,0.233,0.272],[0.882,0.370,0.170],[0.959,0.551,0.069],
-    [0.977,0.754,0.065],[0.936,0.960,0.309],[0.988,1.000,0.644]],
-  magma: [
-    [0.001,0.000,0.014],[0.099,0.068,0.265],[0.232,0.094,0.450],[0.383,0.107,0.520],
-    [0.533,0.137,0.512],[0.683,0.199,0.453],[0.822,0.303,0.369],[0.925,0.452,0.293],
-    [0.975,0.637,0.264],[0.985,0.835,0.361],[0.987,0.991,0.750]],
-  cividis: [
-    [0.000,0.135,0.305],[0.074,0.192,0.351],[0.145,0.247,0.382],[0.228,0.302,0.390],
-    [0.310,0.358,0.393],[0.394,0.414,0.390],[0.482,0.470,0.379],[0.575,0.530,0.358],
-    [0.672,0.595,0.325],[0.775,0.666,0.274],[0.880,0.742,0.199]],
-  turbo: [
-    [0.190,0.072,0.232],[0.231,0.322,0.745],[0.137,0.572,0.938],[0.069,0.773,0.800],
-    [0.200,0.910,0.510],[0.507,0.979,0.254],[0.775,0.953,0.136],[0.953,0.804,0.098],
-    [0.993,0.561,0.090],[0.914,0.286,0.063],[0.647,0.082,0.033]],
-}};
-
-const CATEGORICAL_COLORS = [
-  "#6366f1","#f59e0b","#10b981","#ef4444","#8b5cf6",
-  "#06b6d4","#f97316","#84cc16","#ec4899","#14b8a6",
-];
-
-const DISPLAY_NAME_FIELDS = ["name", "title", "label", "display", "id"];
-
-function getColorFromScale(value, scaleName, domain) {{
-  const scale = COLOR_SCALES[scaleName] || COLOR_SCALES.viridis;
-  const [min, max] = domain || [0, 1];
-  const t = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0.5;
-  const idx = t * (scale.length - 1);
-  const i = Math.floor(idx);
-  const f = idx - i;
-  if (i >= scale.length - 1) {{
-    const c = scale[scale.length - 1];
-    return `rgb(${{Math.round(c[0]*255)}},${{Math.round(c[1]*255)}},${{Math.round(c[2]*255)}})`;
-  }}
-  const c1 = scale[i], c2 = scale[i + 1];
-  const r = Math.round((c1[0] + f * (c2[0] - c1[0])) * 255);
-  const g = Math.round((c1[1] + f * (c2[1] - c1[1])) * 255);
-  const b = Math.round((c1[2] + f * (c2[2] - c1[2])) * 255);
-  return `rgb(${{r}},${{g}},${{b}})`;
-}}
-
-function getCategoricalColor(value) {{
-  let hash = 0;
-  const str = String(value);
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-  return CATEGORICAL_COLORS[Math.abs(hash) % CATEGORICAL_COLORS.length];
-}}
-
-function autoLabel(node) {{
-  for (const field of DISPLAY_NAME_FIELDS) {{
-    const val = node[field];
-    if (val != null && String(val)) return String(val);
-  }}
-  if (Array.isArray(node.labels) && node.labels.length > 0) return node.labels[0];
-  return String(node.id || "");
-}}
-
-function computeNodeColor(node, colorField, colorScale, colorDomain) {{
-  if (node.color) return node.color;
-  if (!colorField || node[colorField] === undefined) return "#6366f1";
-  const value = node[colorField];
-  if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
-  return getCategoricalColor(value);
-}}
-
-function computeNodeSize(node, sizeField, sizeDomain, sizeRange) {{
-  if (node.size !== undefined) return node.size;
-  if (!sizeField || node[sizeField] === undefined || !sizeDomain) return 10;
-  const [min, max] = sizeDomain;
-  const t = max > min ? (node[sizeField] - min) / (max - min) : 0.5;
-  return sizeRange[0] + t * (sizeRange[1] - sizeRange[0]);
-}}
-
-// --- Build graph ---
-const graph = new Graph();
-const nodes = DATA.nodes || [];
-const edges = DATA.edges || [];
-
-const colorField = OPTIONS.color_field;
-const colorScale = OPTIONS.color_scale || "viridis";
-let colorDomain = OPTIONS.color_domain;
-const sizeField = OPTIONS.size_field;
-const sizeRange = OPTIONS.size_range || [5, 30];
-
-if (colorField && !colorDomain) {{
-  const vals = nodes.map(n => n[colorField]).filter(v => typeof v === "number");
-  if (vals.length > 0) colorDomain = [Math.min(...vals), Math.max(...vals)];
-}}
-
-let sizeDomain = null;
-if (sizeField) {{
-  const vals = nodes.map(n => n[sizeField]).filter(v => typeof v === "number");
-  if (vals.length > 0) sizeDomain = [Math.min(...vals), Math.max(...vals)];
-}}
-
-const edgeColorField = OPTIONS.edge_color_field;
-const edgeColorScale = OPTIONS.edge_color_scale || "viridis";
-let edgeColorDomain = null;
-if (edgeColorField) {{
-  const vals = edges.map(e => e[edgeColorField]).filter(v => typeof v === "number");
-  if (vals.length > 0) edgeColorDomain = [Math.min(...vals), Math.max(...vals)];
-}}
-
-const edgeSizeField = OPTIONS.edge_size_field;
-const edgeSizeRange = OPTIONS.edge_size_range || [1, 8];
-let edgeSizeDomain = null;
-if (edgeSizeField) {{
-  const vals = edges.map(e => e[edgeSizeField]).filter(v => typeof v === "number");
-  if (vals.length > 0) edgeSizeDomain = [Math.min(...vals), Math.max(...vals)];
-}}
-
-nodes.forEach(node => {{
-  graph.addNode(node.id, {{
-    label: autoLabel(node),
-    x: node.x ?? Math.random() * 100,
-    y: node.y ?? Math.random() * 100,
-    size: computeNodeSize(node, sizeField, sizeDomain, sizeRange),
-    color: computeNodeColor(node, colorField, colorScale, colorDomain),
-  }});
-}});
-
-edges.forEach(edge => {{
-  let color = edge.color || "#94a3b8";
-  if (edgeColorField && edge[edgeColorField] !== undefined) {{
-    const val = edge[edgeColorField];
-    color = typeof val === "number"
-      ? getColorFromScale(val, edgeColorScale, edgeColorDomain)
-      : getCategoricalColor(val);
-  }}
-  let size = edge.size || 2;
-  if (edgeSizeField && edge[edgeSizeField] !== undefined && edgeSizeDomain) {{
-    const [min, max] = edgeSizeDomain;
-    const t = max > min ? (edge[edgeSizeField] - min) / (max - min) : 0.5;
-    size = edgeSizeRange[0] + t * (edgeSizeRange[1] - edgeSizeRange[0]);
-  }}
-  graph.addEdge(edge.source, edge.target, {{
-    label: edge.label || "",
-    size: size,
-    color: color,
-  }});
-}});
-
-// --- Apply layout ---
-const layoutName = OPTIONS.layout || "spring";
-if (graph.order > 0) {{
-  switch (layoutName) {{
-    case "circular":
-      circular.assign(graph);
-      break;
-    case "random":
-      random.assign(graph);
-      break;
-    case "force":
-      forceAtlas2.assign(graph, {{ iterations: 50, settings: {{ gravity: 1, scalingRatio: 2 }} }});
-      break;
-  }}
-}}
-
-// --- Create Sigma renderer ---
-const container = document.getElementById("container");
-const renderer = new Sigma(graph, container, {{
-  renderLabels: OPTIONS.show_labels,
-  renderEdgeLabels: OPTIONS.show_edge_labels,
-  defaultNodeColor: "#6366f1",
-  defaultEdgeColor: "#94a3b8",
-  labelColor: {{ color: OPTIONS.label_color }},
-  labelSize: 12,
-  labelWeight: "500",
-  defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line",
-}});
-
-// A hovered node's label sits on a card in the page colour, outlined in the label colour (sigma's card is white)
-const drawLabel = renderer.getSetting("defaultDrawNodeLabel");
-renderer.setSetting("defaultDrawNodeHover", (context, data, settings) => {{
-  const size = settings.labelSize, padding = 2;
-  context.font = `${{settings.labelWeight}} ${{size}}px ${{settings.labelFont}}`;
-  context.beginPath();
-  if (typeof data.label === "string" && data.label) {{
-    const boxWidth = Math.round(context.measureText(data.label).width + 5);
-    const boxHeight = Math.round(size + 2 * padding);
-    const radius = Math.max(data.size, size / 2) + padding;
-    const angle = Math.asin(boxHeight / 2 / radius);
-    const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
-    context.moveTo(data.x + dx, data.y + boxHeight / 2);
-    context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
-    context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
-    context.lineTo(data.x + dx, data.y - boxHeight / 2);
-    context.arc(data.x, data.y, radius, angle, -angle);
-  }} else {{
-    context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
-  }}
-  context.closePath();
-  context.fillStyle = OPTIONS.background;
-  context.fill();
-  context.globalAlpha = 0.35;
-  context.strokeStyle = OPTIONS.label_color;
-  context.lineWidth = 1;
-  context.stroke();
-  context.globalAlpha = 1;
-  drawLabel(context, data, settings);
-}});
-
-// --- Tooltip ---
-const tooltip = document.getElementById("tooltip");
-
-// Below right of the pointer, or on the other side where the tooltip would leave the window
-function placeTooltip(x, y) {{
-  const width = tooltip.offsetWidth, height = tooltip.offsetHeight;
-  const left = x + 15 + width <= window.innerWidth ? x + 15 : x - 15 - width;
-  const top = y + 15 + height <= window.innerHeight ? y + 15 : y - 15 - height;
-  tooltip.style.left = Math.max(0, left) + window.scrollX + "px";
-  tooltip.style.top = Math.max(0, top) + window.scrollY + "px";
-}}
-
-// Sigma's pointer coordinates are relative to the graph container
-function pointerOnPage(event) {{
-  const rect = container.getBoundingClientRect();
-  return [rect.left + event.x, rect.top + event.y];
-}}
-
-// A tooltip row built from text: keys and values come from the data, so never from markup
-function tooltipRow(key, value) {{
-  const row = document.createElement("div");
-  row.className = "tooltip-row";
-  const keySpan = document.createElement("span");
-  keySpan.className = "tooltip-key";
-  keySpan.textContent = key + ":";
-  const valueSpan = document.createElement("span");
-  valueSpan.textContent = typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
-  row.append(keySpan, valueSpan);
-  return row;
-}}
-
-renderer.on("enterNode", ({{ node, event }}) => {{
-  const attrs = graph.getNodeAttributes(node);
-  const data = {{ id: node, ...attrs }};
-  const original = nodes.find(n => n.id === node) || {{}};
-  const rows = [];
-  for (const [k, v] of Object.entries(original)) {{
-    if (k === "x" || k === "y") continue;
-    let display = v;
-    if (typeof v === "number") display = Number.isInteger(v) ? v : v.toFixed(3);
-    if (Array.isArray(v)) display = v.join(", ");
-    rows.push(tooltipRow(k, display));
-  }}
-  if (rows.length) {{
-    tooltip.replaceChildren(...rows);
-    tooltip.style.display = "block";
-    placeTooltip(...pointerOnPage(event));
-  }}
-}});
-
-renderer.getMouseCaptor().on("mousemovebody", (e) => {{
-  if (tooltip.style.display === "block") placeTooltip(...pointerOnPage(e));
-}});
-
-renderer.on("leaveNode", () => {{
-  tooltip.style.display = "none";
-}});
-
-renderer.on("enterEdge", ({{ edge, event }}) => {{
-  const attrs = graph.getEdgeAttributes(edge);
-  const [source, target] = graph.extremities(edge);
-  const rows = [tooltipRow("source", source), tooltipRow("target", target)];
-  if (attrs.label) rows.push(tooltipRow("label", attrs.label));
-  tooltip.replaceChildren(...rows);
-  tooltip.style.display = "block";
-  placeTooltip(...pointerOnPage(event));
-}});
-
-renderer.on("leaveEdge", () => {{
-  tooltip.style.display = "none";
-}});
-</script>
-</body>
-</html>
-"""
-
     def to_html(
         self,
         width: str = "100%",
@@ -1245,7 +1015,7 @@ renderer.on("leaveEdge", () => {{
             "edge_size_range": list(self.edge_size_range),
             "layout": self.layout,
         }
-        return self._HTML_TEMPLATE.format(
+        return _EXPORT_TEMPLATE.read_text(encoding="utf-8").format(
             title=html.escape(title),
             background=background,
             width=_css_value(width, "100%"),
@@ -1265,6 +1035,4 @@ renderer.on("leaveEdge", () => {{
         **kwargs
             Forwarded to :meth:`to_html` (``width``, ``height``, ``title``).
         """
-        from pathlib import Path
-
         Path(path).write_text(self.to_html(**kwargs), encoding="utf-8")

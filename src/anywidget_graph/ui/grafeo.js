@@ -2,27 +2,31 @@
  * Grafeo Server browser-side client (HTTP mode).
  * Mirrors the neo4j.js pattern for connecting to grafeo-server.
  */
-import { grafeoRowsToGraph, grafeoSchemaToTypes, nothingToDrawNote } from "./grafeo-result.js";
+import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
 
-let serverUrl = null;
-let authHeaders = {};
+// Each widget's server: {url, headers}, keyed by its host model, so every view of a widget shares it and two widgets
+// on a page can use different servers
+const serverConnections = new WeakMap();
+
+function serverOf(model) {
+  return serverConnections.get(model.host ?? model) ?? null;
+}
 
 /**
  * Connect to a Grafeo server.
  */
 export async function connect(url, username, password, model) {
-  serverUrl = (url || "http://localhost:7474").replace(/\/+$/, "");
-  authHeaders = { "Content-Type": "application/json" };
-
+  const server = { url: (url || "http://localhost:7474").replace(/\/+$/, ""), headers: { "Content-Type": "application/json" } };
   if (username && password) {
-    authHeaders["Authorization"] = "Basic " + btoa(username + ":" + password);
+    server.headers["Authorization"] = "Basic " + btoa(username + ":" + password);
   }
+  serverConnections.set(model.host ?? model, server);
 
   model.set("connection_status", "connecting");
   model.save_changes();
 
   try {
-    const resp = await fetch(serverUrl + "/health", { headers: authHeaders });
+    const resp = await fetch(server.url + "/health", { headers: server.headers });
     if (!resp.ok) throw new Error("Server returned " + resp.status);
 
     model.set("connection_status", "connected");
@@ -35,7 +39,7 @@ export async function connect(url, username, password, model) {
     model.set("connection_status", "error");
     model.set("query_error", "Connection failed: " + error.message);
     model.save_changes();
-    serverUrl = null;
+    serverConnections.delete(model.host ?? model);
     return false;
   }
 }
@@ -44,8 +48,7 @@ export async function connect(url, username, password, model) {
  * Disconnect from Grafeo server.
  */
 export async function disconnect(model) {
-  serverUrl = null;
-  authHeaders = {};
+  serverConnections.delete(model.host ?? model);
   model.set("connection_status", "disconnected");
   model.save_changes();
 }
@@ -53,8 +56,8 @@ export async function disconnect(model) {
 /**
  * Check if connected.
  */
-export function isConnected() {
-  return serverUrl !== null;
+export function isConnected(model) {
+  return serverOf(model) !== null;
 }
 
 /**
@@ -82,10 +85,10 @@ export function errorMessage(status, text) {
   return text || "Query failed with status " + status;
 }
 
-async function postQuery(body) {
-  const resp = await fetch(serverUrl + "/query", {
+async function postQuery(server, body) {
+  const resp = await fetch(server.url + "/query", {
     method: "POST",
-    headers: authHeaders,
+    headers: server.headers,
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
@@ -98,7 +101,8 @@ async function postQuery(body) {
  * Execute a query against Grafeo server.
  */
 export async function executeQuery(query, language, database, model) {
-  if (!serverUrl) {
+  const server = serverOf(model);
+  if (!server) {
     model.set("query_error", "Not connected to Grafeo server");
     model.save_changes();
     return null;
@@ -110,15 +114,15 @@ export async function executeQuery(query, language, database, model) {
 
   try {
     // Response: {columns, rows: [[value, ...]], execution_time_ms?, counters?, ...}
-    const result = await postQuery(buildQueryBody(query, language, database));
-    const graph = await grafeoRowsToGraph(result.rows || [], async (lookup) => {
-      const found = await postQuery(buildQueryBody(lookup, "gql", database));
+    const result = await postQuery(server, buildQueryBody(query, language, database));
+    const rows = result.rows || [];
+    const graph = await grafeoRowsToGraph(rows, async (lookup) => {
+      const found = await postQuery(server, buildQueryBody(lookup, "gql", database));
       return found.rows || [];
     });
     model.set("query_running", false);
-    model.set("query_error", nothingToDrawNote(result.rows, graph));
     model.save_changes();
-    return graph;
+    return { ...graph, rows: rows.length };
   } catch (error) {
     model.set("query_running", false);
     model.set("query_error", "Query error: " + error.message);
@@ -138,12 +142,13 @@ export function schemaUrl(baseUrl, database) {
  * Fetch schema from Grafeo server.
  */
 export async function fetchSchema(model) {
-  if (!serverUrl) return;
+  const server = serverOf(model);
+  if (!server) return;
 
   try {
     const database = model.get("connection_database") || "default";
-    const resp = await fetch(schemaUrl(serverUrl, database), {
-      headers: authHeaders,
+    const resp = await fetch(schemaUrl(server.url, database), {
+      headers: server.headers,
     });
     if (!resp.ok) return;
 

@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from anywidget_graph.widget import Graph
 
@@ -118,12 +119,12 @@ def demo_graph(**kwargs) -> Graph:
     >>> graph = demo_graph()
     >>> graph  # renders in notebook
     """
-    defaults = {
+    defaults: dict[str, Any] = {
         "nodes": DEMO_NODES,
         "edges": DEMO_EDGES,
         "width": kwargs.pop("width", 900),
         "height": kwargs.pop("height", 600),
-        "dark_mode": kwargs.pop("dark_mode", True),
+        "dark_mode": kwargs.pop("dark_mode", None),
         "database_backend": "grafeo",
         "query": DEMO_QUERY,
         "query_language": "gql",

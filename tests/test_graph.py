@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from anywidget_graph import Graph
 
 # ------------------------------------------------------------------ #
@@ -265,7 +267,7 @@ def test_on_node_click_ignores_none():
     def handle(node_id, node_data):
         clicks.append(node_id)
 
-    graph.selected_node = None
+    graph.set_trait("selected_node", None)
     assert len(clicks) == 0
 
 
@@ -349,7 +351,21 @@ def test_merge_graph_truncates():
         [],
     )
     assert len(graph.nodes) == 12
-    assert "truncated" in graph.query_error.lower()
+    assert "truncated" in graph.query_note.lower()
+    assert graph.query_error == ""
+
+
+def test_merge_graph_keeps_the_new_nodes_that_connect():
+    """Past max_nodes the new nodes linked to the drawn graph are kept, not just the first ones."""
+    graph = Graph(nodes=[{"id": "a"}, {"id": "b"}], edges=[{"source": "a", "target": "b"}])
+    graph.max_nodes = 4
+    graph._merge_graph(
+        [{"id": "x"}, {"id": "y"}, {"id": "linked1"}, {"id": "z"}, {"id": "linked2"}],
+        [{"source": "a", "target": "linked1"}, {"source": "linked2", "target": "b"}, {"source": "x", "target": "y"}],
+    )
+    assert [n["id"] for n in graph.nodes] == ["a", "b", "linked1", "linked2"]
+    assert {(e["source"], e["target"]) for e in graph.edges} == {("a", "b"), ("a", "linked1"), ("linked2", "b")}
+    assert "truncated" in graph.query_note.lower()
 
 
 # ------------------------------------------------------------------ #
@@ -380,6 +396,73 @@ def test_to_json_empty():
 # ------------------------------------------------------------------ #
 #  Export: to_html / save_html                                         #
 # ------------------------------------------------------------------ #
+
+
+def test_dark_mode_left_out_follows_the_page_and_given_is_kept():
+    """dark_mode left out follows the page; given (either way) it is a choice the page cannot change."""
+    from anywidget_graph.demo import demo_graph
+
+    assert Graph()._theme_explicit is False
+    assert Graph(dark_mode=False)._theme_explicit is True
+    assert Graph(dark_mode=True)._theme_explicit is True
+    assert Graph(dark_mode=False).dark_mode is False
+    assert demo_graph()._theme_explicit is False
+    assert demo_graph(dark_mode=False)._theme_explicit is True
+
+
+def test_dark_mode_set_from_python_is_a_choice_and_the_front_ends_update_is_not():
+    """Set from Python, before display or after, dark_mode is kept; the browser following the page does not count."""
+    graph = Graph()
+    graph.dark_mode = False
+    assert graph._theme_explicit is True
+    followed = Graph()
+    followed.set_state({"dark_mode": False})
+    assert followed.dark_mode is False
+    assert followed._theme_explicit is False
+    # The value it already has counts too: chosen dark on a dark page stays dark when the page turns light
+    same = Graph()
+    same.set_state({"dark_mode": True})
+    same.dark_mode = True
+    assert same._theme_explicit is True
+
+
+def test_visibility_level_traits_default_to_showing_everything():
+    """Without levels every node shows; a host sets levels, the field and the current level."""
+    graph = Graph()
+    assert (graph.levels, graph.level_field, graph.current_level, graph.filtered_style) == ([], "level", 0, "dim")
+    graph = Graph(levels=[{"id": 0, "label": "All", "count": 10}], current_level=0, filtered_style="hide")
+    assert graph.levels[0]["count"] == 10
+
+
+def test_server_mode_takes_an_http_connection_uri_as_the_server():
+    """In server mode an http(s) connection_uri names the server; grafeo_server_url given wins."""
+    served = Graph(grafeo_connection_mode="server", connection_uri="http://studio.local/grafeo")
+    assert served.grafeo_server_url == "http://studio.local/grafeo"
+    both = Graph(grafeo_connection_mode="server", connection_uri="http://a.local", grafeo_server_url="http://b.local")
+    assert both.grafeo_server_url == "http://b.local"
+    assert Graph(connection_uri="http://a.local").grafeo_server_url == "http://localhost:7474"
+    assert (
+        Graph(grafeo_connection_mode="server", connection_uri="bolt://x").grafeo_server_url == "http://localhost:7474"
+    )
+
+
+def test_empty_results_keep_the_drawing_with_a_note():
+    """A write, a query that matched nothing, or rows of plain values keep what is drawn; query_note says why."""
+    grafeo = pytest.importorskip("grafeo")
+    db = grafeo.GrafeoDB()
+    db.execute("INSERT (:A {name: 'x'})-[:R]->(:B {name: 'y'})")
+    graph = Graph(grafeo_db=db, query="MATCH (a)-[r]->(b) RETURN a, r, b", query_language="gql")
+    graph._execute_backend_query()
+    assert (len(graph.nodes), len(graph.edges), graph.query_note) == (2, 1, "")
+    graph.query = "INSERT (:C)"
+    graph._execute_backend_query()
+    assert len(graph.nodes) == 2
+    assert graph.query_note == "The query returned no rows, so the drawing is unchanged."
+    graph.query = "MATCH (n) RETURN n.name AS name"
+    graph._execute_backend_query()
+    assert len(graph.nodes) == 2
+    assert graph.query_note.startswith("The query returned 3 rows without nodes, edges or paths")
+    assert graph.query_error == ""
 
 
 def test_to_html_returns_string():
@@ -620,7 +703,10 @@ def test_backend_property():
     assert graph.backend is None
 
     class MockBackend:
-        def execute(self, query, language="cypher"):
+        def execute(self, query, *, language="cypher"):
+            return [], []
+
+        def fetch_schema(self):
             return [], []
 
     mb = MockBackend()
@@ -692,6 +778,9 @@ def test_expand_node_uses_cypher_for_languages_without_neighbor_query():
     class RecordingBackend:
         def execute(self, query, *, language="cypher"):
             calls.append((language, query))
+            return [], []
+
+        def fetch_schema(self):
             return [], []
 
     graph = Graph(backend=RecordingBackend(), query_language="sparql")
@@ -928,9 +1017,11 @@ def test_remove_takes_items_out_of_the_lists_and_sends_a_removal_batch():
     assert graph.append_batch["seq"] == 2
 
 
-def test_append_sends_the_lists_and_the_batch_in_one_message():
+def test_append_sends_the_lists_and_the_batch_in_one_message(monkeypatch):
     graph = Graph(nodes=[{"id": "a"}])
     sent = []
-    graph.send_state = lambda key=None: sent.append(sorted(key) if isinstance(key, set | list) else key)
+    monkeypatch.setattr(
+        graph, "send_state", lambda key=None: sent.append(sorted(key) if isinstance(key, set | list) else key)
+    )
     graph.append(nodes=[{"id": "b"}])
     assert sent == [["append_batch", "nodes"]]
