@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.5.3] - 2026-11-12
+## [0.5.3(D)] - 2026-11-12
 
 3D release: a graph can be drawn as a Three.js scene with a force layout in three dimensions, and the Grafeo backend moves to grafeo 0.6.2 in Python and in the browser. An environment with the `grafeo` extra upgrades grafeo to 0.6.2 or later, below 0.7; stay on 0.5.2 to keep an older 0.6.x.
 
