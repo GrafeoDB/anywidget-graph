@@ -1,19 +1,29 @@
 # Changelog
 
-## [0.5.3(D)] - 2026-11-12
+All notable changes to anywidget-graph, an interactive graph widget for Python notebooks built on anywidget.
+
+## [0.5.3] - 2026-11-12
 
 3D release: a graph can be drawn as a Three.js scene with a force layout in three dimensions, and the Grafeo backend moves to grafeo 0.6.2 in Python and in the browser. An environment with the `grafeo` extra upgrades grafeo to 0.6.2 or later, below 0.7; stay on 0.5.2 to keep an older 0.6.x.
 
 ### Added
 
-- **3D view**: `Graph3D`, or `Graph(view="3d")`, draws the graph with the bundled Three.js 0.186.1 in a scene to orbit, pan and zoom, with hover tooltips, click and box or lasso selection; the toolbar's cube button and the settings panel switch views at runtime. The layout is a force layout in three dimensions, set with `force3d_repulsion` (the "bloom") and `force3d_link_distance` (the "spread"), with optional axes, grid and labels (`show_axes`, `show_grid`, `grid_divisions`, `axis_labels`, `camera_position`, `camera_target`).
+- **3D view**: `Graph3D`, or `Graph(view="3d")`, draws the graph with the bundled Three.js 0.186.1 in a scene to orbit, pan and zoom, with hover tooltips, click and box or lasso selection; the toolbar's cube button and the settings panel switch views at runtime. The layout is a force layout in three dimensions, set with `force3d_repulsion` (the "bloom") and `force3d_link_distance` (the "spread", a positive number or `None` for automatic), with optional axes, grid and labels (`show_axes`, `show_grid`, `grid_divisions`, `axis_labels`, `camera_position`, `camera_target`).
+- **The 3D view keeps its layout on change**: `Graph.append()`, `remove()` and a restyle leave the drawn nodes and the camera where they are, and a new node is placed next to the nodes it links to. New nodes and edges from the host are laid out again, as in the 2D view.
+- **3D export**: `to_html()` and `save_html()` on a graph in the 3D view write a page that draws the Three.js scene with its layout, camera, axes and styling, to orbit, hover and select in offline. A graph in the 2D view exports the Sigma page as before.
 - **`3d` extra**: `anywidget-graph[3d]` is a marker extra; Three.js ships in the wheel (`ui/vendor/three.min.js`, licenses in `ui/vendor/three.LICENSES.txt`), so the 3D view needs no further Python packages and loads nothing from a CDN.
 - **3D example**: `examples/demo_3d.py` shows a citation network in the 3D view.
 
 ### Changed
 
 - **Schema properties from grafeo 0.6.2**: The schema panel lists each label's and edge type's property names; grafeo 0.6.2's `schema()` entries carry `properties` as `{name, types}`, which `GrafeoBackend.fetch_schema` reduces to the names.
-- **Front end in TypeScript**: The modules in `ui/` are TypeScript, bundled by esbuild into `ui/dist/widget.js` and `ui/dist/export.js` (`npm run build`). CI type-checks them with `tsc` (`npm run typecheck`) and runs the JavaScript tests (`npm test`).
+- **Front end in TypeScript**: The modules in `ui/` are TypeScript, bundled by esbuild into `ui/dist/` (`npm run build`), and CI type-checks them with `tsc` and runs the JavaScript tests in a `frontend` job. Running the JavaScript checks locally needs Node 22.18 or later.
+
+### Fixed
+
+- **The HTML export draws what the widget draws**: a `to_html()` page draws parallel edges and numeric ids, applies the default `spring` layout, `type_colors` and degree-based sizes, and skips an edge to a node that is not in the data. Parallel edges or such an edge left the page blank.
+- **An edge's own `color` wins**: an edge with a `color` keeps it when `edge_color_field` is set, as the per-item style rule says; the field mapping replaced it.
+- **Large numeric styling fields render**: `color_field`, `size_field` and the edge fields compute their range over any number of values; a few hundred thousand values stopped the render with a `RangeError`.
 
 ### Dependencies
 
@@ -387,3 +397,8 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 ## [0.1.0] - 2026-02-02
 
 - Initial release of anywidget-graph
+
+---
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

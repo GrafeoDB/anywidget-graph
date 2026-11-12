@@ -348,7 +348,7 @@ graph = Graph3D(
 )
 ```
 
-See `examples/demo_3d.py`.
+`append()`, `remove()` and a restyle keep the drawn nodes and the camera in place, as in the 2D view; `to_html()` exports the 3D scene. See `examples/demo_3d.py`.
 
 ## Options
 
@@ -469,6 +469,8 @@ graph.to_html()  # Self-contained HTML string
 graph.to_html(title="My Graph")  # Custom title
 graph.save_html("graph.html")  # Write HTML to file
 ```
+
+The page carries its libraries, so it opens offline. A graph in the 3D view (`Graph3D`, or `view="3d"`) exports the Three.js scene with its layout, camera and styling; one in the 2D view exports the Sigma canvas.
 
 ## Environment Support
 

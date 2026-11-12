@@ -1,4 +1,4 @@
-"""Marimo demo: the 3D view of anywidget-graph (Graph3D) — the graph laid out and rendered in three dimensions."""
+"""Marimo demo: the 3D view of anywidget-graph (Graph3D): the graph laid out and rendered in three dimensions."""
 
 import marimo
 
@@ -23,7 +23,7 @@ def _():
 @app.cell
 def _(Graph3D):
     # A citation network of scientific papers: topics are the colour-coded cluster hubs,
-    # papers cite older papers, venues host them. No author roster — the papers are the actors.
+    # papers cite older papers, venues host them. No author roster: the papers are the actors.
     topics = {
         "Graph Databases": "#6366f1",
         "Query Languages": "#f59e0b",
@@ -102,7 +102,7 @@ def _(Graph3D):
         edges.append({"source": f"w{i}", "target": "v_" + venue.lower(), "label": "PUBLISHED_IN"})
         edges.append({"source": f"w{i}", "target": topic_id(topic), "label": "ABOUT"})
     # Citations: within each topic every paper cites the 1-2 older papers of that topic,
-    # and highly-cited papers also cite the benchmarking survey — a dense, layered network
+    # and highly-cited papers also cite the benchmarking survey, a dense, layered network
     by_topic = {}
     for i, (_t, _y, _c, topic, _v) in enumerate(papers):
         by_topic.setdefault(topic, []).append(i)
