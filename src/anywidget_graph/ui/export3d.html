@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+body {{ margin: 0; background: {background}; font-family: sans-serif; }}
+#wrapper {{ width: {width}; height: {height}; }}
+#container {{ position: relative; width: 100%; height: 100%; }}
+</style>
+<style>
+/* The widget's styles: the 3D view's controls, tooltip and selection overlays */
+{css}
+</style>
+</head>
+<body>
+<div id="wrapper" class="awg-wrapper awg-wrapper-3d">
+<div id="container" class="awg-graph-container awg3-container"></div>
+</div>
+<script type="module">
+// Three.js and OrbitControls are inlined (the widget's bundled copy): the page needs no CDN
+{vendor_js_3d}
+
+const DATA = {json_data};
+const OPTIONS = {json_options};
+
+// the 3D renderer, bundled from ui/export3d.ts by scripts/vendor/build-esm.mjs (tooltips are built from text)
+{export_js}
+</script>
+</body>
+</html>

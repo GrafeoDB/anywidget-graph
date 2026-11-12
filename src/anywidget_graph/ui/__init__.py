@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__all__ = ["get_css", "get_esm", "get_export_js", "get_vendor_js", "get_vendor_js_3d"]
+__all__ = ["get_css", "get_esm", "get_export3d_js", "get_export_js", "get_vendor_js", "get_vendor_js_3d"]
 
 _UI_DIR = Path(__file__).parent
 
@@ -47,6 +47,12 @@ def get_export_js() -> str:
     ``scripts/vendor/build-esm.mjs`` the same way as ``dist/widget.js``. ``widget.py``'s ``to_html`` inlines it into
     ``export.html`` after the page's ``DATA``/``OPTIONS`` constants."""
     return _read_file(_UI_DIR / "dist" / "export.js")
+
+
+def get_export3d_js() -> str:
+    """The 3D view's export page renderer: ``dist/export3d.js``, bundled from ``export3d.ts`` like ``export.js``.
+    ``to_html`` inlines it into ``export3d.html`` when the graph's ``view`` is ``"3d"``."""
+    return _read_file(_UI_DIR / "dist" / "export3d.js")
 
 
 def get_css() -> str:

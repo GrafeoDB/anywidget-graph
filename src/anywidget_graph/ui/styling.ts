@@ -1,5 +1,5 @@
 /**
- * Property-based styling shared by the 2D view (index.js) and the 3D view (canvas3d.js): the color scales, the
+ * Property-based styling shared by the 2D view (index.ts) and the 3D view (canvas3d.ts): the color scales, the
  * categorical palette, and how a node's or edge's own fields map to the color, size and label it is drawn with.
  */
 
@@ -123,6 +123,17 @@ export function autoLabel(node: GraphNode): string {
  * domains computed from the data when the host leaves them out, the degree map for auto-sizing, and the host's
  * per-type colors and visibility levels.
  */
+/** [min, max] of the values, or null when there are none (a loop: spreading a large array overflows the stack). */
+function extentOf(vals: number[]): number[] | null {
+  if (vals.length === 0) return null;
+  let min = Infinity, max = -Infinity;
+  for (const v of vals) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return [min, max];
+}
+
 export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: GraphEdge[]): StylingOpts {
   const colorField = model.get("color_field");
   const colorScale = model.get("color_scale") || "viridis";
@@ -133,14 +144,14 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
   // Auto-compute color domain
   if (colorField && !colorDomain) {
     const vals = nodes.map((n) => n[colorField]).filter((v): v is number => typeof v === "number");
-    if (vals.length > 0) colorDomain = [Math.min(...vals), Math.max(...vals)];
+    colorDomain = extentOf(vals) ?? colorDomain;
   }
 
   // Compute size domain
   let sizeDomain: number[] | null = null;
   if (sizeField) {
     const vals = nodes.map((n) => n[sizeField]).filter((v): v is number => typeof v === "number");
-    if (vals.length > 0) sizeDomain = [Math.min(...vals), Math.max(...vals)];
+    sizeDomain = extentOf(vals);
   }
 
   // Edge styling
@@ -149,7 +160,7 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
   let edgeColorDomain: number[] | null = null;
   if (edgeColorField) {
     const vals = edges.map((e) => e[edgeColorField]).filter((v): v is number => typeof v === "number");
-    if (vals.length > 0) edgeColorDomain = [Math.min(...vals), Math.max(...vals)];
+    edgeColorDomain = extentOf(vals);
   }
 
   const edgeSizeField = model.get("edge_size_field");
@@ -157,15 +168,17 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
   let edgeSizeDomain: number[] | null = null;
   if (edgeSizeField) {
     const vals = edges.map((e) => e[edgeSizeField]).filter((v): v is number => typeof v === "number");
-    if (vals.length > 0) edgeSizeDomain = [Math.min(...vals), Math.max(...vals)];
+    edgeSizeDomain = extentOf(vals);
   }
 
   // Compute degree map for auto-sizing when no sizeField is set
   const degreeMap = new Map<string, number>();
   if (!sizeField) {
     edges.forEach((e) => {
-      degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
-      degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
+      // Keyed by the id as a string: the data's ids may be numbers
+      const s = String(e.source), t = String(e.target);
+      degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+      degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
     });
   }
 
@@ -181,6 +194,8 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
 
 /** An edge's color: its own `color`, else the field/scale, else the per-type color, else the default. */
 export function computeEdgeColor(edge: GraphEdge, opts: StylingOpts): string {
+  // A per-item colour wins over the field mapping, as for nodes
+  if (typeof edge.color === "string" && edge.color) return edge.color;
   let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
   if (opts.edgeColorField && edge[opts.edgeColorField] !== undefined) {
     const val = edge[opts.edgeColorField];

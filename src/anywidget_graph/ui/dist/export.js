@@ -85,6 +85,15 @@
     if (Array.isArray(node.labels) && node.labels.length > 0) return node.labels[0];
     return String(node.id || "");
   }
+  function extentOf(vals) {
+    if (vals.length === 0) return null;
+    let min = Infinity, max = -Infinity;
+    for (const v of vals) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return [min, max];
+  }
   function getStylingOpts(model2, nodes2, edges2) {
     const colorField = model2.get("color_field");
     const colorScale = model2.get("color_scale") || "viridis";
@@ -93,32 +102,33 @@
     const sizeRange = model2.get("size_range") || [5, 30];
     if (colorField && !colorDomain) {
       const vals = nodes2.map((n) => n[colorField]).filter((v) => typeof v === "number");
-      if (vals.length > 0) colorDomain = [Math.min(...vals), Math.max(...vals)];
+      colorDomain = extentOf(vals) ?? colorDomain;
     }
     let sizeDomain = null;
     if (sizeField) {
       const vals = nodes2.map((n) => n[sizeField]).filter((v) => typeof v === "number");
-      if (vals.length > 0) sizeDomain = [Math.min(...vals), Math.max(...vals)];
+      sizeDomain = extentOf(vals);
     }
     const edgeColorField = model2.get("edge_color_field");
     const edgeColorScale = model2.get("edge_color_scale") || "viridis";
     let edgeColorDomain = null;
     if (edgeColorField) {
       const vals = edges2.map((e) => e[edgeColorField]).filter((v) => typeof v === "number");
-      if (vals.length > 0) edgeColorDomain = [Math.min(...vals), Math.max(...vals)];
+      edgeColorDomain = extentOf(vals);
     }
     const edgeSizeField = model2.get("edge_size_field");
     const edgeSizeRange = model2.get("edge_size_range") || [1, 8];
     let edgeSizeDomain = null;
     if (edgeSizeField) {
       const vals = edges2.map((e) => e[edgeSizeField]).filter((v) => typeof v === "number");
-      if (vals.length > 0) edgeSizeDomain = [Math.min(...vals), Math.max(...vals)];
+      edgeSizeDomain = extentOf(vals);
     }
     const degreeMap = /* @__PURE__ */ new Map();
     if (!sizeField) {
       edges2.forEach((e) => {
-        degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
-        degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
+        const s = String(e.source), t = String(e.target);
+        degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+        degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
       });
     }
     return {
@@ -140,12 +150,30 @@
     };
   }
   function computeEdgeColor(edge, opts2) {
+    if (typeof edge.color === "string" && edge.color) return edge.color;
     let color = colorFor(edge, edge.type || edge.label || "unknown", opts2.typeColors?.edges, "#94a3b8");
     if (opts2.edgeColorField && edge[opts2.edgeColorField] !== void 0) {
       const val = edge[opts2.edgeColorField];
       color = typeof val === "number" ? getColorFromScale(val, opts2.edgeColorScale, opts2.edgeColorDomain) : getCategoricalColor(val);
     }
     return color;
+  }
+
+  // spring.ts
+  function springLayout(nodes2, links) {
+    const n = nodes2.length;
+    const indexOf = new Map(nodes2.map((d, i) => [d.id, i]));
+    const d3Links = [];
+    for (const [source, target] of links) {
+      const s = indexOf.get(source), t = indexOf.get(target);
+      if (s !== void 0 && t !== void 0) d3Links.push({ source: s, target: t });
+    }
+    const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
+    const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
+    const simulation = d3Force.forceSimulation(nodes2).force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4)).force("charge", d3Force.forceManyBody().strength(chargeStrength)).force("center", d3Force.forceCenter(0, 0)).force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8)).stop();
+    const ticks = Math.min(300, Math.max(100, n * 2));
+    for (let i = 0; i < ticks; i++) simulation.tick();
+    return new Map(nodes2.map((d) => [d.id, { x: d.x ?? 0, y: d.y ?? 0 }]));
   }
 
   // export.ts
@@ -158,17 +186,20 @@
     on: () => {
     }
   };
-  var graph = new Graph();
+  var graph = new Graph({ multi: true });
   var nodes = DATA.nodes || [];
   var edges = DATA.edges || [];
   var opts = getStylingOpts(model, nodes, edges);
+  var nodeByKey = new Map(nodes.map((n) => [String(n.id), n]));
   nodes.forEach((node) => {
-    graph.addNode(node.id, {
+    const key = String(node.id);
+    if (graph.hasNode(key)) return;
+    graph.addNode(key, {
       label: autoLabel(node),
       x: node.x ?? Math.random() * 100,
       y: node.y ?? Math.random() * 100,
-      size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange),
-      color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, void 0)
+      size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(key)),
+      color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes)
     });
   });
   edges.forEach((edge) => {
@@ -179,7 +210,9 @@
       const t = max > min && typeof v === "number" ? (v - min) / (max - min) : 0.5;
       size = opts.edgeSizeRange[0] + t * (opts.edgeSizeRange[1] - opts.edgeSizeRange[0]);
     }
-    graph.addEdge(edge.source, edge.target, {
+    const source = String(edge.source), target = String(edge.target);
+    if (!graph.hasNode(source) || !graph.hasNode(target)) return;
+    graph.addEdge(source, target, {
       label: edge.label || "",
       size,
       color: computeEdgeColor(edge, opts)
@@ -188,6 +221,12 @@
   var layoutName = OPTIONS.layout || "spring";
   if (graph.order > 0) {
     switch (layoutName) {
+      case "spring": {
+        const springNodes = graph.mapNodes((id, attrs) => ({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 }));
+        const links = graph.mapEdges((_edge, _attrs, source, target) => [source, target]);
+        for (const [id, p] of springLayout(springNodes, links)) graph.mergeNodeAttributes(id, { x: p.x, y: p.y });
+        break;
+      }
       case "circular":
         circular.assign(graph);
         break;
@@ -263,7 +302,7 @@
     return row;
   }
   renderer.on("enterNode", ({ node, event }) => {
-    const original = nodes.find((n) => n.id === node) || {};
+    const original = nodeByKey.get(node) || {};
     const rows = [];
     for (const [k, v] of Object.entries(original)) {
       if (k === "x" || k === "y") continue;

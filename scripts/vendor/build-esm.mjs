@@ -1,6 +1,7 @@
 // Bundle the widget's front end (src/anywidget_graph/ui/index.ts and the modules it imports) into the one ES module the
 // widget loads: src/anywidget_graph/ui/dist/widget.js; and the standalone export page's renderer (ui/export.ts) into
-// dist/export.js, which widget.py's to_html inlines into ui/export.html. Run after `npm ci` in this folder:
+// dist/export.js, which widget.py's to_html inlines into ui/export.html (dist/export3d.js and ui/export3d.html for
+// the 3D view). Run after `npm ci` in this folder:
 // npm run build:esm. With --check it builds in memory and fails when a committed file differs (CI, tests/test_ui.py).
 import { build } from "esbuild";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -34,6 +35,8 @@ const outputs = [
   await bundle("index.ts", join(ui, "dist", "widget.js"), "esm", banner),
   // The export page inlines this after its DATA/OPTIONS constants in one module script, so no exports
   await bundle("export.ts", join(ui, "dist", "export.js"), "iife", banner),
+  // The 3D view's export page (Graph3D / view="3d"), inlined into ui/export3d.html the same way
+  await bundle("export3d.ts", join(ui, "dist", "export3d.js"), "iife", banner),
 ];
 
 if (process.argv.includes("--check")) {

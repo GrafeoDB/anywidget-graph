@@ -6,6 +6,8 @@
  */
 import { Graph, Sigma, circular, random, forceAtlas2 } from "./vendor-globals.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts } from "./styling.ts";
+import { springLayout } from "./spring.ts";
+import type { SpringNode } from "./spring.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
 
 // Written into the page by the template (const DATA = {...}; const OPTIONS = {...};) before this bundle runs
@@ -20,18 +22,23 @@ const model: WidgetModel = {
   on: () => {},
 };
 
-const graph = new Graph();
+// A multigraph, as in the widget: two edges between the same nodes are both drawn
+const graph = new Graph({ multi: true });
 const nodes = DATA.nodes || [];
 const edges = DATA.edges || [];
 const opts = getStylingOpts(model, nodes, edges);
+// Graph keys are strings; the data's ids may be numbers
+const nodeByKey = new Map(nodes.map((n) => [String(n.id), n] as [string, GraphNode]));
 
 nodes.forEach((node) => {
-  graph.addNode(node.id, {
+  const key = String(node.id);
+  if (graph.hasNode(key)) return;
+  graph.addNode(key, {
     label: autoLabel(node),
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
-    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange),
-    color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, undefined),
+    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(key)),
+    color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
   });
 });
 
@@ -43,7 +50,10 @@ edges.forEach((edge) => {
     const t = max > min && typeof v === "number" ? (v - min) / (max - min) : 0.5;
     size = opts.edgeSizeRange[0] + t * (opts.edgeSizeRange[1] - opts.edgeSizeRange[0]);
   }
-  graph.addEdge(edge.source, edge.target, {
+  // An edge to a node that is not in the data is skipped, as in the widget
+  const source = String(edge.source), target = String(edge.target);
+  if (!graph.hasNode(source) || !graph.hasNode(target)) return;
+  graph.addEdge(source, target, {
     label: edge.label || "",
     size,
     color: computeEdgeColor(edge, opts),
@@ -54,6 +64,13 @@ edges.forEach((edge) => {
 const layoutName = OPTIONS.layout || "spring";
 if (graph.order > 0) {
   switch (layoutName) {
+    case "spring": {
+      // The widget's default layout (spring.ts); nodes the host placed keep their x and y as a start
+      const springNodes: SpringNode[] = graph.mapNodes((id, attrs) => ({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 }));
+      const links: [string, string][] = graph.mapEdges((_edge, _attrs, source, target) => [source, target] as [string, string]);
+      for (const [id, p] of springLayout(springNodes, links)) graph.mergeNodeAttributes(id, { x: p.x, y: p.y });
+      break;
+    }
     case "circular":
       circular.assign(graph);
       break;
@@ -142,7 +159,7 @@ function tooltipRow(key: string, value: unknown) {
 }
 
 renderer.on("enterNode", ({ node, event }) => {
-  const original = nodes.find((n) => n.id === node) || ({} as GraphNode);
+  const original = nodeByKey.get(node) || ({} as GraphNode);
   const rows: HTMLElement[] = [];
   for (const [k, v] of Object.entries(original)) {
     if (k === "x" || k === "y") continue;

@@ -2,7 +2,7 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
-import { withDefaults, followHostTheme, detectDark } from "./defaults.ts";
+import { withDefaults, followHostTheme, detectDark, WIDGET_FEATURES } from "./defaults.ts";
 import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.ts";
 
 import { ICONS } from "./icons.ts";
@@ -11,10 +11,12 @@ import { createSchemaPanel } from "./schema.ts";
 import { createSettingsPanel } from "./settings.ts";
 import { createPropertiesPanel } from "./properties.ts";
 import { createResultsDrawer } from "./results.ts";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
 import * as grafeoEmbedBackend from "./grafeo-embed.ts";
-import { autoLabel, computeNodeColor, computeNodeSize, getCategoricalColor, getColorFromScale, getStylingOpts, pointInPolygon } from "./styling.ts";
+import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, pointInPolygon } from "./styling.ts";
 import { executeQuery } from "./query.ts";
+import { springLayout } from "./spring.ts";
+import type { SpringNode } from "./spring.ts";
 import { render3D } from "./index3d.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
 import { errorText } from "./types.ts";
@@ -28,9 +30,6 @@ import type { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
  */
 /** A circle in screen coordinates. */
 type Circle = Point & { r: number };
-
-/** A d3-force simulation node: the graph node's id and drawn size ride along. */
-type D3Node = SimulationNodeDatum & { id: string; size: number };
 
 /** A node of a lane's d3 simulation: position plus the band it is clamped into and its collision radius. */
 type LaneSimNode = SimulationNodeDatum & { id: string; band: Band; radius: number; tall?: number; partner?: number };
@@ -91,7 +90,7 @@ function buildNodeAttrs(node: GraphNode, opts: StylingOpts): Record<string, unkn
     nodeType: (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "Unlabeled"),
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
-    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(node.id)),
+    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(String(node.id))),
     color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
     // Per-item style fields a host sets on a node (each optional): drawn by the reducers and the overlay
     opacity: node.opacity,
@@ -106,13 +105,8 @@ function buildNodeAttrs(node: GraphNode, opts: StylingOpts): Record<string, unkn
 }
 
 function buildEdgeAttrs(edge: GraphEdge, opts: StylingOpts): Record<string, unknown> {
-  let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
-  if (opts.edgeColorField && edge[opts.edgeColorField] !== undefined) {
-    const val = edge[opts.edgeColorField];
-    color = typeof val === "number"
-      ? getColorFromScale(val, opts.edgeColorScale, opts.edgeColorDomain)
-      : getCategoricalColor(val);
-  }
+  // Its own colour, else the field mapping, else the per-type colour (styling.ts, shared with the 3D view and the export)
+  const color = computeEdgeColor(edge, opts);
 
   let size = edge.size || 2;
   if (opts.edgeSizeField && edge[opts.edgeSizeField] !== undefined && opts.edgeSizeDomain) {
@@ -326,7 +320,8 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   // Linked lanes, append, pulse and theme: shared state (empty unless the host sets lanes, batches, pulse or theme)
   // A batch already in the model when this view renders is in its nodes and edges (Graph.append keeps them there)
   const laneState: LaneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), vanish: new Map(), edgeVanish: new Map(), sizeScale: new Map(), rows: new Map(), move: new Map(), labelled: new Map(), labelText: new Map(), quietLanes: new Set(), hoverNode: null, pulse: new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
-  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons", "action_edges", "remove", "totals", "force_layout", "lane_rows", "relayout", "type_colors", "lane_labels"]);
+  // The same list from either view, so a host reads what this build offers whichever view is mounted
+  model.set("_features", WIDGET_FEATURES);
   model.save_changes();
 
   // The data drawn: the host's nodes and edges with the appended batches merged in. A redraw (new lanes, a style)
@@ -671,49 +666,20 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
         break;
       }
       case "spring": {
-        // d3-force spring layout: produces clean hub-spoke rings for hierarchical data
-        const n = visibleNodes.size || graph.order;
-
-        // Build node and link arrays for d3 (visible nodes only)
-        const d3Nodes: D3Node[] = [];
-        const nodeIndexMap = new Map<string, number>();
-        let idx = 0;
+        // d3-force spring layout (spring.ts, shared with the export page), visible nodes only
+        const d3Nodes: SpringNode[] = [];
         graph.forEachNode((id, attrs) => {
-          if (!visibleNodes.has(id)) return;
-          nodeIndexMap.set(id, idx);
-          d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
-          idx++;
+          if (visibleNodes.has(id)) d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
         });
+        const links: [string, string][] = [];
+        graph.forEachEdge((_edgeId, _attrs, source, target) => { links.push([source, target]); });
 
-        const d3Links: SimulationLinkDatum<D3Node>[] = [];
-        graph.forEachEdge((_edgeId, _attrs, source, target) => {
-          if (nodeIndexMap.has(source) && nodeIndexMap.has(target)) {
-            d3Links.push({ source: nodeIndexMap.get(source)!, target: nodeIndexMap.get(target)! });
+        for (const [id, p] of springLayout(d3Nodes, links)) {
+          if (graph.hasNode(id)) {
+            graph.setNodeAttribute(id, "x", p.x);
+            graph.setNodeAttribute(id, "y", p.y);
           }
-        });
-
-        // Configure forces: generous spacing so hub-spoke rings are clear
-        const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
-        const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
-
-        const simulation = d3Force.forceSimulation<D3Node>(d3Nodes)
-          .force("link", d3Force.forceLink<D3Node, SimulationLinkDatum<D3Node>>(d3Links).distance(linkDistance).strength(0.4))
-          .force("charge", d3Force.forceManyBody().strength(chargeStrength))
-          .force("center", d3Force.forceCenter(0, 0))
-          .force("collide", d3Force.forceCollide().radius((d) => ((d as { size: number }).size * 2 + 4)).strength(0.8))
-          .stop();
-
-        // Run simulation synchronously
-        const ticks = Math.min(300, Math.max(100, n * 2));
-        for (let i = 0; i < ticks; i++) simulation.tick();
-
-        // Write positions back to graphology
-        d3Nodes.forEach((d) => {
-          if (graph.hasNode(d.id)) {
-            graph.setNodeAttribute(d.id, "x", d.x);
-            graph.setNodeAttribute(d.id, "y", d.y);
-          }
-        });
+        }
         break;
       }
     }

@@ -1099,3 +1099,46 @@ def test_3d_view_traits_have_their_defaults():
     assert graph.axis_labels == {"x": "X", "y": "Y", "z": "Z"}
     assert graph.camera_position == [2, 2, 2]
     assert graph.camera_target == [0, 0, 0]
+
+
+def test_force3d_link_distance_is_a_positive_number_or_automatic():
+    from traitlets import TraitError
+
+    assert Graph3D(force3d_link_distance=12.5).force3d_link_distance == 12.5
+    assert Graph3D(force3d_link_distance=None).force3d_link_distance is None
+    for bad in (0, -3):
+        with pytest.raises(TraitError):
+            Graph3D(force3d_link_distance=bad)
+
+
+def test_to_html_of_the_3d_view_exports_the_3d_scene():
+    """A graph in the 3D view exports a page that draws the Three.js scene with its 3D settings, offline."""
+    graph = Graph3D(
+        nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+        edges=[{"source": "a", "target": "b"}],
+        force3d_repulsion=2.5,
+        show_grid=False,
+        camera_position=[3, 1, 2],
+    )
+    page = graph.to_html(title="Scene")
+    assert "<title>Scene</title>" in page
+    assert "anywidgetGraph3dVendor" in page
+    assert "createCanvas3D" in page
+    assert '"force3d_repulsion": 2.5' in page
+    assert '"show_grid": false' in page
+    assert '"camera_position": [3, 1, 2]' in page
+    # Nothing loads from the network (Three.js cites a paper in a shader comment, which is not a load)
+    script = page.split("<script", 1)[1].replace("https://jcgt.org/published/0007/04/01/", "")
+    assert "https://" not in script
+    # The inlined library and styles do not end the script early
+    assert page.count("<script") == page.count("</script>") == 1
+    # The same graph in the 2D view exports the Sigma page, without Three.js
+    graph.view = "2d"
+    flat = graph.to_html()
+    assert "anywidgetGraph3dVendor" not in flat
+    assert "anywidgetGraphVendor" in flat
+
+
+def test_to_html_carries_the_type_colors():
+    graph = Graph(nodes=[{"id": "a", "labels": ["Person"]}], type_colors={"nodes": {"Person": "#ff8800"}})
+    assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in graph.to_html()

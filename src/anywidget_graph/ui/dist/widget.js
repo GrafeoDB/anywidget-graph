@@ -1145,10 +1145,13 @@ function createSettingsPanel(model, callbacks) {
       input.step = "1";
       const current = model.get("force3d_link_distance");
       input.value = current === null || current === void 0 ? "" : String(current);
-      input.addEventListener("input", (e) => {
-        const raw = e.target.value.trim();
-        model.set("force3d_link_distance", raw === "" ? null : Number(raw));
+      input.addEventListener("change", () => {
+        const raw = input.value.trim();
+        const value = Number(raw);
+        const next = raw !== "" && Number.isFinite(value) && value > 0 ? value : null;
+        model.set("force3d_link_distance", next);
         model.save_changes();
+        input.value = next === null ? "" : String(next);
       });
       model.on("change:force3d_link_distance", () => {
         const v = model.get("force3d_link_distance");
@@ -2176,7 +2179,7 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
           name: label,
           count,
           total,
-          color: typeColorMap.get(label) ?? (model.get("type_colors")?.nodes ?? {})[label] ?? hashColor(label),
+          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || hashColor(label),
           kind: "node",
           properties: props,
           isHidden: hiddenNodeTypes.has(label),
@@ -2235,7 +2238,7 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
           name: type,
           count,
           total,
-          color: typeColorMap.get(type) ?? (model.get("type_colors")?.edges ?? {})[type] ?? hashColor(type),
+          color: typeColorMap.get(type) || (model.get("type_colors")?.edges || {})[type] || hashColor(type),
           kind: "edge",
           properties: props,
           isHidden: hiddenEdgeTypes.has(type),
@@ -2707,6 +2710,15 @@ function autoLabel(node) {
   if (Array.isArray(node.labels) && node.labels.length > 0) return node.labels[0];
   return String(node.id || "");
 }
+function extentOf(vals) {
+  if (vals.length === 0) return null;
+  let min = Infinity, max = -Infinity;
+  for (const v of vals) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return [min, max];
+}
 function getStylingOpts(model, nodes, edges) {
   const colorField = model.get("color_field");
   const colorScale = model.get("color_scale") || "viridis";
@@ -2715,32 +2727,33 @@ function getStylingOpts(model, nodes, edges) {
   const sizeRange = model.get("size_range") || [5, 30];
   if (colorField && !colorDomain) {
     const vals = nodes.map((n) => n[colorField]).filter((v) => typeof v === "number");
-    if (vals.length > 0) colorDomain = [Math.min(...vals), Math.max(...vals)];
+    colorDomain = extentOf(vals) ?? colorDomain;
   }
   let sizeDomain = null;
   if (sizeField) {
     const vals = nodes.map((n) => n[sizeField]).filter((v) => typeof v === "number");
-    if (vals.length > 0) sizeDomain = [Math.min(...vals), Math.max(...vals)];
+    sizeDomain = extentOf(vals);
   }
   const edgeColorField = model.get("edge_color_field");
   const edgeColorScale = model.get("edge_color_scale") || "viridis";
   let edgeColorDomain = null;
   if (edgeColorField) {
     const vals = edges.map((e) => e[edgeColorField]).filter((v) => typeof v === "number");
-    if (vals.length > 0) edgeColorDomain = [Math.min(...vals), Math.max(...vals)];
+    edgeColorDomain = extentOf(vals);
   }
   const edgeSizeField = model.get("edge_size_field");
   const edgeSizeRange = model.get("edge_size_range") || [1, 8];
   let edgeSizeDomain = null;
   if (edgeSizeField) {
     const vals = edges.map((e) => e[edgeSizeField]).filter((v) => typeof v === "number");
-    if (vals.length > 0) edgeSizeDomain = [Math.min(...vals), Math.max(...vals)];
+    edgeSizeDomain = extentOf(vals);
   }
   const degreeMap = /* @__PURE__ */ new Map();
   if (!sizeField) {
     edges.forEach((e) => {
-      degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
-      degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
+      const s = String(e.source), t = String(e.target);
+      degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+      degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
     });
   }
   return {
@@ -2762,6 +2775,7 @@ function getStylingOpts(model, nodes, edges) {
   };
 }
 function computeEdgeColor(edge, opts) {
+  if (typeof edge.color === "string" && edge.color) return edge.color;
   let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
   if (opts.edgeColorField && edge[opts.edgeColorField] !== void 0) {
     const val = edge[opts.edgeColorField];
@@ -2826,6 +2840,23 @@ async function executeQuery4(model) {
   model.save_changes();
 }
 
+// spring.ts
+function springLayout(nodes, links) {
+  const n = nodes.length;
+  const indexOf = new Map(nodes.map((d, i) => [d.id, i]));
+  const d3Links = [];
+  for (const [source, target] of links) {
+    const s = indexOf.get(source), t = indexOf.get(target);
+    if (s !== void 0 && t !== void 0) d3Links.push({ source: s, target: t });
+  }
+  const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
+  const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
+  const simulation = d3Force.forceSimulation(nodes).force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4)).force("charge", d3Force.forceManyBody().strength(chargeStrength)).force("center", d3Force.forceCenter(0, 0)).force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8)).stop();
+  const ticks = Math.min(300, Math.max(100, n * 2));
+  for (let i = 0; i < ticks; i++) simulation.tick();
+  return new Map(nodes.map((d) => [d.id, { x: d.x ?? 0, y: d.y ?? 0 }]));
+}
+
 // vendor-globals3d.ts
 var { THREE, OrbitControls } = anywidgetGraph3dVendor;
 
@@ -2845,7 +2876,7 @@ function autoLinkDistance(nodeCount) {
 }
 function createForce3D(options = {}) {
   const repulsion = options.repulsion ?? 1;
-  const linkDistanceOpt = options.linkDistance ?? null;
+  const linkDistanceOpt = typeof options.linkDistance === "number" && options.linkDistance > 0 ? options.linkDistance : null;
   const gravity = options.gravity ?? 0.03;
   const collision = options.collision ?? true;
   const maxTicks = options.ticks ?? 300;
@@ -2875,6 +2906,7 @@ function createForce3D(options = {}) {
     const pinnedArr = new Uint8Array(n);
     pinned = pinnedArr;
     linkDistance = linkDistanceOpt ?? autoLinkDistance(n);
+    rand = mulberry32(seed);
     const zs = new Set(nodes.map((nd) => nd.z));
     const zVaries = zs.size > 1;
     const r0 = linkDistance * Math.cbrt(Math.max(n, 1));
@@ -2910,6 +2942,9 @@ function createForce3D(options = {}) {
   }
   function tick() {
     if (!pos || !vel || !radius || !pinned || tickCount >= maxTicks) return 0;
+    return step(pos, vel, radius, pinned);
+  }
+  function step(pos2, vel2, radius2, pinned2) {
     const n = ids.length;
     if (n === 0) return 0;
     alpha += (0 - alpha) * alphaDecay;
@@ -2917,92 +2952,97 @@ function createForce3D(options = {}) {
     const a = alpha;
     if (a === 0) return 0;
     const k = repulsion * linkDistance * linkDistance * 0.8;
-    const cutoff2 = linkDistance * 6 * (linkDistance * 6);
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const dx = pos[j * 3] - pos[i * 3];
-        const dy = pos[j * 3 + 1] - pos[i * 3 + 1];
-        const dz = pos[j * 3 + 2] - pos[i * 3 + 2];
-        const d2 = dx * dx + dy * dy + dz * dz + 0.01;
-        if (d2 > cutoff2) continue;
-        const f = k / d2 * a;
-        const fx = dx / Math.sqrt(d2) * f;
-        const fy = dy / Math.sqrt(d2) * f;
-        const fz = dz / Math.sqrt(d2) * f;
-        vel[i * 3] -= fx;
-        vel[i * 3 + 1] -= fy;
-        vel[i * 3 + 2] -= fz;
-        vel[j * 3] += fx;
-        vel[j * 3 + 1] += fy;
-        vel[j * 3 + 2] += fz;
+    const cutoff = linkDistance * 6;
+    const cutoff2 = cutoff * cutoff;
+    forEachNearPair(pos2, n, cutoff, (i, j) => {
+      let dx = pos2[j * 3] - pos2[i * 3];
+      let dy = pos2[j * 3 + 1] - pos2[i * 3 + 1];
+      let dz = pos2[j * 3 + 2] - pos2[i * 3 + 2];
+      if (dx === 0 && dy === 0 && dz === 0) {
+        dx = (rand() - 0.5) * 1e-6;
+        dy = (rand() - 0.5) * 1e-6;
+        dz = (rand() - 0.5) * 1e-6;
       }
-    }
+      const d2 = dx * dx + dy * dy + dz * dz + 0.01;
+      if (d2 > cutoff2) return;
+      const f = k / d2 * a;
+      const inv = 1 / Math.sqrt(d2);
+      const fx = dx * inv * f;
+      const fy = dy * inv * f;
+      const fz = dz * inv * f;
+      vel2[i * 3] -= fx;
+      vel2[i * 3 + 1] -= fy;
+      vel2[i * 3 + 2] -= fz;
+      vel2[j * 3] += fx;
+      vel2[j * 3 + 1] += fy;
+      vel2[j * 3 + 2] += fz;
+    });
     const linkStrength = 0.08;
     for (const [i, j, rest] of links) {
-      const dx = pos[j * 3] - pos[i * 3];
-      const dy = pos[j * 3 + 1] - pos[i * 3 + 1];
-      const dz = pos[j * 3 + 2] - pos[i * 3 + 2];
+      const dx = pos2[j * 3] - pos2[i * 3];
+      const dy = pos2[j * 3 + 1] - pos2[i * 3 + 1];
+      const dz = pos2[j * 3 + 2] - pos2[i * 3 + 2];
       const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.01;
       const f = (d - rest) * linkStrength * a;
       const fx = dx / d * f;
       const fy = dy / d * f;
       const fz = dz / d * f;
-      vel[i * 3] += fx;
-      vel[i * 3 + 1] += fy;
-      vel[i * 3 + 2] += fz;
-      vel[j * 3] -= fx;
-      vel[j * 3 + 1] -= fy;
-      vel[j * 3 + 2] -= fz;
+      vel2[i * 3] += fx;
+      vel2[i * 3 + 1] += fy;
+      vel2[i * 3 + 2] += fz;
+      vel2[j * 3] -= fx;
+      vel2[j * 3 + 1] -= fy;
+      vel2[j * 3 + 2] -= fz;
     }
     let cx = 0, cy = 0, cz = 0;
     for (let i = 0; i < n; i++) {
-      cx += pos[i * 3];
-      cy += pos[i * 3 + 1];
-      cz += pos[i * 3 + 2];
+      cx += pos2[i * 3];
+      cy += pos2[i * 3 + 1];
+      cz += pos2[i * 3 + 2];
     }
     cx /= n;
     cy /= n;
     cz /= n;
     const velocityDecay = 0.6;
     for (let i = 0; i < n; i++) {
-      if (pinned[i]) {
-        vel[i * 3] = vel[i * 3 + 1] = vel[i * 3 + 2] = 0;
+      if (pinned2[i]) {
+        vel2[i * 3] = vel2[i * 3 + 1] = vel2[i * 3 + 2] = 0;
         continue;
       }
-      vel[i * 3] += (cx - pos[i * 3]) * gravity * a;
-      vel[i * 3 + 1] += (cy - pos[i * 3 + 1]) * gravity * a;
-      vel[i * 3 + 2] += (cz - pos[i * 3 + 2]) * gravity * a;
-      vel[i * 3] *= velocityDecay;
-      vel[i * 3 + 1] *= velocityDecay;
-      vel[i * 3 + 2] *= velocityDecay;
-      pos[i * 3] += vel[i * 3];
-      pos[i * 3 + 1] += vel[i * 3 + 1];
-      pos[i * 3 + 2] += vel[i * 3 + 2];
+      vel2[i * 3] += (cx - pos2[i * 3]) * gravity * a;
+      vel2[i * 3 + 1] += (cy - pos2[i * 3 + 1]) * gravity * a;
+      vel2[i * 3 + 2] += (cz - pos2[i * 3 + 2]) * gravity * a;
+      vel2[i * 3] *= velocityDecay;
+      vel2[i * 3 + 1] *= velocityDecay;
+      vel2[i * 3 + 2] *= velocityDecay;
+      pos2[i * 3] += vel2[i * 3];
+      pos2[i * 3 + 1] += vel2[i * 3 + 1];
+      pos2[i * 3 + 2] += vel2[i * 3 + 2];
     }
     if (collision) {
-      for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-          const dx = pos[j * 3] - pos[i * 3];
-          const dy = pos[j * 3 + 1] - pos[i * 3 + 1];
-          const dz = pos[j * 3 + 2] - pos[i * 3 + 2];
-          const min = radius[i] + radius[j];
-          const d2 = dx * dx + dy * dy + dz * dz;
-          if (d2 >= min * min || d2 === 0) continue;
-          const d = Math.sqrt(d2);
-          const overlap = (min - d) / d * 0.5 * a;
-          const ox = dx * overlap, oy = dy * overlap, oz = dz * overlap;
-          if (!pinned[i]) {
-            pos[i * 3] -= ox;
-            pos[i * 3 + 1] -= oy;
-            pos[i * 3 + 2] -= oz;
-          }
-          if (!pinned[j]) {
-            pos[j * 3] += ox;
-            pos[j * 3 + 1] += oy;
-            pos[j * 3 + 2] += oz;
-          }
+      let maxRadius = 0;
+      for (let i = 0; i < n; i++) maxRadius = Math.max(maxRadius, radius2[i]);
+      forEachNearPair(pos2, n, maxRadius * 2, (i, j) => {
+        const dx = pos2[j * 3] - pos2[i * 3];
+        const dy = pos2[j * 3 + 1] - pos2[i * 3 + 1];
+        const dz = pos2[j * 3 + 2] - pos2[i * 3 + 2];
+        const min = radius2[i] + radius2[j];
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= min * min || d2 === 0) return;
+        const d = Math.sqrt(d2);
+        const overlap = (min - d) / d * 0.5 * a;
+        const ox = dx * overlap, oy = dy * overlap, oz = dz * overlap;
+        if (!pinned2[i]) {
+          pos2[i * 3] -= ox;
+          pos2[i * 3 + 1] -= oy;
+          pos2[i * 3 + 2] -= oz;
         }
-      }
+        if (!pinned2[j]) {
+          pos2[j * 3] += ox;
+          pos2[j * 3 + 1] += oy;
+          pos2[j * 3 + 2] += oz;
+        }
+      });
     }
     tickCount++;
     return alpha;
@@ -3036,6 +3076,47 @@ function createForce3D(options = {}) {
     }
   };
 }
+function forEachNearPair(pos, n, cell, visit) {
+  if (n < 2) return;
+  const all = () => {
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) visit(i, j);
+  };
+  if (!(cell > 0) || !Number.isFinite(cell)) return all();
+  const cx = new Float64Array(n), cy = new Float64Array(n), cz = new Float64Array(n);
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < n; i++) {
+    cx[i] = Math.floor(pos[i * 3] / cell);
+    cy[i] = Math.floor(pos[i * 3 + 1] / cell);
+    cz[i] = Math.floor(pos[i * 3 + 2] / cell);
+    minX = Math.min(minX, cx[i]);
+    maxX = Math.max(maxX, cx[i]);
+    minY = Math.min(minY, cy[i]);
+    maxY = Math.max(maxY, cy[i]);
+    minZ = Math.min(minZ, cz[i]);
+    maxZ = Math.max(maxZ, cz[i]);
+  }
+  const SPAN = 131072;
+  if (!(maxX - minX < SPAN - 2 && maxY - minY < SPAN - 2 && maxZ - minZ < SPAN - 2)) return all();
+  const key = (x, y, z) => x - minX + 1 + SPAN * (y - minY + 1 + SPAN * (z - minZ + 1));
+  const cells = /* @__PURE__ */ new Map();
+  for (let i = 0; i < n; i++) {
+    const k = key(cx[i], cy[i], cz[i]);
+    const list = cells.get(k);
+    if (list) list.push(i);
+    else cells.set(k, [i]);
+  }
+  for (let i = 0; i < n; i++) {
+    for (let oz = -1; oz <= 1; oz++) {
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const list = cells.get(key(cx[i] + ox, cy[i] + oy, cz[i] + oz));
+          if (!list) continue;
+          for (const j of list) if (j > i) visit(i, j);
+        }
+      }
+    }
+  }
+}
 function fitPositions(positions, size = 2) {
   let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (const p of positions.values()) {
@@ -3052,6 +3133,69 @@ function fitPositions(positions, size = 2) {
   const out = /* @__PURE__ */ new Map();
   for (const [id, p] of positions) {
     out.set(id, { x: (p.x - cx) * scale, y: (p.y - cy) * scale, z: (p.z - cz) * scale });
+  }
+  return out;
+}
+function keepsPositions(previous, keys, appended, layout) {
+  if (layout === "preset" || previous.size === 0 || keys.length === 0) return false;
+  return appended || keys.every((k) => previous.has(k));
+}
+function keepPositions(previous, keys, links, { fallbackStep, radius, random: random2 = Math.random }) {
+  const out = /* @__PURE__ */ new Map();
+  for (const k of keys) {
+    const p = previous.get(k);
+    if (p) out.set(k, { ...p });
+  }
+  if (out.size === keys.length) return out;
+  const neighbours = /* @__PURE__ */ new Map();
+  const add = (from, to) => {
+    const list = neighbours.get(from);
+    if (list) list.push(to);
+    else neighbours.set(from, [to]);
+  };
+  const lengths = [];
+  for (const [s, t] of links) {
+    if (s === t) continue;
+    add(s, t);
+    add(t, s);
+    const a = out.get(s), b = out.get(t);
+    if (a && b) lengths.push(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z));
+  }
+  lengths.sort((a, b) => a - b);
+  const step = lengths.length && lengths[Math.floor(lengths.length / 2)] || fallbackStep;
+  let pending = keys.filter((k) => !out.has(k));
+  let index = 0;
+  while (pending.length > 0) {
+    const next = [];
+    for (const k of pending) {
+      const near = (neighbours.get(k) ?? []).map((n) => out.get(n)).filter((p) => p !== void 0);
+      if (near.length === 0) {
+        next.push(k);
+        continue;
+      }
+      let cx = 0, cy = 0, cz = 0;
+      for (const p of near) {
+        cx += p.x / near.length;
+        cy += p.y / near.length;
+        cz += p.z / near.length;
+      }
+      const u = 1 - 2 * (index * 0.618034 % 1);
+      const theta = index * 2.399963;
+      const s = Math.sqrt(1 - u * u);
+      out.set(k, { x: cx + step * s * Math.cos(theta), y: cy + step * u, z: cz + step * s * Math.sin(theta) });
+      index++;
+    }
+    if (next.length === pending.length) {
+      for (const k of next) {
+        const u = random2() * 2 - 1;
+        const theta = random2() * Math.PI * 2;
+        const s = Math.sqrt(1 - u * u);
+        const r = radius * Math.cbrt(random2());
+        out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
+      }
+      break;
+    }
+    pending = next;
   }
   return out;
 }
@@ -3077,6 +3221,10 @@ function createCanvas3D(model, container, callbacks = {}) {
   let byKey = /* @__PURE__ */ new Map();
   let edgeRecords = [];
   let sim = null;
+  let simDone = false;
+  let userMoved = false;
+  let lastSeq = Number(model.get("append_batch")?.seq) || 0;
+  let rebuildQueued = false;
   let worldScale = 1;
   let layoutName = "spring";
   let hovered = null;
@@ -3132,6 +3280,9 @@ function createCanvas3D(model, container, callbacks = {}) {
     controls.maxDistance = 50;
     const target = model.get("camera_target") || [0, 0, 0];
     controls.target.set(target[0], target[1], target[2]);
+    controls.addEventListener("start", () => {
+      userMoved = true;
+    });
     scene.add(new THREE.AmbientLight(16777215, 0.55));
     scene.add(new THREE.HemisphereLight(16777215, 3359829, 0.5));
     const directional = new THREE.DirectionalLight(16777215, 0.9);
@@ -3157,25 +3308,48 @@ function createCanvas3D(model, container, callbacks = {}) {
     bindModelEvents();
     animate();
   }
+  function disposeObject(raw) {
+    const o = raw;
+    o.geometry?.dispose?.();
+    if (!o.material) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      m.map?.dispose?.();
+      m.dispose?.();
+    }
+  }
   function disposeGroup(group) {
     while (group.children.length > 0) {
       const obj = group.children[0];
       group.remove(obj);
-      obj.traverse?.((raw) => {
-        const o = raw;
-        o.geometry?.dispose?.();
-        if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose?.());
-      });
-      if (!obj.traverse) {
-        obj.geometry?.dispose?.();
-        obj.material?.dispose?.();
-      }
+      obj.traverse(disposeObject);
     }
+  }
+  function nodeTypeOf(r) {
+    return String(r.data.labels?.[0] ?? r.data.label ?? "");
+  }
+  function isHidden(r) {
+    return r.level === "hidden" || hiddenNodeTypes.has(nodeTypeOf(r));
+  }
+  function isEdgeHidden(e) {
+    const s = byKey.get(e.source), t = byKey.get(e.target);
+    return hiddenEdgeTypes.has(e.edgeType) || !s || !t || isHidden(s) || isHidden(t);
   }
   function nodeRadius(sizePx) {
     return sizePx / 30 * 0.03 * SCENE_SIZE;
   }
+  function queueRebuild() {
+    if (rebuildQueued) return;
+    rebuildQueued = true;
+    queueMicrotask(() => {
+      rebuildQueued = false;
+      if (!destroyed) rebuild();
+    });
+  }
   function rebuild() {
+    const previous = new Map(records.map((r) => [r.key, r.pos]));
+    const seq = Number(model.get("append_batch")?.seq) || 0;
+    const appended = seq !== lastSeq;
+    lastSeq = seq;
     disposeGroup(nodesGroup);
     disposeGroup(edgesGroup);
     disposeGroup(arrowsGroup);
@@ -3235,11 +3409,22 @@ function createCanvas3D(model, container, callbacks = {}) {
     buildEdgeLines();
     buildArrowCones();
     buildLabels();
-    applyLayout(model.get("layout") || "spring");
+    const layout = model.get("layout") || "spring";
+    const keep = keepsPositions(previous, records.map((r) => r.key), appended, layout);
+    if (keep) placeKeepingPositions(previous);
+    else applyLayout(layout);
     applyLevelStates();
     applyColors();
     updateTransforms();
-    fitToView();
+    if (!keep) fitToView();
+  }
+  function placeKeepingPositions(previous) {
+    layoutName = model.get("layout") || "spring";
+    const sameNodes = previous.size === records.length && records.every((r) => previous.has(r.key));
+    if (sim && !sameNodes) simDone = true;
+    const links = edgeRecords.filter((e) => !e.selfLoop).map((e) => [e.source, e.target]);
+    const placed = keepPositions(previous, records.map((r) => r.key), links, { fallbackStep: SCENE_SIZE * 0.08, radius: SCENE_SIZE * 0.45 });
+    for (const r of records) r.pos = placed.get(r.key) ?? r.pos;
   }
   function buildNodeMeshes() {
     const useInstancing = records.length > INSTANCE_THRESHOLD;
@@ -3361,6 +3546,8 @@ function createCanvas3D(model, container, callbacks = {}) {
       fitToView();
       return;
     }
+    simDone = false;
+    userMoved = false;
     sim = createForce3D({
       repulsion: model.get("force3d_repulsion") ?? 1,
       linkDistance: model.get("force3d_link_distance") ?? null,
@@ -3373,9 +3560,13 @@ function createCanvas3D(model, container, callbacks = {}) {
     updateTransforms();
   }
   function stepSimulation() {
-    if (!sim) return;
+    if (!sim || simDone) return;
+    let settled = false;
     for (let k = 0; k < TICKS_PER_FRAME; k++) {
-      if (sim.tick() === 0) break;
+      if (sim.tick() === 0) {
+        settled = true;
+        break;
+      }
     }
     const pos = sim.positions();
     let extent = 0;
@@ -3388,19 +3579,21 @@ function createCanvas3D(model, container, callbacks = {}) {
       if (p) r.pos = { x: p.x * worldScale, y: p.y * worldScale, z: p.z * worldScale };
     }
     updateTransforms();
-    if (sim.alpha === 0) {
+    if (settled) {
+      simDone = true;
       const fitted = fitPositions(new Map(records.map((r) => [r.key, r.pos])), SCENE_SIZE);
       for (const r of records) r.pos = fitted.get(r.key) ?? r.pos;
       worldScale = 1;
       updateTransforms();
-      fitToView();
+      if (!userMoved) fitToView();
     }
   }
   function updateTransforms() {
     const matrix = new THREE.Matrix4();
     const selected = new Set((model.get("selected_nodes") || []).map(String));
     for (const r of records) {
-      const scale = r.level === "hidden" ? 0 : r.radius * (selected.has(r.key) ? 1.6 : 1);
+      const hidden = isHidden(r);
+      const scale = hidden ? 0 : r.radius * (selected.has(r.key) ? 1.6 : 1);
       const mesh = r.mesh;
       if (!mesh) continue;
       if (mesh.userData.isInstanced) {
@@ -3409,12 +3602,12 @@ function createCanvas3D(model, container, callbacks = {}) {
         matrix.setPosition(r.pos.x, r.pos.y, r.pos.z);
         mesh.setMatrixAt(r.instanceIndex ?? 0, matrix);
       } else {
-        mesh.visible = r.level !== "hidden";
+        mesh.visible = !hidden;
         mesh.position.set(r.pos.x, r.pos.y, r.pos.z);
         mesh.scale.set(scale, scale, scale);
       }
       if (r.labelSprite) {
-        r.labelSprite.visible = r.level !== "hidden" && Boolean(model.get("show_labels")) && records.length <= LABEL_BUDGET;
+        r.labelSprite.visible = !hidden && Boolean(model.get("show_labels")) && records.length <= LABEL_BUDGET;
         r.labelSprite.position.set(r.pos.x, r.pos.y + r.radius * 1.8, r.pos.z);
       }
     }
@@ -3430,7 +3623,7 @@ function createCanvas3D(model, container, callbacks = {}) {
         if (!s) continue;
         const t = byKey.get(e.target);
         if (!t) continue;
-        const hidden = hiddenEdgeTypes.has(e.edgeType) || s.level === "hidden" || t.level === "hidden";
+        const hidden = isEdgeHidden(e);
         const base = e.color;
         for (let k = 0; k < (e.segCount ?? 0); k++) {
           const vi = ((e.segOffset ?? 0) + k * 2) * 3;
@@ -3464,7 +3657,11 @@ function createCanvas3D(model, container, callbacks = {}) {
         if (!s) continue;
         const t = byKey.get(e.target);
         if (!t) continue;
-        if (!s || !t) continue;
+        if (isEdgeHidden(e)) {
+          matrix.makeScale(0, 0, 0);
+          arrows.setMatrixAt(e.arrowIndex ?? 0, matrix);
+          continue;
+        }
         dir.set(t.pos.x - s.pos.x, t.pos.y - s.pos.y, t.pos.z - s.pos.z);
         const len = dir.length();
         if (len < 1e-6) continue;
@@ -3500,10 +3697,9 @@ function createCanvas3D(model, container, callbacks = {}) {
     const colAttr = instanced?.geometry.getAttribute("color");
     for (const r of records) {
       let c = r.baseColor.clone();
-      const override = typeColorOverrides.get(String(r.data.labels?.[0] ?? r.data.label ?? ""));
+      const override = typeColorOverrides.get(nodeTypeOf(r));
       if (override) c = new THREE.Color(override);
       if (r.level === "dim") c.multiplyScalar(0.25);
-      if (hiddenNodeTypes.has(r.data.labels?.[0] ?? r.data.label ?? "")) c.multiplyScalar(0);
       if (searchTerm && !matchesSearch(r)) c.multiplyScalar(0.08);
       if (highlightNeighbors && !selected.has(r.key) && !neighbors.has(r.key)) c.multiplyScalar(0.15);
       if (selected.has(r.key)) c.lerp(new THREE.Color(16777215), 0.35);
@@ -3534,7 +3730,7 @@ function createCanvas3D(model, container, callbacks = {}) {
     if (records.length === 0) return;
     const box = new THREE.Box3();
     for (const r of records) {
-      if (r.level === "hidden") continue;
+      if (isHidden(r)) continue;
       box.expandByPoint(new THREE.Vector3(r.pos.x, r.pos.y, r.pos.z));
     }
     if (box.isEmpty()) return;
@@ -3565,7 +3761,7 @@ function createCanvas3D(model, container, callbacks = {}) {
       const hit = nodeHits[0];
       const key = hit.object.userData.isInstanced ? hit.object.userData.keys[hit.instanceId ?? 0] : hit.object.userData.key;
       const rec = byKey.get(key);
-      if (rec && rec.level !== "hidden") return { kind: "node", rec };
+      if (rec && !isHidden(rec)) return { kind: "node", rec };
     }
     const edgeHits = raycaster.intersectObjects(edgesGroup.children, false);
     if (edgeHits.length > 0) {
@@ -3573,12 +3769,11 @@ function createCanvas3D(model, container, callbacks = {}) {
       let best = null;
       let bestD = Infinity;
       for (const e of edgeRecords) {
-        if (e.selfLoop) continue;
+        if (e.selfLoop || isEdgeHidden(e)) continue;
         const s = byKey.get(e.source);
         if (!s) continue;
         const t = byKey.get(e.target);
         if (!t) continue;
-        if (!s || !t) continue;
         const d = pointToSegment(p, s.pos, t.pos);
         if (d < bestD) {
           bestD = d;
@@ -3727,11 +3922,13 @@ function createCanvas3D(model, container, callbacks = {}) {
     zoomControls.appendChild(modeGroup);
     const zoomInBtn = mkBtn(ICONS.zoomIn, "Zoom in");
     zoomInBtn.addEventListener("click", () => {
+      userMoved = true;
       camera.position.lerp(controls.target, 0.3);
       controls.update();
     });
     const zoomOutBtn = mkBtn(ICONS.zoomOut, "Zoom out");
     zoomOutBtn.addEventListener("click", () => {
+      userMoved = true;
       const offset = camera.position.clone().sub(controls.target);
       camera.position.add(offset.multiplyScalar(0.3));
       controls.update();
@@ -3801,7 +3998,7 @@ function createCanvas3D(model, container, callbacks = {}) {
       if (x2 - x1 < 4 && y2 - y1 < 4) return;
       const ids = [];
       for (const r of records) {
-        if (r.level === "hidden") continue;
+        if (isHidden(r)) continue;
         const p = projectToScreen(r);
         if (p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2) ids.push(r.key);
       }
@@ -3852,7 +4049,7 @@ function createCanvas3D(model, container, callbacks = {}) {
       lassoCoords.push(lassoCoords[0]);
       const ids = [];
       for (const r of records) {
-        if (r.level === "hidden") continue;
+        if (isHidden(r)) continue;
         const p = projectToScreen(r);
         if (pointInPolygon(p.x, p.y, lassoCoords)) ids.push(r.key);
       }
@@ -3918,8 +4115,9 @@ function createCanvas3D(model, container, callbacks = {}) {
     axesGroup.add(sprite);
   }
   function bindModelEvents() {
-    model.on("change:nodes", rebuild);
-    model.on("change:edges", rebuild);
+    model.on("change:nodes", queueRebuild);
+    model.on("change:edges", queueRebuild);
+    model.on("change:append_batch", queueRebuild);
     model.on("change:layout", () => {
       applyLayout(model.get("layout") || "spring");
     });
@@ -3974,7 +4172,10 @@ function createCanvas3D(model, container, callbacks = {}) {
     model.on("change:pinned_nodes", () => {
       const pinned = pinnedSet();
       for (const r of records) r.pinned = pinned.has(r.key);
-      if (sim) sim.reheat(0.4);
+      if (sim) {
+        sim.reheat(0.4);
+        simDone = false;
+      }
     });
     model.on("change:force3d_repulsion", () => {
       if (layoutName !== "preset" && layoutName !== "circular" && layoutName !== "random") applyLayout(layoutName);
@@ -4004,11 +4205,7 @@ function createCanvas3D(model, container, callbacks = {}) {
     resizeObserver?.disconnect();
     controls?.dispose();
     renderer?.dispose();
-    scene?.traverse((raw) => {
-      const obj = raw;
-      obj.geometry?.dispose?.();
-      if (obj.material) (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => m.dispose?.());
-    });
+    scene?.traverse(disposeObject);
   }
   function applySearch(term) {
     searchTerm = (term || "").toLowerCase().trim();
@@ -4146,7 +4343,7 @@ function buildNodeAttrs(node, opts) {
     nodeType: node.labels && node.labels.length > 0 ? node.labels[0] : node.label || "Unlabeled",
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
-    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(node.id)),
+    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(String(node.id))),
     color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
     // Per-item style fields a host sets on a node (each optional): drawn by the reducers and the overlay
     opacity: node.opacity,
@@ -4160,11 +4357,7 @@ function buildNodeAttrs(node, opts) {
   };
 }
 function buildEdgeAttrs(edge, opts) {
-  let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
-  if (opts.edgeColorField && edge[opts.edgeColorField] !== void 0) {
-    const val = edge[opts.edgeColorField];
-    color = typeof val === "number" ? getColorFromScale(val, opts.edgeColorScale, opts.edgeColorDomain) : getCategoricalColor(val);
-  }
+  const color = computeEdgeColor(edge, opts);
   let size = edge.size || 2;
   if (opts.edgeSizeField && edge[opts.edgeSizeField] !== void 0 && opts.edgeSizeDomain) {
     const [min, max] = opts.edgeSizeDomain;
@@ -4309,7 +4502,7 @@ function render2D({ model: host, el }) {
   el.appendChild(wrapper);
   const graph = new Graph({ multi: true });
   const laneState = { lanes: [], bands: [], laneById: /* @__PURE__ */ new Map(), cross: [], appear: /* @__PURE__ */ new Map(), edgeAppear: /* @__PURE__ */ new Map(), crossAppear: /* @__PURE__ */ new Map(), vanish: /* @__PURE__ */ new Map(), edgeVanish: /* @__PURE__ */ new Map(), sizeScale: /* @__PURE__ */ new Map(), rows: /* @__PURE__ */ new Map(), move: /* @__PURE__ */ new Map(), labelled: /* @__PURE__ */ new Map(), labelText: /* @__PURE__ */ new Map(), quietLanes: /* @__PURE__ */ new Set(), hoverNode: null, pulse: /* @__PURE__ */ new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
-  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons", "action_edges", "remove", "totals", "force_layout", "lane_rows", "relayout", "type_colors", "lane_labels"]);
+  model.set("_features", WIDGET_FEATURES);
   model.save_changes();
   let drawn = mergeItems(void 0, model.get("nodes") || [], model.get("edges") || []);
   function dataOfNode(node) {
@@ -4577,33 +4770,20 @@ function render2D({ model: host, el }) {
         break;
       }
       case "spring": {
-        const n = visibleNodes.size || graph.order;
         const d3Nodes = [];
-        const nodeIndexMap = /* @__PURE__ */ new Map();
-        let idx = 0;
         graph.forEachNode((id, attrs) => {
-          if (!visibleNodes.has(id)) return;
-          nodeIndexMap.set(id, idx);
-          d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
-          idx++;
+          if (visibleNodes.has(id)) d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
         });
-        const d3Links = [];
+        const links = [];
         graph.forEachEdge((_edgeId, _attrs, source, target) => {
-          if (nodeIndexMap.has(source) && nodeIndexMap.has(target)) {
-            d3Links.push({ source: nodeIndexMap.get(source), target: nodeIndexMap.get(target) });
-          }
+          links.push([source, target]);
         });
-        const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
-        const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
-        const simulation = d3Force.forceSimulation(d3Nodes).force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4)).force("charge", d3Force.forceManyBody().strength(chargeStrength)).force("center", d3Force.forceCenter(0, 0)).force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8)).stop();
-        const ticks = Math.min(300, Math.max(100, n * 2));
-        for (let i = 0; i < ticks; i++) simulation.tick();
-        d3Nodes.forEach((d) => {
-          if (graph.hasNode(d.id)) {
-            graph.setNodeAttribute(d.id, "x", d.x);
-            graph.setNodeAttribute(d.id, "y", d.y);
+        for (const [id, p] of springLayout(d3Nodes, links)) {
+          if (graph.hasNode(id)) {
+            graph.setNodeAttribute(id, "x", p.x);
+            graph.setNodeAttribute(id, "y", p.y);
           }
-        });
+        }
         break;
       }
     }
