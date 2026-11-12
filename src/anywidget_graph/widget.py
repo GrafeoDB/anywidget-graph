@@ -15,7 +15,7 @@ from traitlets import observe
 
 from anywidget_graph.backends import DatabaseBackend
 from anywidget_graph.backends.grafeo import GrafeoBackend
-from anywidget_graph.ui import get_css, get_esm, get_vendor_js
+from anywidget_graph.ui import get_css, get_esm, get_export_js, get_vendor_js
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -140,6 +140,12 @@ class Graph(anywidget.AnyWidget):
         >>> import grafeo
         >>> db = grafeo.GrafeoDB()
         >>> graph = Graph(database_backend="grafeo", grafeo_db=db)
+
+    With the 3D view (a Three.js scene you fly through, the graph laid out in three dimensions):
+
+        >>> from anywidget_graph import Graph3D
+        >>> graph = Graph3D(nodes=[{"id": "a"}, {"id": "b"}], edges=[{"source": "a", "target": "b"}])
+        >>> graph.view = "2d"  # or Graph(view="3d"): switch between the 2D and 3D views at runtime
     """
 
     _esm = get_esm()
@@ -161,6 +167,25 @@ class Graph(anywidget.AnyWidget):
     edge_arrows = traitlets.Bool(default_value=False).tag(sync=True)
     # A selected node keeps its neighbours and their edges lit; everything else dims
     highlight_neighbors = traitlets.Bool(default_value=False).tag(sync=True)
+
+    # === View: 2D or 3D ===
+    # "2d" is the Sigma canvas; "3d" (the default of Graph3D) renders with the bundled Three.js: nodes and edges
+    # laid out in three dimensions (the force layout's "bloom" and "spread" act in 3D) in a scene you fly through
+    # with OrbitControls. The toolbar's cube button and the settings panel switch it at runtime.
+    view = traitlets.CaselessStrEnum(values=["2d", "3d"], default_value="2d").tag(sync=True)
+
+    # === 3D view (view="3d") ===
+    # The 3D force layout: how strongly every pair of nodes pushes apart ("bloom") and the rest length of an
+    # edge ("spread"); link_distance None picks one from the node count
+    force3d_repulsion = traitlets.Float(default_value=1.0).tag(sync=True)
+    force3d_link_distance = traitlets.Float(default_value=None, allow_none=True).tag(sync=True)
+    # Scene furniture and camera of the 3D view
+    show_axes = traitlets.Bool(default_value=True).tag(sync=True)
+    show_grid = traitlets.Bool(default_value=True).tag(sync=True)
+    grid_divisions = traitlets.Int(default_value=10).tag(sync=True)
+    axis_labels = traitlets.Dict(default_value={"x": "X", "y": "Y", "z": "Z"}).tag(sync=True)
+    camera_position = traitlets.List(default_value=[2, 2, 2]).tag(sync=True)
+    camera_target = traitlets.List(default_value=[0, 0, 0]).tag(sync=True)
 
     # === Property-Based Styling (node) ===
     color_field = traitlets.Unicode(allow_none=True, default_value=None).tag(sync=True)
@@ -289,6 +314,7 @@ class Graph(anywidget.AnyWidget):
         show_toolbar: bool = True,
         show_settings: bool = True,
         show_query_input: bool = True,
+        view: str = "2d",
         dark_mode: bool | None = None,
         database_backend: str = "grafeo",
         connection_uri: str = "",
@@ -323,6 +349,8 @@ class Graph(anywidget.AnyWidget):
             Whether to show the settings button.
         show_query_input : bool
             Whether to show the query input.
+        view : str
+            "2d" (Sigma canvas) or "3d" (Three.js scene; the default of Graph3D).
         dark_mode : bool, optional
             Whether to use dark theme. Left out (None), the widget follows the page's light or dark theme and
             reports it here; given, it keeps that theme.
@@ -363,6 +391,7 @@ class Graph(anywidget.AnyWidget):
             show_toolbar=show_toolbar,
             show_settings=show_settings,
             show_query_input=show_query_input,
+            view=view,
             database_backend=database_backend,
             connection_uri=connection_uri,
             connection_username=connection_username,
@@ -1050,6 +1079,7 @@ class Graph(anywidget.AnyWidget):
             json_data=_script_json(data),
             json_options=_script_json(options),
             vendor_js=get_vendor_js(),
+            export_js=get_export_js(),
         )
 
     def save_html(self, path: str, **kwargs: Any) -> None:
@@ -1063,3 +1093,26 @@ class Graph(anywidget.AnyWidget):
             Forwarded to :meth:`to_html` (``width``, ``height``, ``title``).
         """
         Path(path).write_text(self.to_html(**kwargs), encoding="utf-8")
+
+
+class Graph3D(Graph):
+    """The :class:`Graph` widget with the 3D view as its default (``view="3d"``).
+
+    Nodes and edges are rendered with the bundled Three.js in a scene you can go through: drag to orbit,
+    right-drag to pan, wheel to zoom. The layout is a force layout in three dimensions — ``force3d_repulsion``
+    (the "bloom") pushes every pair of nodes apart and ``force3d_link_distance`` (the "spread") is the rest
+    length of an edge, so the graph spreads through the volume instead of a plane. Everything else (queries,
+    backends, styling, selection, the panels, and the toolbar's 2D/3D toggle) works as in :class:`Graph`.
+
+    Example
+    -------
+    >>> graph = Graph3D(
+    ...     nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+    ...     edges=[{"source": "a", "target": "b", "label": "KNOWS"}],
+    ... )
+    >>> graph.view = "2d"  # switch to the 2D view at any time
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("view", "3d")
+        super().__init__(*args, **kwargs)

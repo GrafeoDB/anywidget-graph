@@ -1,6 +1,7 @@
+import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
 // The widget's settings as a fresh Python Graph() has them. A host without Python (an app's own model) may leave
 // settings out; they then read as these. tests/test_ui.py keeps this equal to the Python trait defaults.
-export const TRAIT_DEFAULTS = {
+export const TRAIT_DEFAULTS: Record<string, unknown> = {
   "_demo_data": "",
   "_demo_mode": false,
   "_execute_query": 0,
@@ -10,7 +11,22 @@ export const TRAIT_DEFAULTS = {
   "append_animation": "draw",
   "append_batch": {},
   "append_stagger_ms": 60,
+  "axis_labels": {
+    "x": "X",
+    "y": "Y",
+    "z": "Z"
+  },
   "background": "#fafafa",
+  "camera_position": [
+    2,
+    2,
+    2
+  ],
+  "camera_target": [
+    0,
+    0,
+    0
+  ],
   "color_domain": null,
   "color_field": null,
   "color_scale": "viridis",
@@ -33,8 +49,11 @@ export const TRAIT_DEFAULTS = {
   "edges": [],
   "fill": false,
   "filtered_style": "dim",
+  "force3d_link_distance": null,
+  "force3d_repulsion": 1.0,
   "grafeo_connection_mode": "embedded",
   "grafeo_server_url": "http://localhost:7474",
+  "grid_divisions": 10,
   "height": 600,
   "highlight_neighbors": false,
   "hovered_edge": null,
@@ -62,7 +81,9 @@ export const TRAIT_DEFAULTS = {
   "selected_node": null,
   "selected_nodes": [],
   "selection_mode": "click",
+  "show_axes": true,
   "show_edge_labels": false,
+  "show_grid": true,
   "show_labels": true,
   "show_query_input": true,
   "show_settings": true,
@@ -80,33 +101,44 @@ export const TRAIT_DEFAULTS = {
   ],
   "totals": {},
   "type_colors": {},
+  "view": "2d",
   "width": 800
 };
+
+/**
+ * The features this widget build offers, reported in the model's `_features` for a host without Python. "view_3d"
+ * is the Three.js view (Graph3D / view="3d"): the graph laid out and rendered in three dimensions.
+ */
+export const WIDGET_FEATURES = [
+  "lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons",
+  "action_edges", "remove", "totals", "force_layout", "lane_rows", "relayout", "type_colors", "lane_labels",
+  "view_3d",
+];
 
 /**
  * The host's model, where a setting the host left out (an app without Python) reads as the widget's default.
  * It remembers the listeners added through it, so `offAll()` removes this view's listeners and no other.
  */
-export function withDefaults(host) {
-  const listeners = [];
+export function withDefaults(host: WidgetModel): WidgetModel & { offAll(): void } {
+  const listeners: [string, (...args: any[]) => void][] = [];
   return {
-    get: (name) => {
+    get: (name: string) => {
       const value = host.get(name);
       if (value !== undefined || !(name in TRAIT_DEFAULTS)) return value;
-      const fallback = TRAIT_DEFAULTS[name];
+      const fallback = TRAIT_DEFAULTS[name] as unknown;
       return fallback !== null && typeof fallback === "object" ? structuredClone(fallback) : fallback;
     },
-    set: (...args) => host.set(...args),
-    on: (name, callback) => {
+    set: (...args: [string, any]) => host.set(...args),
+    on: (name: string, callback: (...args: any[]) => void) => {
       listeners.push([name, callback]);
       host.on(name, callback);
     },
-    off: (...args) => host.off(...args),
+    off: (...args: [string, (...args: any[]) => void]) => host.off?.(...args),
     offAll: () => {
-      for (const [name, callback] of listeners.splice(0)) host.off(name, callback);
+      for (const [name, callback] of listeners.splice(0)) host.off?.(name, callback);
     },
-    save_changes: (...args) => host.save_changes(...args),
-    send: (...args) => host.send(...args),
+    save_changes: () => host.save_changes(),
+    send: () => host.send?.(),
     // The widget behind this view: state shared by all its views (a connection, the newest query) is kept per host
     host,
   };
@@ -117,7 +149,7 @@ export function withDefaults(host) {
  * pane can differ from its page); then a `dark` or `dark-theme` class or data-theme="dark" on <html> or <body>; then
  * the system setting. Other data-theme values ("system", "auto") pass the question on.
  */
-export function detectDark(el, matchMedia = globalThis.matchMedia) {
+export function detectDark(el: HTMLElement | null, matchMedia: typeof globalThis.matchMedia | undefined = globalThis.matchMedia): boolean {
   for (let node = el; node; node = node.parentElement) {
     const theme = node.dataset?.theme;
     if (theme === "dark") return true;
@@ -135,6 +167,7 @@ export function detectDark(el, matchMedia = globalThis.matchMedia) {
 // is a widget following the page, not a choice: whatever model object (anywidget hands each view a proxy) or copy
 // of this module (a cell run again) the view has
 const THEME_WRITES = Symbol.for("anywidget.theme-writes");
+const themeWrites = globalThis as unknown as Record<PropertyKey, number | undefined>;
 
 /**
  * Following the page's light or dark theme, the same way anywidget-archimate and anywidget-vector do.
@@ -145,21 +178,21 @@ const THEME_WRITES = Symbol.for("anywidget.theme-writes");
  * later ones keep it. The model fires change events while `set` runs, which is how onChange tells the two apart
  * (THEME_WRITES, counted on the page).
  */
-export function followHostTheme(model, detectDark) {
+export function followHostTheme(model: WidgetModel, detectDark: () => boolean): { sync: () => void; onChange: () => void } {
   function sync() {
     if (model.get("_theme_explicit")) return;
     const dark = detectDark();
     if (model.get("dark_mode") === dark) return;
-    globalThis[THEME_WRITES] = (globalThis[THEME_WRITES] ?? 0) + 1;
+    themeWrites[THEME_WRITES] = (themeWrites[THEME_WRITES] ?? 0) + 1;
     try {
       model.set("dark_mode", dark);
       model.save_changes();
     } finally {
-      globalThis[THEME_WRITES] -= 1;
+      themeWrites[THEME_WRITES] -= 1;
     }
   }
   function onChange() {
-    if ((globalThis[THEME_WRITES] ?? 0) > 0 || model.get("_theme_explicit")) return;
+    if ((themeWrites[THEME_WRITES] ?? 0) > 0 || model.get("_theme_explicit")) return;
     model.set("_theme_explicit", true);
     model.save_changes();
   }
@@ -171,7 +204,7 @@ export function followHostTheme(model, detectDark) {
  * drawing as it is (a write, nothing matched, or rows of plain values), and the note says why; "" when the result is
  * drawn. `rowCount` is undefined when the backend does not report it.
  */
-export function queryResultNote(rowCount, graph) {
+export function queryResultNote(rowCount: number | undefined, graph: { nodes: GraphNode[]; edges: GraphEdge[] }): string {
   if (graph.nodes.length > 0 || graph.edges.length > 0) return "";
   if (rowCount === 0) return "The query returned no rows, so the drawing is unchanged.";
   if (!rowCount) return "The query returned nothing to draw, so the drawing is unchanged.";
@@ -184,21 +217,22 @@ export function queryResultNote(rowCount, graph) {
  * result (most edges within it, ties in result order), with the edges between them. Returns the graph to draw and the
  * note to show (query_note), "" when nothing was cut. Mirrors _cap_query_result in widget.py.
  */
-export function capQueryResult(graph, max) {
+export function capQueryResult(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, max: number | null): { graph: { nodes: GraphNode[]; edges: GraphEdge[] }; note: string } {
   const total = graph.nodes.length;
-  if (!(max > 0) || total <= max) return { graph, note: "" };
-  const degree = new Map(graph.nodes.map((node) => [String(node.id), 0]));
+  const limit = max ?? 0;
+  if (!(limit > 0) || total <= limit) return { graph, note: "" };
+  const degree = new Map<string, number>(graph.nodes.map((node: GraphNode) => [String(node.id), 0]));
   for (const edge of graph.edges) {
     for (const end of [String(edge.source), String(edge.target)]) {
-      if (degree.has(end)) degree.set(end, degree.get(end) + 1);
+      if (degree.has(end)) degree.set(end, (degree.get(end) ?? 0) + 1);
     }
   }
-  const ranked = graph.nodes.map((node, index) => ({ index, links: degree.get(String(node.id)) }));
+  const ranked = graph.nodes.map((node: GraphNode, index: number) => ({ index, links: degree.get(String(node.id)) ?? 0 }));
   ranked.sort((a, b) => b.links - a.links || a.index - b.index);
-  const chosen = new Set(ranked.slice(0, max).map((entry) => entry.index));
-  const nodes = graph.nodes.filter((_, index) => chosen.has(index));
-  const kept = new Set(nodes.map((node) => String(node.id)));
-  const edges = graph.edges.filter((edge) => kept.has(String(edge.source)) && kept.has(String(edge.target)));
-  const note = `The query returned ${total.toLocaleString("en-US")} nodes; the ${max.toLocaleString("en-US")} best connected are drawn (max_query_nodes).`;
+  const chosen = new Set(ranked.slice(0, limit).map((entry: { index: number; links: number }) => entry.index));
+  const nodes = graph.nodes.filter((_: GraphNode, index: number) => chosen.has(index));
+  const kept = new Set(nodes.map((node: GraphNode) => String(node.id)));
+  const edges = graph.edges.filter((edge: GraphEdge) => kept.has(String(edge.source)) && kept.has(String(edge.target)));
+  const note = `The query returned ${total.toLocaleString("en-US")} nodes; the ${limit.toLocaleString("en-US")} best connected are drawn (max_query_nodes).`;
   return { graph: { ...graph, nodes, edges }, note };
 }

@@ -215,3 +215,124 @@ def test_the_html_export_runs_no_markup_from_the_data(page, export_dir):
     assert page.title() == "<b>Export</b>"
     assert page.evaluate("window.__xss") is None
     assert page.errors == []
+
+
+def test_3d_view_mounts_a_webgl_canvas_without_any_network(page, site):
+    """view="3d" (Graph3D) draws the graph in a Three.js canvas, loading nothing from outside the host's server."""
+    base, _root = site
+    outside: list[str] = []
+    page.on("request", lambda request: None if request.url.startswith(base) else outside.append(request.url))
+    _mount(page, {**_chain(12), "view": "3d"})
+    page.wait_for_timeout(1200)
+    assert page.locator("canvas.awg3-canvas").count() == 1
+    assert page.locator(".awg-count-badge").first.text_content() == "12 nodes · 11 edges"
+    assert outside == []
+    assert page.errors == []
+
+
+def test_the_toolbar_toggles_between_the_2d_and_3d_views(page, site):
+    """The cube button switches `view`: the Sigma canvas is replaced by the Three.js canvas and back."""
+    _mount(page, _chain(5))
+    page.wait_for_timeout(400)
+    # Sigma's canvas has no awg3-canvas class
+    assert page.locator("canvas.awg3-canvas").count() == 0
+    page.locator(".awg-view-btn").first.click()
+    page.wait_for_timeout(1000)
+    assert page.locator("canvas.awg3-canvas").count() == 1
+    assert page.locator(".awg-count-badge").first.text_content() == "5 nodes · 4 edges"
+    page.locator(".awg-view-btn").first.click()
+    page.wait_for_timeout(400)
+    assert page.locator("canvas.awg3-canvas").count() == 0
+    assert page.errors == []
+
+
+def test_3d_view_hover_tooltip_and_click_selection(page, site):
+    """In the 3D view a node under the cursor shows its tooltip and reports hovered_node, and a click selects it."""
+    index = _mount(page, {**_chain(20), "view": "3d"})
+    page.wait_for_timeout(2500)  # let the 3D force layout settle
+    box = page.locator("canvas.awg3-canvas").bounding_box()
+    tip = page.locator(".awg3-tooltip")
+    spot = None
+    for y in range(int(box["y"]) + 6, int(box["y"] + box["height"]) - 6, 10):
+        for x in range(int(box["x"]) + 6, int(box["x"] + box["width"]) - 6, 10):
+            page.mouse.move(x, y)
+            # an edge under the cursor shows an empty tooltip; keep sweeping for a node
+            if tip.is_visible() and "Node" in (tip.text_content() or ""):
+                spot = (x, y)
+                break
+        if spot:
+            break
+    assert spot is not None, "no node under the cursor: the 3D tooltip never showed a node"
+    assert "Node" in (tip.text_content() or "")
+    hovered = page.evaluate("(i) => window.mounts[i].model.get('hovered_node')", index)
+    assert hovered and hovered["id"].startswith("n") and "z" in hovered, hovered
+    page.mouse.click(*spot)
+    page.wait_for_timeout(150)
+    selected = page.evaluate("(i) => window.mounts[i].model.get('selected_node')", index)
+    selected_all = page.evaluate("(i) => window.mounts[i].model.get('selected_nodes')", index)
+    assert selected["id"] == hovered["id"]
+    assert selected_all == [hovered["id"]]
+    assert page.errors == []
+
+
+def test_3d_view_user_journey_orbit_zoom_settings_and_back(page, site):
+    """The 3D view as a user drives it: orbit by dragging, zoom with the wheel, move the bloom slider in the
+    settings panel, and switch back to 2D from the settings View select — all without a page error."""
+    index = _mount(page, {**_chain(24), "view": "3d"})
+    page.wait_for_timeout(2500)  # let the 3D force layout settle
+
+    # Orbit: drag across the canvas; zoom: wheel in and out. The scene must keep painting.
+    canvas = page.locator("canvas.awg3-canvas")
+    box = canvas.bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx - 160, cy - 80, steps=10)
+    page.mouse.up()
+    page.mouse.wheel(0, -800)
+    page.wait_for_timeout(500)
+    page.mouse.wheel(0, 800)
+    page.wait_for_timeout(300)
+    # The scene must keep painting: screenshot the canvas element and count non-background pixels
+    import base64
+
+    shot = page.locator("canvas.awg3-canvas").screenshot()
+    painted = page.evaluate(
+        """async (dataUrl) => {
+            const img = new Image();
+            img.src = dataUrl;
+            await img.decode();
+            const c = document.createElement('canvas');
+            c.width = img.width; c.height = img.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const data = ctx.getImageData(0, 0, c.width, c.height).data;
+            let count = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i] + data[i + 1] + data[i + 2] > 90) count++;
+            }
+            return count;
+        }""",
+        "data:image/png;base64," + base64.b64encode(shot).decode(),
+    )
+    assert painted > 2000, f"scene blank after orbit+zoom ({painted} painted pixels)"
+
+    # Settings: the 3D section's bloom slider drives force3d_repulsion
+    page.locator("button[title='Connection settings']").first.click()
+    page.wait_for_timeout(300)
+    slider = page.locator(".awg-3d-settings input[type='range']")
+    assert slider.count() == 1
+    slider.fill("2.5")
+    page.wait_for_timeout(600)
+    assert page.evaluate("(i) => window.mounts[i].model.get('force3d_repulsion')", index) == 2.5
+
+    # The View select in the settings switches back to the 2D canvas
+    page.locator(".awg-3d-settings select").first.select_option("2d")
+    page.wait_for_timeout(600)
+    assert page.locator("canvas.awg3-canvas").count() == 0
+    assert page.locator(".awg-graph-container canvas").count() >= 1
+    # And the model can switch it back to 3D (as Python does)
+    page.evaluate("(i) => window.mounts[i].model.set('view', '3d')", index)
+    page.wait_for_timeout(1200)
+    assert page.locator("canvas.awg3-canvas").count() == 1
+    assert page.errors == []

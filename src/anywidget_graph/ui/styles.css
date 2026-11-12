@@ -1213,3 +1213,120 @@
   pointer-events: none;
   z-index: 2;
 }
+
+/* === 3D view (view="3d" / Graph3D): Three.js canvas overlays === */
+.awg3-container canvas {
+  display: block;
+}
+
+.awg3-tooltip {
+  position: absolute;
+  display: none;
+  background: var(--awg-bg);
+  color: var(--awg-text);
+  border: 1px solid var(--awg-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 100;
+  max-width: 260px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.awg3-tooltip-label {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.awg3-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.awg3-tooltip-key {
+  opacity: 0.7;
+}
+
+.awg3-zoom-controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 20;
+}
+
+.awg3-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.awg3-zoom-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--awg-bg);
+  color: var(--awg-text);
+  border: 1px solid var(--awg-border);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.awg3-zoom-btn:hover {
+  border-color: var(--awg-accent, #6366f1);
+}
+
+.awg3-mode-active {
+  background: var(--awg-accent, #6366f1);
+  color: #fff;
+  border-color: var(--awg-accent, #6366f1);
+}
+
+.awg3-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 15;
+}
+
+.awg3-selection-rect {
+  display: none;
+  position: absolute;
+  border: 1px dashed var(--awg-accent, #6366f1);
+  background: rgba(99, 102, 241, 0.08);
+  pointer-events: none;
+  z-index: 16;
+}
+
+.awg-view-btn.awg-view-active {
+  background: var(--awg-accent, #6366f1);
+  color: #fff;
+  border-color: var(--awg-accent, #6366f1);
+}
+
+.awg-range-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.awg-range-wrap input[type="range"] {
+  flex: 1;
+}
+
+.awg-range-value {
+  min-width: 34px;
+  text-align: right;
+  font-size: 12px;
+  opacity: 0.8;
+}

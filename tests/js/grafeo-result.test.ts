@@ -14,9 +14,9 @@ import {
   isGrafeoNode,
   isGrafeoEdge,
   isGrafeoPath,
-} from "../../src/anywidget_graph/ui/grafeo-result.js";
-import * as embed from "../../src/anywidget_graph/ui/grafeo-embed.js";
-import * as server from "../../src/anywidget_graph/ui/grafeo.js";
+} from "../../src/anywidget_graph/ui/grafeo-result.ts";
+import * as embed from "../../src/anywidget_graph/ui/grafeo-embed.ts";
+import * as server from "../../src/anywidget_graph/ui/grafeo.ts";
 
 const alix = { _id: 0, _labels: ["Person"], name: "Alix", id: "p1" };
 const gus = { _id: 1, _labels: ["Person"], name: "Gus" };
@@ -27,18 +27,18 @@ const byId = { 0: alix, 1: gus, 2: vincent };
 const edgeById = { 0: knows1, 1: knows2 };
 
 // Answers the lookup queries the way the engine would
-function fakeLookup(calls) {
-  return (query) => {
+function fakeLookup(calls: string[]) {
+  return (query: string) => {
     calls.push(query);
-    const ids = query.match(/IN \[(.*)\]/)[1].split(", ").map(Number);
+    const ids = query.match(/IN \[(.*)\]/)![1].split(", ").map(Number);
     return query.includes("()-[r]->()")
-      ? ids.filter((i) => edgeById[i]).map((i) => ({ r: edgeById[i] }))
-      : ids.filter((i) => byId[i]).map((i) => ({ n: byId[i] }));
+      ? ids.filter((i) => (edgeById as Record<number, any>)[i]).map((i) => ({ r: (edgeById as Record<number, any>)[i] }))
+      : ids.filter((i) => (byId as Record<number, any>)[i]).map((i) => ({ n: (byId as Record<number, any>)[i] }));
   };
 }
 
-const edgeKeys = (graph) => graph.edges.map((e) => `${e.source}->${e.target}:${e.label}`).sort();
-const nodeIds = (graph) => graph.nodes.map((n) => n.id).sort();
+const edgeKeys = (graph: { edges: any[] }) => graph.edges.map((e: any) => `${e.source}->${e.target}:${e.label}`).sort();
+const nodeIds = (graph: { nodes: any[] }) => graph.nodes.map((n: any) => n.id).sort();
 
 test("entity detection matches the engine encoding", () => {
   assert.ok(isGrafeoNode(alix));
@@ -70,7 +70,7 @@ test("array rows (server) are supported", async () => {
 
 test("identity beats properties named id / source", async () => {
   const graph = await grafeoRowsToGraph([{ a: alix, r: knows1, b: gus }]);
-  const node = graph.nodes.find((n) => n.name === "Alix");
+  const node = graph.nodes.find((n) => n.name === "Alix")!;
   assert.equal(node.id, "0");
   assert.deepEqual(node.labels, ["Person"]);
   assert.equal(node.label, "Alix");
@@ -92,7 +92,7 @@ test("entities nested in maps are found", async () => {
 });
 
 test("paths with ids are resolved through lookups", async () => {
-  const calls = [];
+  const calls: string[] = [];
   const rows = [{ p: { nodes: [0, 1, 2], edges: [0, 1], _type: "path" } }];
   const graph = await grafeoRowsToGraph(rows, fakeLookup(calls));
   assert.deepEqual(nodeIds(graph), ["0", "1", "2"]);
@@ -101,7 +101,7 @@ test("paths with ids are resolved through lookups", async () => {
 });
 
 test("0.6 paths carry their entities and need no lookup", async () => {
-  const calls = [];
+  const calls: string[] = [];
   // As @grafeo-db/wasm 0.6 returns it (grafeo-server sends the same without _type)
   const rows = [{ p: { nodes: [alix, gus, vincent], edges: [knows1, knows2], _type: "path" } }];
   const graph = await grafeoRowsToGraph(rows, fakeLookup(calls));
@@ -121,7 +121,7 @@ test("exact decimals in node properties and edge weights become numbers", async 
   const other = { _id: 6, _labels: ["Item"], name: "b", price: 3 };
   const link = { _id: 9, _type: "LINK", _source: 5, _target: 6, weight: { $decimal: "0.75" } };
   const graph = await grafeoRowsToGraph([{ a: item, r: link, b: other }]);
-  const node = graph.nodes.find((n) => n.name === "a");
+  const node = graph.nodes.find((n) => n.name === "a")!;
   assert.equal(node.price, 1.5);
   assert.deepEqual(node.hist, [0.1, null]);
   assert.equal(graph.edges[0].weight, 0.75);
@@ -144,7 +144,7 @@ test("property values: tagged temporals, big integers, typed arrays, nulls", () 
 });
 
 test("edges without endpoints get their nodes looked up", async () => {
-  const calls = [];
+  const calls: string[] = [];
   const graph = await grafeoRowsToGraph([{ r: knows2 }], fakeLookup(calls));
   assert.deepEqual(nodeIds(graph), ["1", "2"]);
   assert.equal(graph.edges.length, 1);
@@ -170,7 +170,7 @@ test("lookups use validated integer ids only", () => {
 });
 
 test("path members that are not ids are ignored safely", async () => {
-  const calls = [];
+  const calls: string[] = [];
   const graph = await grafeoRowsToGraph([{ p: { nodes: ["1) RETURN n //", -1, 1.5], edges: [] } }], fakeLookup(calls));
   assert.deepEqual(graph, { nodes: [], edges: [] });
   assert.deepEqual(calls, []);
@@ -209,13 +209,16 @@ test("wasm: pinned CDN location", () => {
 });
 
 test("wasm: runStatement routes GQL to execute and others to executeWithLanguage", () => {
-  const calls = [];
-  const db = {
-    execute: (q) => (calls.push(["execute", q]), []),
-    executeWithLanguage: (q, l) => (calls.push(["executeWithLanguage", q, l]), []),
+  const calls: any[][] = [];
+  const db: embed.WasmDatabase = {
+    close: () => {},
+    free: () => {},
+    schema: () => ({}),
+    execute: (q: string) => (calls.push(["execute", q]), []),
+    executeWithLanguage: (q: string, l: string) => (calls.push(["executeWithLanguage", q, l]), []),
   };
   embed.runStatement(db, "MATCH (n) RETURN n", "gql");
-  embed.runStatement(db, "MATCH (n) RETURN n", undefined);
+  embed.runStatement(db, "MATCH (n) RETURN n", undefined as unknown as string);
   embed.runStatement(db, "g.V()", "gremlin");
   assert.deepEqual(calls, [
     ["execute", "MATCH (n) RETURN n"],
@@ -225,15 +228,15 @@ test("wasm: runStatement routes GQL to execute and others to executeWithLanguage
 });
 
 test("wasm: queries before connect report an error instead of throwing", async () => {
-  const state = {};
-  const model = { set: (k, v) => (state[k] = v), get: (k) => state[k], save_changes() {} };
+  const state: Record<string, any> = {};
+  const model = { set: (k: string, v: any) => (state[k] = v), get: (k: string) => state[k], on: () => {}, save_changes() {} };
   assert.equal(embed.isConnected(model), false);
   assert.equal(await embed.executeQuery("MATCH (n) RETURN n", "gql", model), null);
   assert.match(state.query_error, /not initialized/);
 });
 
 test("server: request body, schema URL and error messages", () => {
-  assert.deepEqual(server.buildQueryBody("q", undefined, "default"), { query: "q", language: "gql" });
+  assert.deepEqual(server.buildQueryBody("q", undefined as unknown as string, "default"), { query: "q", language: "gql" });
   assert.deepEqual(server.buildQueryBody("q", "cypher", "movies"), { query: "q", language: "cypher", database: "movies" });
   assert.equal(server.schemaUrl("http://h:7474", "default"), "http://h:7474/db/default/schema");
   assert.equal(server.schemaUrl("http://h:7474", "my db"), "http://h:7474/db/my%20db/schema");

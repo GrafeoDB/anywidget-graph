@@ -1,12 +1,13 @@
 /**
  * Properties panel component for displaying selected node/edge details.
  */
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
+import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 
 /**
  * Create the properties panel.
  */
-export function createPropertiesPanel(model, callbacks) {
+export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?: () => void }): Panel {
   const panel = document.createElement("div");
   panel.className = "awg-properties-panel";
 
@@ -70,7 +71,7 @@ export function createPropertiesPanel(model, callbacks) {
 /**
  * A span holding `text` as text, never as markup: node and edge values come from the data.
  */
-function textSpan(className, text) {
+function textSpan(className: string, text: string): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = className;
   span.textContent = text;
@@ -80,7 +81,7 @@ function textSpan(className, text) {
 /**
  * A property row: the key, then a text span for a string value, or `value` itself when it is an element.
  */
-function propertyItem(key, value, valueClass = "awg-property-value") {
+function propertyItem(key: string, value: string | HTMLElement, valueClass = "awg-property-value"): HTMLDivElement {
   const item = document.createElement("div");
   item.className = "awg-property-item";
   item.appendChild(textSpan("awg-property-key", key));
@@ -91,7 +92,7 @@ function propertyItem(key, value, valueClass = "awg-property-value") {
 /**
  * Render node properties.
  */
-export function renderNodeProperties(content, node) {
+export function renderNodeProperties(content: HTMLElement, node: GraphNode): void {
   const nodeHeader = document.createElement("div");
   nodeHeader.className = "awg-properties-header";
   nodeHeader.innerHTML = `${ICONS.node} <span class="awg-properties-type">Node</span>`;
@@ -102,11 +103,11 @@ export function renderNodeProperties(content, node) {
   if (node.labels && node.labels.length > 0) {
     const labels = document.createElement("span");
     labels.className = "awg-property-value awg-property-labels";
-    node.labels.forEach((l) => labels.appendChild(textSpan("awg-label-tag", String(l))));
+    node.labels.forEach((l: string) => labels.appendChild(textSpan("awg-label-tag", String(l))));
     content.appendChild(propertyItem("labels", labels));
   }
 
-  Object.entries(node).forEach(([key, value]) => {
+  Object.entries(node).forEach(([key, value]: [string, unknown]) => {
     if (["id", "labels", "label", "x", "y", "size", "color", "nodeType"].includes(key)) return;
     const displayValue = typeof value === "object" ? JSON.stringify(value) : String(value);
     content.appendChild(propertyItem(key, displayValue));
@@ -116,7 +117,7 @@ export function renderNodeProperties(content, node) {
 /**
  * Render edge properties.
  */
-export function renderEdgeProperties(content, edge) {
+export function renderEdgeProperties(content: HTMLElement, edge: GraphEdge): void {
   const edgeHeader = document.createElement("div");
   edgeHeader.className = "awg-properties-header";
   edgeHeader.innerHTML = `${ICONS.edge} <span class="awg-properties-type">Relationship</span>`;
@@ -133,7 +134,7 @@ export function renderEdgeProperties(content, edge) {
   content.appendChild(propertyItem("source", String(edge.source), "awg-property-value awg-property-truncate"));
   content.appendChild(propertyItem("target", String(edge.target), "awg-property-value awg-property-truncate"));
 
-  Object.entries(edge).forEach(([key, value]) => {
+  Object.entries(edge).forEach(([key, value]: [string, unknown]) => {
     if (["source", "target", "label", "size", "color", "edgeType"].includes(key)) return;
     const displayValue = typeof value === "object" ? JSON.stringify(value) : String(value);
     content.appendChild(propertyItem(key, displayValue));

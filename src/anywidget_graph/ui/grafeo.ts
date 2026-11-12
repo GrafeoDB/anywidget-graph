@@ -2,21 +2,24 @@
  * Grafeo Server browser-side client (HTTP mode).
  * Mirrors the neo4j.js pattern for connecting to grafeo-server.
  */
-import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.js";
+import { grafeoRowsToGraph, grafeoSchemaToTypes } from "./grafeo-result.ts";
+import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
+import { errorText } from "./types.ts";
 
 // Each widget's server: {url, headers}, keyed by its host model, so every view of a widget shares it and two widgets
 // on a page can use different servers
-const serverConnections = new WeakMap();
+interface ServerConnection { url: string; headers: Record<string, string> }
+const serverConnections = new WeakMap<object, ServerConnection>();
 
-function serverOf(model) {
+function serverOf(model: WidgetModel): ServerConnection | null {
   return serverConnections.get(model.host ?? model) ?? null;
 }
 
 /**
  * Connect to a Grafeo server.
  */
-export async function connect(url, username, password, model) {
-  const server = { url: (url || "http://localhost:7474").replace(/\/+$/, ""), headers: { "Content-Type": "application/json" } };
+export async function connect(url: string, username: string, password: string, model: WidgetModel): Promise<boolean> {
+  const server: ServerConnection = { url: (url || "http://localhost:7474").replace(/\/+$/, ""), headers: { "Content-Type": "application/json" } };
   if (username && password) {
     server.headers["Authorization"] = "Basic " + btoa(username + ":" + password);
   }
@@ -37,7 +40,7 @@ export async function connect(url, username, password, model) {
     return true;
   } catch (error) {
     model.set("connection_status", "error");
-    model.set("query_error", "Connection failed: " + error.message);
+    model.set("query_error", "Connection failed: " + errorText(error));
     model.save_changes();
     serverConnections.delete(model.host ?? model);
     return false;
@@ -47,7 +50,7 @@ export async function connect(url, username, password, model) {
 /**
  * Disconnect from Grafeo server.
  */
-export async function disconnect(model) {
+export async function disconnect(model: WidgetModel): Promise<void> {
   serverConnections.delete(model.host ?? model);
   model.set("connection_status", "disconnected");
   model.save_changes();
@@ -56,15 +59,15 @@ export async function disconnect(model) {
 /**
  * Check if connected.
  */
-export function isConnected(model) {
+export function isConnected(model: WidgetModel): boolean {
   return serverOf(model) !== null;
 }
 
 /**
  * Build the POST /query body. The server defaults to the "default" database.
  */
-export function buildQueryBody(query, language, database) {
-  const body = { query, language: language || "gql" };
+export function buildQueryBody(query: string, language: string, database: string): Record<string, unknown> {
+  const body: Record<string, unknown> = { query, language: language || "gql" };
   if (database && database !== "default") {
     body.database = database;
   }
@@ -75,9 +78,9 @@ export function buildQueryBody(query, language, database) {
  * Turn a failed response body into a readable message.
  * grafeo-server sends {"error": code, "detail": message}.
  */
-export function errorMessage(status, text) {
+export function errorMessage(status: number, text: string): string {
   try {
-    const body = JSON.parse(text);
+    const body: any = JSON.parse(text);
     if (body && (body.detail || body.error)) return body.detail || body.error;
   } catch (_) {
     // not JSON
@@ -85,7 +88,7 @@ export function errorMessage(status, text) {
   return text || "Query failed with status " + status;
 }
 
-async function postQuery(server, body) {
+async function postQuery(server: ServerConnection, body: unknown): Promise<any> {
   const resp = await fetch(server.url + "/query", {
     method: "POST",
     headers: server.headers,
@@ -100,7 +103,7 @@ async function postQuery(server, body) {
 /**
  * Execute a query against Grafeo server.
  */
-export async function executeQuery(query, language, database, model) {
+export async function executeQuery(query: string, language: string, database: string, model: WidgetModel): Promise<{ nodes: GraphNode[]; edges: GraphEdge[]; rows: number } | null> {
   const server = serverOf(model);
   if (!server) {
     model.set("query_error", "Not connected to Grafeo server");
@@ -125,7 +128,7 @@ export async function executeQuery(query, language, database, model) {
     return { ...graph, rows: rows.length };
   } catch (error) {
     model.set("query_running", false);
-    model.set("query_error", "Query error: " + error.message);
+    model.set("query_error", "Query error: " + errorText(error));
     model.save_changes();
     return null;
   }
@@ -134,14 +137,14 @@ export async function executeQuery(query, language, database, model) {
 /**
  * Schema endpoint for a database: GET /db/{name}/schema.
  */
-export function schemaUrl(baseUrl, database) {
+export function schemaUrl(baseUrl: string, database: string): string {
   return baseUrl + "/db/" + encodeURIComponent(database || "default") + "/schema";
 }
 
 /**
  * Fetch schema from Grafeo server.
  */
-export async function fetchSchema(model) {
+export async function fetchSchema(model: WidgetModel): Promise<void> {
   const server = serverOf(model);
   if (!server) return;
 

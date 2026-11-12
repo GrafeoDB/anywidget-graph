@@ -35,9 +35,19 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      # esbuild, so the tests can check that ui/dist/widget.js is built from the current sources
+      # esbuild, so the tests can check that ui/dist/widget.js and ui/dist/export.js are built from the current sources
       - name: Install the bundler
         run: npm ci --prefix scripts/vendor
+
+      # TypeScript and the type packages, so tsc can check every module in src/ and tests/js/
+      - name: Install the front-end dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Type-check the front end
+        run: npm run typecheck
+
+      - name: Run the JavaScript tests
+        run: npm test
 
       - name: Run ruff check
         run: uv run ruff check .

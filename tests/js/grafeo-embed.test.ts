@@ -3,36 +3,41 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import * as embed from "../../src/anywidget_graph/ui/grafeo-embed.js";
+import * as embed from "../../src/anywidget_graph/ui/grafeo-embed.ts";
+import { fakeModel } from "./helpers.ts";
+import { setGlobalSymbol } from "../../src/anywidget_graph/ui/types.ts";
 
-const created = [];
-class FakeDatabase {
+const created: FakeDatabase[] = [];
+class FakeDatabase implements embed.WasmDatabase {
+  ran: string[] = [];
   constructor() {
-    this.ran = [];
     created.push(this);
   }
-  execute(query) {
+  execute(query: string) {
     this.ran.push(query);
     return query.startsWith("RETURN") ? [{ x: 1 }] : [];
   }
+  executeWithLanguage(query: string, _language: string) {
+    this.ran.push(query);
+    return [];
+  }
+  close() {}
+  free() {}
   schema() {
     return { nodeTypes: [], edgeTypes: [] };
   }
 }
 // The page-wide key anywidget-vector uses too: the glue module's URL
-globalThis[Symbol.for(`grafeo-wasm:${embed.GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`)] = Promise.resolve({ Database: FakeDatabase });
+setGlobalSymbol(Symbol.for(`grafeo-wasm:${embed.GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`), Promise.resolve({ Database: FakeDatabase }));
 
-function fakeModel() {
-  const values = {};
-  return { get: (name) => values[name], set: (name, value) => { values[name] = value; }, save_changes() {}, values };
-}
+
 
 test("every copy of the module on a page uses the one loaded engine", async () => {
   const model = fakeModel();
   assert.equal(await embed.connect(model), true);
   assert.equal(model.values.connection_status, "connected");
   // A second copy of the module (a notebook that reconnected, a cell run again) finds the same bindings
-  const copy = await import("../../src/anywidget_graph/ui/grafeo-embed.js?copy=2");
+  const copy = await import("../../src/anywidget_graph/ui/grafeo-embed.ts?copy=2") as unknown as typeof embed;
   const before = created.length;
   assert.equal(await copy.connect(fakeModel()), true);
   assert.equal(created.length, before + 1, "the copy opens a database on the shared engine");
@@ -57,7 +62,7 @@ test("each widget has its own database, and every view of a widget shares it", a
 test("the same statements load into a database once, however often a widget is drawn", async () => {
   const model = fakeModel();
   await embed.connect(model);
-  const db = created.at(-1);
+  const db = created.at(-1)!;
   const before = db.ran.length;
   const statements = ["CREATE (:Movie {id: 'm1'});", "CREATE (:Person {id: 'p1'})", ""];
   assert.equal(await embed.loadStatements(statements, model), 0);

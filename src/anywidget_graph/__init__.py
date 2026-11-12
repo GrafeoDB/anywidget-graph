@@ -1,6 +1,6 @@
 """Interactive graph visualization for Python notebooks."""
 
-from anywidget_graph.widget import Graph
+from anywidget_graph.widget import Graph, Graph3D
 
-__all__ = ["Graph"]
-__version__ = "0.5.2"
+__all__ = ["Graph", "Graph3D"]
+__version__ = "0.5.3"
