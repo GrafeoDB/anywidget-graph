@@ -190,7 +190,8 @@
   var nodes = DATA.nodes || [];
   var edges = DATA.edges || [];
   var opts = getStylingOpts(model, nodes, edges);
-  var nodeByKey = new Map(nodes.map((n) => [String(n.id), n]));
+  var nodeByKey = /* @__PURE__ */ new Map();
+  for (const n of nodes) if (!nodeByKey.has(String(n.id))) nodeByKey.set(String(n.id), n);
   nodes.forEach((node) => {
     const key = String(node.id);
     if (graph.hasNode(key)) return;

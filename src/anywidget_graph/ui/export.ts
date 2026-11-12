@@ -28,7 +28,9 @@ const nodes = DATA.nodes || [];
 const edges = DATA.edges || [];
 const opts = getStylingOpts(model, nodes, edges);
 // Graph keys are strings; the data's ids may be numbers
-const nodeByKey = new Map(nodes.map((n) => [String(n.id), n] as [string, GraphNode]));
+// The first node with an id is the one drawn (later ones with the same id are skipped), and the one its tooltip shows
+const nodeByKey = new Map<string, GraphNode>();
+for (const n of nodes) if (!nodeByKey.has(String(n.id))) nodeByKey.set(String(n.id), n);
 
 nodes.forEach((node) => {
   const key = String(node.id);

@@ -138,7 +138,7 @@ export function withDefaults(host: WidgetModel): WidgetModel & { offAll(): void 
       for (const [name, callback] of listeners.splice(0)) host.off?.(name, callback);
     },
     save_changes: () => host.save_changes(),
-    send: () => host.send?.(),
+    send: (...args: any[]) => host.send?.(...args),
     // The widget behind this view: state shared by all its views (a connection, the newest query) is kept per host
     host,
   };

@@ -147,7 +147,7 @@ test("nodes that start on the same spot are pushed apart", () => {
 
 test("a spread that is not a positive number is automatic", () => {
   const nodes = Array.from({ length: 30 }, (_, i) => ({ id: `n${i}` }));
-  for (const linkDistance of [0, -5, Number.NaN, null]) {
+  for (const linkDistance of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, null]) {
     const sim = createForce3D({ linkDistance });
     sim.setData(nodes, []);
     assert.equal(sim.linkDistance, autoLinkDistance(30), `linkDistance ${linkDistance}`);
@@ -174,7 +174,9 @@ test("forEachNearPair visits every pair closer than the cell, once", () => {
     assert.ok(i < j);
     visited.set(`${i}|${j}`, (visited.get(`${i}|${j}`) ?? 0) + 1);
   });
-  for (const pair of expected) assert.equal(visited.get(pair), 1, `pair ${pair} visited ${visited.get(pair)} times`);
+  for (const pair of expected) assert.ok(visited.has(pair), `close pair ${pair} not visited`);
+  // Every pair visited, close or not, is visited once
+  for (const [pair, times] of visited) assert.equal(times, 1, `pair ${pair} visited ${times} times`);
   assert.ok(expected.size > 20, "the test cloud has close pairs");
   // Far fewer pairs than all n * (n - 1) / 2: the grid is what keeps a large graph's layout fast
   assert.ok(visited.size < (n * (n - 1)) / 8, `visited ${visited.size} pairs`);
@@ -207,6 +209,20 @@ test("keepPositions: drawn nodes stay, a new node goes next to its neighbour, ap
   assert.ok(dist(out.get("c")!, out.get("d")!) > 0.5, "siblings apart");
   // Linked to nothing drawn: inside the ball
   assert.ok(dist(out.get("lonely")!, { x: 0, y: 0, z: 0 }) <= 1);
+  assert.equal(out.size, keys.length);
+});
+
+test("keepPositions: a new batch linked only among itself stays together around one placed node", () => {
+  const drawn = new Map([["a", { x: 0, y: 0, z: 0 }], ["b", { x: 1, y: 0, z: 0 }]]);
+  // p, q and r link to each other but to nothing drawn
+  const keys = ["a", "b", "p", "q", "r"];
+  const links: [string, string][] = [["a", "b"], ["p", "q"], ["q", "r"]];
+  let seed = 3;
+  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const out = keepPositions(drawn, keys, links, { fallbackStep: 0.2, radius: 1, random });
+  // One edge length (the a-b median, 1) between linked new nodes, not scattered across the ball independently
+  assert.ok(Math.abs(dist(out.get("p")!, out.get("q")!) - 1) < 1e-9, "p next to q");
+  assert.ok(Math.abs(dist(out.get("q")!, out.get("r")!) - 1) < 1e-9, "r next to q");
   assert.equal(out.size, keys.length);
 });
 

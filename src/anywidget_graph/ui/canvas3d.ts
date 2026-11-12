@@ -153,7 +153,12 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     controls.maxDistance = 50;
     const target = model.get("camera_target") || [0, 0, 0];
     controls.target.set(target[0], target[1], target[2]);
-    controls.addEventListener("start", () => { userMoved = true; });
+    // Moved by hand: the camera changed while a drag or wheel was in progress (a plain click starts and ends
+    // without changing it, so selecting a node while the layout runs still lets it frame the result)
+    let dragging = false;
+    controls.addEventListener("start", () => { dragging = true; });
+    controls.addEventListener("end", () => { dragging = false; });
+    controls.addEventListener("change", () => { if (dragging) userMoved = true; });
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.5));

@@ -105,9 +105,17 @@ export function render3D({ model: host, el }: { model: WidgetModel; el: HTMLElem
   model.set("_features", WIDGET_FEATURES);
   model.save_changes();
 
-  canvas = createCanvas3D(model, container, {
-    onHover: () => {},
-  });
+  try {
+    canvas = createCanvas3D(model, container, {
+      onHover: () => {},
+    });
+  } catch (err) {
+    // No WebGL (a headless browser, a blocked GPU): say so in the pane; the cleanup below still runs
+    const note = document.createElement("div");
+    note.className = "awg-query-error";
+    note.textContent = `The 3D view could not start: ${errorText(err)}`;
+    container.appendChild(note);
+  }
 
   // Demo mode: auto-init WASM and populate data, as in the 2D view
   if (model.get("_demo_mode")) {

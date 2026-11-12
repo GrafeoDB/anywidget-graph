@@ -6,6 +6,7 @@
  * Bundled by scripts/vendor/build-esm.mjs into dist/export3d.js and inlined after those constants.
  */
 import { createCanvas3D } from "./canvas3d.ts";
+import { themeVariables } from "./lanes.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
 
 // Written into the page by the template (const DATA = {...}; const OPTIONS = {...};) before this bundle runs
@@ -35,4 +36,6 @@ const model: WidgetModel = {
 
 const wrapper = document.getElementById("wrapper")!;
 wrapper.classList.toggle("awg-dark", Boolean(OPTIONS.dark_mode));
+// A host theme's colours win over the light and dark defaults, as in the widget
+for (const [name, value] of Object.entries(themeVariables(OPTIONS.theme))) wrapper.style.setProperty(name, value);
 createCanvas3D(model, document.getElementById("container")!);

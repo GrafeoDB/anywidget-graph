@@ -53,8 +53,10 @@ export function autoLinkDistance(nodeCount: number): number {
  */
 export function createForce3D(options: Force3DOptions = {}) {
   const repulsion = options.repulsion ?? 1;
-  // A rest length that is not a positive number (0, negative, NaN) collapses or inverts the graph: automatic instead
-  const linkDistanceOpt = typeof options.linkDistance === "number" && options.linkDistance > 0 ? options.linkDistance : null;
+  // A rest length that is not a finite positive number (0, negative, NaN, Infinity) breaks the layout: automatic instead
+  const linkDistanceOpt = typeof options.linkDistance === "number" && Number.isFinite(options.linkDistance) && options.linkDistance > 0
+    ? options.linkDistance
+    : null;
   const gravity = options.gravity ?? 0.03;
   const collision = options.collision ?? true;
   const maxTicks = options.ticks ?? 300;
@@ -335,7 +337,8 @@ export function keepsPositions(previous: Map<string, Vec3>, keys: string[], appe
  * Positions for `keys`: a node in `previous` stays where it is; a new node goes next to the nodes it links to
  * (`links`, [source, target] pairs), at about the median length of the drawn edges (`fallbackStep` when none), each
  * in its own direction on a golden-angle spiral so nodes added around the same neighbour do not land on one another.
- * A new node linked to nothing placed goes anywhere in a ball of `radius` (`random`, Math.random by default).
+ * A new node linked to nothing placed goes anywhere in a ball of `radius` (`random`, Math.random by default), and
+ * the new nodes linked to it gather around it.
  */
 export function keepPositions(
   previous: Map<string, Vec3>,
@@ -386,15 +389,16 @@ export function keepPositions(
       index++;
     }
     if (next.length === pending.length) {
-      // Linked to nothing placed: anywhere in the ball the scene is framed on
-      for (const k of next) {
-        const u = random() * 2 - 1;
-        const theta = random() * Math.PI * 2;
-        const s = Math.sqrt(1 - u * u);
-        const r = radius * Math.cbrt(random());
-        out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
-      }
-      break;
+      // Linked to nothing placed: one node anywhere in the ball the scene is framed on, then its new neighbours
+      // gather around it on the next pass (a batch linked only among itself stays together)
+      const [k, ...rest] = next;
+      const u = random() * 2 - 1;
+      const theta = random() * Math.PI * 2;
+      const s = Math.sqrt(1 - u * u);
+      const r = radius * Math.cbrt(random());
+      out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
+      pending = rest;
+      continue;
     }
     pending = next;
   }

@@ -142,7 +142,7 @@ function withDefaults(host) {
       for (const [name, callback] of listeners.splice(0)) host.off?.(name, callback);
     },
     save_changes: () => host.save_changes(),
-    send: () => host.send?.(),
+    send: (...args) => host.send?.(...args),
     // The widget behind this view: state shared by all its views (a connection, the newest query) is kept per host
     host
   };
@@ -2876,7 +2876,7 @@ function autoLinkDistance(nodeCount) {
 }
 function createForce3D(options = {}) {
   const repulsion = options.repulsion ?? 1;
-  const linkDistanceOpt = typeof options.linkDistance === "number" && options.linkDistance > 0 ? options.linkDistance : null;
+  const linkDistanceOpt = typeof options.linkDistance === "number" && Number.isFinite(options.linkDistance) && options.linkDistance > 0 ? options.linkDistance : null;
   const gravity = options.gravity ?? 0.03;
   const collision = options.collision ?? true;
   const maxTicks = options.ticks ?? 300;
@@ -3186,14 +3186,14 @@ function keepPositions(previous, keys, links, { fallbackStep, radius, random: ra
       index++;
     }
     if (next.length === pending.length) {
-      for (const k of next) {
-        const u = random2() * 2 - 1;
-        const theta = random2() * Math.PI * 2;
-        const s = Math.sqrt(1 - u * u);
-        const r = radius * Math.cbrt(random2());
-        out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
-      }
-      break;
+      const [k, ...rest] = next;
+      const u = random2() * 2 - 1;
+      const theta = random2() * Math.PI * 2;
+      const s = Math.sqrt(1 - u * u);
+      const r = radius * Math.cbrt(random2());
+      out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
+      pending = rest;
+      continue;
     }
     pending = next;
   }
@@ -3280,8 +3280,15 @@ function createCanvas3D(model, container, callbacks = {}) {
     controls.maxDistance = 50;
     const target = model.get("camera_target") || [0, 0, 0];
     controls.target.set(target[0], target[1], target[2]);
+    let dragging = false;
     controls.addEventListener("start", () => {
-      userMoved = true;
+      dragging = true;
+    });
+    controls.addEventListener("end", () => {
+      dragging = false;
+    });
+    controls.addEventListener("change", () => {
+      if (dragging) userMoved = true;
     });
     scene.add(new THREE.AmbientLight(16777215, 0.55));
     scene.add(new THREE.HemisphereLight(16777215, 3359829, 0.5));
@@ -4292,10 +4299,17 @@ function render3D({ model: host, el }) {
   el.appendChild(wrapper);
   model.set("_features", WIDGET_FEATURES);
   model.save_changes();
-  canvas = createCanvas3D(model, container, {
-    onHover: () => {
-    }
-  });
+  try {
+    canvas = createCanvas3D(model, container, {
+      onHover: () => {
+      }
+    });
+  } catch (err) {
+    const note = document.createElement("div");
+    note.className = "awg-query-error";
+    note.textContent = `The 3D view could not start: ${errorText(err)}`;
+    container.appendChild(note);
+  }
   if (model.get("_demo_mode")) {
     (async () => {
       try {

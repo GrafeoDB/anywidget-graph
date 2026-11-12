@@ -20,7 +20,7 @@
   }
   function createForce3D(options = {}) {
     const repulsion = options.repulsion ?? 1;
-    const linkDistanceOpt = typeof options.linkDistance === "number" && options.linkDistance > 0 ? options.linkDistance : null;
+    const linkDistanceOpt = typeof options.linkDistance === "number" && Number.isFinite(options.linkDistance) && options.linkDistance > 0 ? options.linkDistance : null;
     const gravity = options.gravity ?? 0.03;
     const collision = options.collision ?? true;
     const maxTicks = options.ticks ?? 300;
@@ -330,14 +330,14 @@
         index++;
       }
       if (next.length === pending.length) {
-        for (const k of next) {
-          const u = random() * 2 - 1;
-          const theta = random() * Math.PI * 2;
-          const s = Math.sqrt(1 - u * u);
-          const r = radius * Math.cbrt(random());
-          out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
-        }
-        break;
+        const [k, ...rest] = next;
+        const u = random() * 2 - 1;
+        const theta = random() * Math.PI * 2;
+        const s = Math.sqrt(1 - u * u);
+        const r = radius * Math.cbrt(random());
+        out.set(k, { x: r * s * Math.cos(theta), y: r * u, z: r * s * Math.sin(theta) });
+        pending = rest;
+        continue;
       }
       pending = next;
     }
@@ -347,6 +347,22 @@
   // lanes.ts
   function colorFor(item, type, typeColors, fallback) {
     return (typeof item.color === "string" ? item.color : void 0) || typeColors?.[type] || fallback;
+  }
+  var THEME_VARIABLES = {
+    background: ["--awg-bg", "--awg-graph-bg", "--awg-input-bg"],
+    panel: ["--awg-bg-secondary", "--awg-bg-tertiary"],
+    text: ["--awg-text"],
+    muted: ["--awg-text-secondary", "--awg-text-muted"],
+    border: ["--awg-border", "--awg-input-border"],
+    accent: ["--awg-accent", "--awg-accent-hover"]
+  };
+  function themeVariables(theme) {
+    const variables = {};
+    for (const [key, names] of Object.entries(THEME_VARIABLES)) {
+      const value = theme?.[key];
+      for (const name of names) variables[name] = typeof value === "string" ? value : "";
+    }
+    return variables;
   }
   function labelColor(theme, dark) {
     return theme?.text || (dark ? "#e0e0e0" : "#333");
@@ -625,8 +641,15 @@
       controls.maxDistance = 50;
       const target = model2.get("camera_target") || [0, 0, 0];
       controls.target.set(target[0], target[1], target[2]);
+      let dragging = false;
       controls.addEventListener("start", () => {
-        userMoved = true;
+        dragging = true;
+      });
+      controls.addEventListener("end", () => {
+        dragging = false;
+      });
+      controls.addEventListener("change", () => {
+        if (dragging) userMoved = true;
       });
       scene.add(new THREE.AmbientLight(16777215, 0.55));
       scene.add(new THREE.HemisphereLight(16777215, 3359829, 0.5));
@@ -1593,5 +1616,6 @@
   };
   var wrapper = document.getElementById("wrapper");
   wrapper.classList.toggle("awg-dark", Boolean(OPTIONS.dark_mode));
+  for (const [name, value] of Object.entries(themeVariables(OPTIONS.theme))) wrapper.style.setProperty(name, value);
   createCanvas3D(model, document.getElementById("container"));
 })();

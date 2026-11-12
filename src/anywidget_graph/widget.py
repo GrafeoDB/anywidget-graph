@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -185,7 +186,7 @@ class Graph(anywidget.AnyWidget):
 
         >>> from anywidget_graph import Graph3D
         >>> graph = Graph3D(nodes=[{"id": "a"}, {"id": "b"}], edges=[{"source": "a", "target": "b"}])
-        >>> graph.view = "2d"  # or Graph(view="3d"): switch between the 2D and 3D views at runtime
+        >>> graph.view = "2d"  # switch views at runtime; Graph(view="3d") starts a Graph in the 3D view
     """
 
     _esm = get_esm()
@@ -537,7 +538,7 @@ class Graph(anywidget.AnyWidget):
     def _validate_link_distance(self, proposal: dict[str, Any]) -> float | None:
         # 0 or a negative rest length collapses or inverts the 3D layout; None is the automatic one
         value = proposal["value"]
-        if value is not None and not value > 0:
+        if value is not None and not (math.isfinite(value) and value > 0):
             raise traitlets.TraitError("force3d_link_distance must be a positive number, or None for automatic")
         return value
 

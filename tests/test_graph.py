@@ -1106,7 +1106,7 @@ def test_force3d_link_distance_is_a_positive_number_or_automatic():
 
     assert Graph3D(force3d_link_distance=12.5).force3d_link_distance == 12.5
     assert Graph3D(force3d_link_distance=None).force3d_link_distance is None
-    for bad in (0, -3):
+    for bad in (0, -3, float("inf"), float("nan")):
         with pytest.raises(TraitError):
             Graph3D(force3d_link_distance=bad)
 
@@ -1139,6 +1139,8 @@ def test_to_html_of_the_3d_view_exports_the_3d_scene():
     assert "anywidgetGraphVendor" in flat
 
 
-def test_to_html_carries_the_type_colors():
-    graph = Graph(nodes=[{"id": "a", "labels": ["Person"]}], type_colors={"nodes": {"Person": "#ff8800"}})
-    assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in graph.to_html()
+def test_to_html_carries_the_type_colors_in_both_views():
+    nodes = [{"id": "a", "labels": ["Person"]}]
+    colors = {"nodes": {"Person": "#ff8800"}}
+    assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in Graph(nodes=nodes, type_colors=colors).to_html()
+    assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in Graph3D(nodes=nodes, type_colors=colors).to_html()
