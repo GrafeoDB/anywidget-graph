@@ -35,19 +35,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      # esbuild, so the tests can check that ui/dist/widget.js and ui/dist/export.js are built from the current sources
+      # esbuild, so the tests can check that the bundles in ui/dist/ are built from the current sources
       - name: Install the bundler
         run: npm ci --prefix scripts/vendor
-
-      # TypeScript and the type packages, so tsc can check every module in src/ and tests/js/
-      - name: Install the front-end dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Type-check the front end
-        run: npm run typecheck
-
-      - name: Run the JavaScript tests
-        run: npm test
 
       - name: Run ruff check
         run: uv run ruff check .
@@ -59,8 +49,36 @@ jobs:
       - name: Run ty check
         run: uv run --all-extras ty check
 
+      # The JavaScript tests do not depend on the Python version: the frontend job runs them once
       - name: Run tests
-        run: uv run pytest -v
+        run: uv run pytest -v --deselect tests/test_ui.py::test_js_unit_tests
+
+  # The front end once: tsc over every module in src/ and tests/js/, the JavaScript tests, and the bundles
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install the bundler
+        run: npm ci --prefix scripts/vendor
+
+      # TypeScript and the type packages
+      - name: Install the front-end dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Type-check the front end
+        run: npm run typecheck
+
+      - name: Run the JavaScript tests
+        run: npm test
+
+      - name: Check the bundles are built from the current sources
+        run: npm run check
 
   # The front end in Chromium, mounted through a plain model as an app hosts it (tests/e2e)
   browser:

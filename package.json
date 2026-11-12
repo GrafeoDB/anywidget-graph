@@ -4,8 +4,8 @@
   "type": "module",
   "description": "Front end of the anywidget-graph widget, in TypeScript (bundled with esbuild; type-checked with tsc)",
   "scripts": {
-    "build": "node scripts/vendor/build-esm.mjs",
-    "check": "node scripts/vendor/build-esm.mjs --check",
+    "build": "npm run build:esm --prefix scripts/vendor",
+    "check": "npm run check:esm --prefix scripts/vendor",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/js/*.test.ts"
   },
