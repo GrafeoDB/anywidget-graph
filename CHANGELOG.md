@@ -9,8 +9,8 @@ All notable changes to anywidget-graph, an interactive graph widget for Python n
 ### Added
 
 - **3D view**: `Graph3D`, or `Graph(view="3d")`, draws the graph with the bundled Three.js 0.186.1 in a scene to orbit, pan and zoom, with hover tooltips, click and box or lasso selection; the toolbar's cube button and the settings panel switch views at runtime. The layout is a force layout in three dimensions, set with `force3d_repulsion` (the "bloom") and `force3d_link_distance` (the "spread", a positive number or `None` for automatic), with optional axes, grid and labels (`show_axes`, `show_grid`, `grid_divisions`, `axis_labels`, `camera_position`, `camera_target`).
-- **The 3D view keeps its layout on change**: `Graph.append()`, `remove()` and a restyle leave the drawn nodes and the camera where they are, and a new node is placed next to the nodes it links to. New nodes and edges from the host are laid out again, as in the 2D view.
-- **3D export**: `to_html()` and `save_html()` on a graph in the 3D view write a page that draws the Three.js scene with its layout, camera, axes and styling, to orbit, hover and select in offline. A graph in the 2D view exports the Sigma page as before.
+- **The 3D view keeps its layout on change**: `Graph.append()`, `remove()` and a restyle leave the drawn nodes and the camera where they are, and a new node is placed next to the nodes it links to. Setting `nodes` or `edges` to other data lays the graph out again, as in the 2D view.
+- **3D export**: `to_html()` and `save_html()` on a graph in the 3D view write a page that draws the Three.js scene with its layout, camera, axes and styling, to orbit, hover and select offline. A graph in the 2D view exports the Sigma page as before.
 - **`3d` extra**: `anywidget-graph[3d]` is a marker extra; Three.js ships in the wheel (`ui/vendor/three.min.js`, licenses in `ui/vendor/three.LICENSES.txt`), so the 3D view needs no further Python packages and loads nothing from a CDN.
 - **3D example**: `examples/demo_3d.py` shows a citation network in the 3D view.
 
