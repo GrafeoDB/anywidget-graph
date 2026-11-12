@@ -1,9 +1,10 @@
 // The grafeo-server client against a fake fetch that answers grafeo-server's endpoints with pinned responses: the
-// contract a host serving these endpoints itself (Deriva's studio) must keep. Run with: node --test "tests/js/*.test.mjs"
+// contract a host serving these endpoints itself (Deriva's studio) must keep. Run with: node --test tests/js/*.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import * as server from "../../src/anywidget_graph/ui/grafeo.js";
+import * as server from "../../src/anywidget_graph/ui/grafeo.ts";
+import { fakeModel, stubFetch } from "./helpers.ts";
 
 // grafeo-server 0.6 responses: nodes and edges with their fields flat, tagged decimals and dates
 const SCHEMA = { name: "default", labels: [{ name: "File", count: 2 }], edge_types: [{ name: "IMPORTS", count: 1 }], property_keys: ["name"] };
@@ -16,22 +17,18 @@ const ANSWERS = {
   "INSERT (:File)": { columns: [], rows: [], counters: { nodes_created: 1 } },
 };
 
-const requests = [];
-globalThis.fetch = async (url, init = {}) => {
-  requests.push({ url, method: init.method || "GET", headers: init.headers, body: init.body && JSON.parse(init.body) });
-  const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+const requests = stubFetch((url, body) => {
+  const json = (payload: any, status = 200) => ({ ok: status < 400, status, json: async () => payload, text: async () => JSON.stringify(payload) });
   if (url.endsWith("/health")) return json({ status: "ok" });
   if (url.includes("/db/") && url.endsWith("/schema")) return json(SCHEMA);
   if (url.endsWith("/query")) {
-    const { query } = JSON.parse(init.body);
-    return ANSWERS[query] ? json(ANSWERS[query]) : json({ error: "bad_request", detail: "syntax error" }, 400);
+    const answer = (ANSWERS as Record<string, any>)[body.query];
+    return answer ? json(answer) : json({ error: "bad_request", detail: "syntax error" }, 400);
   }
   return json({ error: "not_found" }, 404);
-};
+});
 
-function fakeModel(values = {}) {
-  return { get: (k) => values[k], set: (k, v) => { values[k] = v; }, save_changes() {}, values };
-}
+
 
 test("connect checks /health, then reads /db/{database}/schema into the filter panel", async () => {
   requests.length = 0;
@@ -39,8 +36,8 @@ test("connect checks /health, then reads /db/{database}/schema into the filter p
   assert.equal(await server.connect("http://studio.local/grafeo/", "", "", model), true);
   assert.equal(model.values.connection_status, "connected");
   assert.deepEqual(requests.map((r) => r.url), ["http://studio.local/grafeo/health", "http://studio.local/grafeo/db/graph/schema"]);
-  assert.deepEqual(model.values.schema_node_types.map((t) => t.label), ["File"]);
-  assert.deepEqual(model.values.schema_edge_types.map((t) => t.type), ["IMPORTS"]);
+  assert.deepEqual(model.values.schema_node_types.map((t: any) => t.label), ["File"]);
+  assert.deepEqual(model.values.schema_edge_types.map((t: any) => t.type), ["IMPORTS"]);
 });
 
 test("a query posts {query, language, database} and draws grafeo-server's nodes, edges and paths", async () => {
@@ -50,15 +47,15 @@ test("a query posts {query, language, database} and draws grafeo-server's nodes,
   const result = await server.executeQuery("MATCH (a)-[r]->(b) RETURN a, r, b", "gql", "graph", model);
   assert.deepEqual(requests[0].body, { query: "MATCH (a)-[r]->(b) RETURN a, r, b", language: "gql", database: "graph" });
   assert.equal(requests[0].headers.Authorization, "Basic " + btoa("user:secret"));
-  assert.equal(result.rows, 1);
-  assert.deepEqual(result.nodes.map((n) => [n.id, n.label, n.labels]), [["0", "a.py", ["File"]], ["1", "b.py", ["File"]]]);
-  assert.equal(result.nodes[0].size, 1.5);
-  assert.equal(result.nodes[0].changed, "2026-10-01");
-  assert.deepEqual(result.edges, [{ label: "IMPORTS", weight: 0.75, source: "0", target: "1" }]);
+  assert.equal(result!.rows, 1);
+  assert.deepEqual(result!.nodes.map((n: any) => [n.id, n.label, n.labels]), [["0", "a.py", ["File"]], ["1", "b.py", ["File"]]]);
+  assert.equal(result!.nodes[0].size, 1.5);
+  assert.equal(result!.nodes[0].changed, "2026-10-01");
+  assert.deepEqual(result!.edges, [{ label: "IMPORTS", weight: 0.75, source: "0", target: "1" }]);
 
   const path = await server.executeQuery("MATCH p = ()-[]->() RETURN p", "gql", "graph", model);
-  assert.equal(path.nodes.length, 2);
-  assert.equal(path.edges.length, 1);
+  assert.equal(path!.nodes.length, 2);
+  assert.equal(path!.edges.length, 1);
 
   const write = await server.executeQuery("INSERT (:File)", "gql", "graph", model);
   assert.deepEqual(write, { nodes: [], edges: [], rows: 0 });

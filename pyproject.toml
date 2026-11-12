@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.5.2"
+version = "0.5.3"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -35,7 +35,7 @@ dev = [
 ]
 networkx = ["networkx>=3"]
 pandas = ["pandas>=3"]
-grafeo = ["grafeo>=0.6.0"]
+grafeo = ["grafeo>=0.6.2,<0.7"]
 cosmosdb = ["gremlinpython>=3.8"]
 neo4j = ["neo4j>=5"]
 arango = ["python-arango>=8"]
@@ -43,6 +43,8 @@ arango = ["python-arango>=8"]
 examples = ["marimo>=0.19.9; python_version < '3.15'"]
 embed = []  # Marker extra: WASM loads from CDN on demand
 demo = []  # Marker extra: enables demo mode with pre-populated dataset
+# Marker extra: the 3D view (Graph3D / view="3d"); Three.js is bundled in the wheel, so it needs no extra Python deps
+3d = []
 
 [project.urls]
 Homepage = "https://grafeo.dev/"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 
 import pytest
 
@@ -38,5 +39,10 @@ def node_bin() -> str:
     """Path to the Node.js binary used to check the JavaScript side."""
     path = shutil.which("node")
     if path is None:
-        pytest.skip("Node.js is not installed (CI installs it; locally install Node 18+ to run the JS checks)")
+        pytest.skip("Node.js is not installed (CI installs it; locally install Node 22.18+ to run the JS checks)")
+    # The front end and its tests are TypeScript, which Node runs without a loader from 22.18 (and 23.6) on
+    version = subprocess.run([path, "--version"], capture_output=True, text=True, check=False).stdout.strip()
+    major, minor = (int(part) for part in version.lstrip("v").split(".")[:2])
+    if (major, minor) < (22, 18) or (major == 23 and minor < 6):
+        pytest.skip(f"Node.js {version} cannot run TypeScript directly: the JS checks need Node 22.18+")
     return path

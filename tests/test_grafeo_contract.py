@@ -217,8 +217,9 @@ def test_get_node_and_get_edge(grafeo_db, ids):
 
 def test_schema_shape(grafeo_db):
     schema = grafeo_db.schema()
-    assert schema["labels"] == [{"name": "Person", "count": 3}]
-    assert schema["edge_types"] == [{"name": "KNOWS", "count": 2}]
+    # grafeo 0.6.2 label entries also carry a "properties" list; match on name and count.
+    assert [(e["name"], e["count"]) for e in schema["labels"]] == [("Person", 3)]
+    assert [(e["name"], e["count"]) for e in schema["edge_types"]] == [("KNOWS", 2)]
 
 
 # ------------------------------------------------------------------ #
@@ -337,8 +338,9 @@ def test_backend_unknown_language_reaches_engine(grafeo_db):
 
 def test_backend_fetch_schema(grafeo_db):
     node_types, edge_types = GrafeoBackend(grafeo_db).fetch_schema()
-    assert node_types == [{"label": "Person", "properties": [], "count": 3}]
-    assert edge_types == [{"type": "KNOWS", "properties": [], "count": 2}]
+    # grafeo 0.6.2 schema label entries carry their properties; the backend lists their names.
+    assert node_types == [{"label": "Person", "properties": ["age", "id", "name"], "count": 3}]
+    assert edge_types == [{"type": "KNOWS", "properties": ["since", "source"], "count": 2}]
 
 
 # ------------------------------------------------------------------ #

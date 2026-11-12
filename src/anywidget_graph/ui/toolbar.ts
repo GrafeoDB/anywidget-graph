@@ -1,16 +1,22 @@
 /**
  * Toolbar component with query input and action buttons.
  */
-import { ICONS } from "./icons.js";
-import { updateStatusDot } from "./settings.js";
-import { shownOf, totalShown, nodeType, edgeType } from "./lanes.js";
+import { ICONS } from "./icons.ts";
+import { updateStatusDot } from "./settings.ts";
+import { shownOf, totalShown, nodeType, edgeType } from "./lanes.ts";
+import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 
 /**
  * Create the toolbar component.
  * @param {object} panels - { schema, settings, properties } panel objects with toggle/close/isOpen
  * @param {function} onSearch - callback(term) for search filtering
  */
-export function createToolbar(model, onExecuteQuery, panels, onSearch) {
+export function createToolbar(
+  model: WidgetModel,
+  onExecuteQuery: () => void,
+  panels: { schema?: Panel; settings?: Panel | null; properties?: Panel },
+  onSearch?: (term: string) => void,
+): HTMLDivElement {
   const toolbar = document.createElement("div");
   toolbar.className = "awg-toolbar";
 
@@ -35,12 +41,12 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
     queryInput.placeholder = "Enter query (e.g., MATCH (n) RETURN n LIMIT 25)";
     queryInput.value = model.get("query") || "";
 
-    queryInput.addEventListener("input", (e) => {
-      model.set("query", e.target.value);
+    queryInput.addEventListener("input", (e: Event) => {
+      model.set("query", (e.target as HTMLInputElement).value);
       model.save_changes();
     });
 
-    queryInput.addEventListener("keydown", (e) => {
+    queryInput.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         onExecuteQuery();
@@ -122,9 +128,9 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
   countBadge.className = "awg-count-badge";
   // "300 / 30,000 nodes" when the host gives totals (it may hold far more than it sends)
   function updateCount() {
-    const nodes = model.get("nodes") || [];
-    const edges = model.get("edges") || [];
-    const totals = model.get("totals") || {};
+    const nodes = (model.get("nodes") ?? []) as GraphNode[];
+    const edges = (model.get("edges") ?? []) as GraphEdge[];
+    const totals = (model.get("totals") ?? {}) as { nodes?: Record<string, number>; edges?: Record<string, number> };
     const shownNodes = shownOf(nodes.length, totalShown(nodes, nodeType, totals.nodes));
     countBadge.textContent = `${shownNodes} nodes \u00b7 ${shownOf(edges.length, totalShown(edges, edgeType, totals.edges))} edges`;
   }
@@ -149,6 +155,24 @@ export function createToolbar(model, onExecuteQuery, panels, onSearch) {
   updateTiming();
   model.on("change:query_time", updateTiming);
   toolbar.appendChild(timingBadge);
+
+  // 2D/3D view toggle: switches the model's `view` trait; index.ts's render re-mounts the matching view
+  const viewBtn = document.createElement("button");
+  viewBtn.className = "awg-btn awg-view-btn";
+  viewBtn.innerHTML = ICONS.cube;
+  viewBtn.title = "Toggle 3D view";
+  function updateViewBtn() {
+    const is3d = (model.get("view") || "2d") === "3d";
+    viewBtn.classList.toggle("awg-view-active", is3d);
+    viewBtn.title = is3d ? "Switch to 2D view" : "Switch to 3D view";
+  }
+  viewBtn.addEventListener("click", () => {
+    model.set("view", (model.get("view") || "2d") === "3d" ? "2d" : "3d");
+    model.save_changes();
+  });
+  model.on("change:view", updateViewBtn);
+  updateViewBtn();
+  toolbar.appendChild(viewBtn);
 
   // Settings button (mutual exclusion with properties)
   if (model.get("show_settings")) {

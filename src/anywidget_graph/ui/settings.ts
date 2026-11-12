@@ -1,10 +1,11 @@
 /**
  * Settings panel component.
  */
-import { ICONS } from "./icons.js";
-import * as neo4jBackend from "./neo4j.js";
-import * as grafeoBackend from "./grafeo.js";
-import * as grafeoEmbedBackend from "./grafeo-embed.js";
+import { ICONS } from "./icons.ts";
+import * as neo4jBackend from "./neo4j.ts";
+import * as grafeoBackend from "./grafeo.ts";
+import * as grafeoEmbedBackend from "./grafeo-embed.ts";
+import type { Panel, WidgetModel } from "./types.ts";
 
 // Configuration constants
 const BACKENDS = [
@@ -26,7 +27,7 @@ const QUERY_LANGUAGES = [
 ];
 
 // Which language each non-Grafeo backend forces
-const BACKEND_LANGUAGE = {
+const BACKEND_LANGUAGE: Record<string, string> = {
   neo4j: "cypher",
   ladybug: "cypher",
   arango: "aql",
@@ -36,7 +37,7 @@ const BACKEND_LANGUAGE = {
 /**
  * Create the settings panel.
  */
-export function createSettingsPanel(model, callbacks) {
+export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: () => void }): Panel {
   const panel = document.createElement("div");
   panel.className = "awg-settings-panel";
 
@@ -67,7 +68,7 @@ export function createSettingsPanel(model, callbacks) {
       checkbox.type = "checkbox";
       checkbox.checked = model.get("dark_mode");
       checkbox.addEventListener("change", (e) => {
-        model.set("dark_mode", e.target.checked);
+        model.set("dark_mode", (e.target as HTMLInputElement).checked);
         model.save_changes();
       });
       model.on("change:dark_mode", () => {
@@ -99,7 +100,7 @@ export function createSettingsPanel(model, callbacks) {
         backendSelect.appendChild(opt);
       });
       backendSelect.addEventListener("change", (e) => {
-        model.set("database_backend", e.target.value);
+        model.set("database_backend", (e.target as HTMLInputElement).value);
         model.save_changes();
         updateFormVisibility();
       });
@@ -123,7 +124,7 @@ export function createSettingsPanel(model, callbacks) {
       select.appendChild(opt);
     });
     select.addEventListener("change", (e) => {
-      model.set("grafeo_connection_mode", e.target.value);
+      model.set("grafeo_connection_mode", (e.target as HTMLInputElement).value);
       model.save_changes();
       updateFormVisibility();
     });
@@ -147,7 +148,7 @@ export function createSettingsPanel(model, callbacks) {
       input.placeholder = "http://localhost:7474";
       input.value = model.get("grafeo_server_url") || "http://localhost:7474";
       input.addEventListener("input", (e) => {
-        model.set("grafeo_server_url", e.target.value);
+        model.set("grafeo_server_url", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -162,7 +163,7 @@ export function createSettingsPanel(model, callbacks) {
       input.placeholder = "(optional)";
       input.value = model.get("connection_username") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_username", e.target.value);
+        model.set("connection_username", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -176,7 +177,7 @@ export function createSettingsPanel(model, callbacks) {
       input.className = "awg-input";
       input.value = model.get("connection_password") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_password", e.target.value);
+        model.set("connection_password", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -197,7 +198,7 @@ export function createSettingsPanel(model, callbacks) {
       input.placeholder = "neo4j+s://localhost:7687";
       input.value = model.get("connection_uri") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_uri", e.target.value);
+        model.set("connection_uri", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -212,7 +213,7 @@ export function createSettingsPanel(model, callbacks) {
       input.placeholder = "neo4j";
       input.value = model.get("connection_username") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_username", e.target.value);
+        model.set("connection_username", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -226,7 +227,7 @@ export function createSettingsPanel(model, callbacks) {
       input.className = "awg-input";
       input.value = model.get("connection_password") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_password", e.target.value);
+        model.set("connection_password", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -247,7 +248,7 @@ export function createSettingsPanel(model, callbacks) {
       input.placeholder = "wss://your-account.gremlin.cosmos.azure.com:443/";
       input.value = model.get("connection_uri") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_uri", e.target.value);
+        model.set("connection_uri", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -262,7 +263,7 @@ export function createSettingsPanel(model, callbacks) {
       input.placeholder = "graphdb";
       input.value = model.get("connection_database") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_database", e.target.value);
+        model.set("connection_database", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -275,7 +276,7 @@ export function createSettingsPanel(model, callbacks) {
       input.type = "text";
       input.className = "awg-input";
       input.placeholder = "container1";
-      input.addEventListener("input", (e) => {
+      input.addEventListener("input", () => {
         // Stored as part of connection config on Python side
       });
       return input;
@@ -289,7 +290,7 @@ export function createSettingsPanel(model, callbacks) {
       input.className = "awg-input";
       input.value = model.get("connection_password") || "";
       input.addEventListener("input", (e) => {
-        model.set("connection_password", e.target.value);
+        model.set("connection_password", (e.target as HTMLInputElement).value);
         model.save_changes();
       });
       return input;
@@ -306,7 +307,7 @@ export function createSettingsPanel(model, callbacks) {
     input.placeholder = "default";
     input.value = model.get("connection_database") || "default";
     input.addEventListener("input", (e) => {
-      model.set("connection_database", e.target.value);
+      model.set("connection_database", (e.target as HTMLInputElement).value);
       model.save_changes();
     });
     return input;
@@ -325,12 +326,122 @@ export function createSettingsPanel(model, callbacks) {
       languageSelect.appendChild(opt);
     });
     languageSelect.addEventListener("change", (e) => {
-      model.set("query_language", e.target.value);
+      model.set("query_language", (e.target as HTMLInputElement).value);
       model.save_changes();
     });
     return languageSelect;
   });
   form.appendChild(languageGroup);
+
+  // === 3D view (Graph3D / view="3d") ===
+  const view3dGroup = document.createElement("div");
+  view3dGroup.className = "awg-3d-settings";
+
+  const viewSelect = document.createElement("select");
+  view3dGroup.appendChild(
+    createFormGroup("View", () => {
+      viewSelect.className = "awg-select";
+      [
+        { id: "2d", name: "2D (Sigma)" },
+        { id: "3d", name: "3D (Three.js)" },
+      ].forEach((v) => {
+        const opt = document.createElement("option");
+        opt.value = v.id;
+        opt.textContent = v.name;
+        opt.selected = (model.get("view") || "2d") === v.id;
+        viewSelect.appendChild(opt);
+      });
+      viewSelect.addEventListener("change", (e) => {
+        model.set("view", (e.target as HTMLInputElement).value);
+        model.save_changes();
+      });
+      model.on("change:view", () => {
+        viewSelect.value = model.get("view") || "2d";
+      });
+      return viewSelect;
+    })
+  );
+
+  // Bloom: how strongly nodes push apart in the 3D layout (force3d_repulsion)
+  view3dGroup.appendChild(
+    createFormGroup("3D bloom", () => {
+      const wrap = document.createElement("div");
+      wrap.className = "awg-range-wrap";
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "3";
+      slider.step = "0.05";
+      slider.value = String(model.get("force3d_repulsion") ?? 1);
+      const value = document.createElement("span");
+      value.className = "awg-range-value";
+      value.textContent = Number(slider.value).toFixed(2);
+      slider.addEventListener("input", (e) => {
+        model.set("force3d_repulsion", Number((e.target as HTMLInputElement).value));
+        value.textContent = Number((e.target as HTMLInputElement).value).toFixed(2);
+        model.save_changes();
+      });
+      model.on("change:force3d_repulsion", () => {
+        slider.value = String(model.get("force3d_repulsion") ?? 1);
+        value.textContent = Number(slider.value).toFixed(2);
+      });
+      wrap.append(slider, value);
+      return wrap;
+    })
+  );
+
+  // Spread: rest length of an edge in the 3D layout (force3d_link_distance); empty means automatic
+  view3dGroup.appendChild(
+    createFormGroup("3D spread", () => {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className = "awg-input";
+      input.placeholder = "auto";
+      input.min = "1";
+      input.step = "1";
+      const current = model.get("force3d_link_distance");
+      input.value = current === null || current === undefined ? "" : String(current);
+      // On commit (enter or leaving the field), so a value is not cleared while it is being typed
+      input.addEventListener("change", () => {
+        const raw = input.value.trim();
+        const value = Number(raw);
+        // 0 or a negative rest length would collapse or invert the layout: anything but a positive number is automatic
+        const next = raw !== "" && Number.isFinite(value) && value > 0 ? value : null;
+        model.set("force3d_link_distance", next);
+        model.save_changes();
+        input.value = next === null ? "" : String(next);
+      });
+      model.on("change:force3d_link_distance", () => {
+        const v = model.get("force3d_link_distance");
+        input.value = v === null || v === undefined ? "" : String(v);
+      });
+      return input;
+    })
+  );
+
+  for (const [label, trait] of [["3D axes", "show_axes"], ["3D grid", "show_grid"]]) {
+    view3dGroup.appendChild(
+      createFormGroup(label, () => {
+        const toggle = document.createElement("label");
+        toggle.className = "awg-toggle";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = Boolean(model.get(trait));
+        checkbox.addEventListener("change", (e) => {
+          model.set(trait, (e.target as HTMLInputElement).checked);
+          model.save_changes();
+        });
+        model.on(`change:${trait}`, () => {
+          checkbox.checked = Boolean(model.get(trait));
+        });
+        const slider = document.createElement("span");
+        slider.className = "awg-toggle-slider";
+        toggle.append(checkbox, slider);
+        return toggle;
+      })
+    );
+  }
+  form.appendChild(view3dGroup);
 
   panel.appendChild(form);
 
@@ -527,7 +638,7 @@ export function createSettingsPanel(model, callbacks) {
 /**
  * Create a form group with label and input.
  */
-function createFormGroup(label, inputFn) {
+function createFormGroup(label: string, inputFn: () => Node): HTMLDivElement {
   const group = document.createElement("div");
   group.className = "awg-form-group";
 
@@ -543,6 +654,6 @@ function createFormGroup(label, inputFn) {
 /**
  * Update the status dot appearance.
  */
-export function updateStatusDot(dot, status) {
+export function updateStatusDot(dot: HTMLElement, status: string): void {
   dot.className = "awg-status-dot awg-status-" + status;
 }

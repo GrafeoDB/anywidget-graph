@@ -11,7 +11,8 @@ import {
   seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
   colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, roomyFrame,
   mixColor, fadeColor, dashPattern, contrastText, levelState,
-} from "../../src/anywidget_graph/ui/lanes.js";
+} from "../../src/anywidget_graph/ui/lanes.ts";
+import type { Box, Point } from "../../src/anywidget_graph/ui/lanes.ts";
 
 test("a node's neighbourhood holds the node and every node it shares an edge with, either way", () => {
   const edges = [{ source: "a", target: "b" }, { source: "c", target: "a" }, { source: "b", target: "d" }, { source: "a", target: "a" }];
@@ -177,7 +178,7 @@ test("ids that differ only at the end (y1, y2, ...) still spread over the band, 
 test("nodes next to the same neighbour stack as rows, one label line apart, then in the next column", () => {
   const band = laneBand(1);  // x 1400..2400, y 0..1000
   const unit = { x: 150, y: 20 };  // one label width across, one label line down, in graph units
-  const placed = [];
+  const placed: (Point & { crowded?: boolean })[] = [];
   for (let i = 0; i < 60; i++) placed.push(placeAppended(`e${i}`, { cross: [{ x: 300, y: 500 }], occupied: [...placed], unit }, band));
   // Every label box is clear of every other one, inside the band
   for (let i = 0; i < placed.length; i++) {
@@ -198,7 +199,7 @@ test("nodes next to the same neighbour stack as rows, one label line apart, then
 test("rows stay one label line apart with fractional spacing too (no row is skipped by rounding)", () => {
   const band = laneBand(1);
   const unit = { x: 151.37, y: 17.93 };
-  const placed = [];
+  const placed: (Point & { crowded?: boolean })[] = [];
   for (let i = 0; i < 9; i++) placed.push(placeAppended(`e${i}`, { cross: [{ x: 300, y: 500 }], occupied: [...placed], unit }, band));
   const rows = placed.filter((p) => p.x === 1900).map((p) => Math.round((p.y - 500) / unit.y)).sort((a, b) => a - b);
   assert.deepEqual(rows, [-3, -2, -1, 0, 1, 2, 3]);
@@ -347,7 +348,7 @@ test("rows split the band top to bottom on screen by node count, each with a min
   assert.deepEqual(rows.map((row) => row.label), ["business", "application", "technology"]);
   // Proportional (2 : 6 : 2), filling the band; the first row on top of the screen (sigma's y points up)
   assert.equal(rows[0].y1, 1100);
-  assert.equal(rows.at(-1).y0, 100);
+  assert.equal(rows.at(-1)!.y0, 100);
   assert.ok(Math.abs((rows[1].y1 - rows[1].y0) - 600) < 1e-9);
   for (let i = 1; i < rows.length; i++) assert.equal(rows[i].y1, rows[i - 1].y0);
   // Nodes stay a little away from the separators: each row's band is inset from its edges
@@ -421,7 +422,7 @@ test("the framing can leave room on the right, for controls over the rightmost l
 });
 
 test("a long label is shortened to a width with an ellipsis; a short one stays as it is", () => {
-  const measure = (text) => text.length * 6;  // 6 px per character
+  const measure = (text: string) => text.length * 6;  // 6 px per character
   assert.equal(shortenLabel("Payment", 110, measure), "Payment");
   // 110 px holds 17 characters and the ellipsis
   assert.equal(shortenLabel("Image Provider HTTP Service", 110, measure), "Image Provider HT\u2026");
@@ -503,7 +504,7 @@ test("a dimmed item is its colour mixed towards the canvas, opaque, so it reads 
 });
 
 test("a graph without lanes is framed with room for its largest node and for the controls on the right", () => {
-  const box = { x: [0, 100], y: [0, 100] };
+  const box: Box = { x: [0, 100], y: [0, 100] };
   const frame = roomyFrame(box, 30, 800, 400, 30, 120);
   // Every node centre, drawn with its largest radius, stays inside the canvas and left of the controls
   const place = fitBox(frame, 800, 400, 30);
@@ -543,7 +544,7 @@ test("badge text reads on its fill", () => {
 
 test("visibility levels: at or above the current level shows, one below dims (or hides), further below hides", () => {
   const levels = [{ id: 0, label: "All" }, { id: 1, label: "Inputs" }, { id: 2, label: "Filtered" }, { id: 3, label: "Used" }];
-  const at = (level, style) => levelState(level, 2, levels, style);
+  const at = (level: unknown, style?: string) => levelState(level, 2, levels, style);
   assert.deepEqual([0, 1, 2, 3].map((level) => at(level)), ["hidden", "dim", "shown", "shown"]);
   assert.deepEqual([0, 1, 2, 3].map((level) => at(level, "hide")), ["hidden", "hidden", "shown", "shown"]);
   assert.equal(at(undefined), "shown", "a node without a level always shows (another lane)");

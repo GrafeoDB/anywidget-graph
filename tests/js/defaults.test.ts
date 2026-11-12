@@ -1,21 +1,21 @@
-// The model view index.js renders through (defaults.js). Run with: node --test "tests/js/*.test.mjs"
+// The model view index.ts renders through (defaults.ts). Run with: node --test tests/js/*.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TRAIT_DEFAULTS, capQueryResult, detectDark, followHostTheme, queryResultNote, withDefaults } from "../../src/anywidget_graph/ui/defaults.js";
+import { TRAIT_DEFAULTS, capQueryResult, detectDark, followHostTheme, queryResultNote, withDefaults } from "../../src/anywidget_graph/ui/defaults.ts";
 
 // A host model in the shape anywidget hands to render(): get/set/on/off/save_changes/send
-function fakeHost(values = {}) {
-  const handlers = new Map();
+function fakeHost(values: Record<string, any> = {}) {
+  const handlers = new Map<string, ((...args: any[]) => void)[]>();
   return {
-    get: (name) => values[name],
-    set: (name, value) => { values[name] = value; },
-    on: (name, callback) => handlers.set(name, [...(handlers.get(name) || []), callback]),
-    off: (name, callback) => handlers.set(name, (handlers.get(name) || []).filter((c) => c !== callback)),
+    get: (name: string) => values[name],
+    set: (name: string, value: any) => { values[name] = value; },
+    on: (name: string, callback: (...args: any[]) => void) => handlers.set(name, [...(handlers.get(name) || []), callback]),
+    off: (name: string, callback: (...args: any[]) => void) => handlers.set(name, (handlers.get(name) || []).filter((c) => c !== callback)),
     save_changes() {},
     send() {},
     count: () => [...handlers.values()].reduce((n, list) => n + list.length, 0),
-    fire: (name) => (handlers.get(name) || []).forEach((c) => c()),
+    fire: (name: string) => (handlers.get(name) || []).forEach((c) => c()),
   };
 }
 
@@ -49,25 +49,25 @@ test("offAll removes every listener a view added, so a re-render does not stack 
 });
 
 // A model that fires change events while `set` runs, as Backbone (anywidget's model) does
-function liveModel(values) {
-  const handlers = new Map();
+function liveModel(values: Record<string, any>) {
+  const handlers = new Map<string, (() => void)[]>();
   return {
-    get: (name) => values[name],
-    set: (name, value) => {
+    get: (name: string) => values[name],
+    set: (name: string, value: any) => {
       if (values[name] === value) return;
       values[name] = value;
       (handlers.get(`change:${name}`) || []).forEach((callback) => callback());
     },
-    on: (name, callback) => handlers.set(name, [...(handlers.get(name) || []), callback]),
+    on: (name: string, callback: () => void) => handlers.set(name, [...(handlers.get(name) || []), callback]),
     save_changes() {},
     values,
   };
 }
 
-function mountTheme(values) {
+function mountTheme(values: Record<string, any>) {
   const page = { dark: true };
   const model = liveModel(values);
-  const theme = followHostTheme(model, () => page.dark);
+  const theme = followHostTheme(model as any, () => page.dark);
   model.on("change:dark_mode", theme.onChange);
   theme.sync();
   return { page, model, theme };
@@ -112,11 +112,11 @@ test("a result without nodes or edges keeps the drawing and the note says why; a
 });
 
 // Just enough of the DOM for detectDark: parents, data-theme and classes
-function element(theme, classes = [], parent = null, doc = null) {
-  return { dataset: theme ? { theme } : {}, classList: { contains: (c) => classes.includes(c) }, parentElement: parent, ownerDocument: doc };
+function element(theme?: string, classes: string[] = [], parent: any = null, doc: any = null): any {
+  return { dataset: theme ? { theme } : {}, classList: { contains: (c: string) => classes.includes(c) }, parentElement: parent, ownerDocument: doc };
 }
-function page({ htmlTheme, htmlClasses = [], paneTheme, system = false } = {}) {
-  const doc = {};
+function page({ htmlTheme, htmlClasses = [], paneTheme, system = false }: { htmlTheme?: string; htmlClasses?: string[]; paneTheme?: string; system?: boolean } = {}) {
+  const doc: any = {};
   doc.documentElement = element(htmlTheme, htmlClasses, null, doc);
   doc.body = element(undefined, [], doc.documentElement, doc);
   const pane = element(paneTheme, [], doc.body, doc);
@@ -125,7 +125,7 @@ function page({ htmlTheme, htmlClasses = [], paneTheme, system = false } = {}) {
 }
 
 test("the nearest data-theme decides the theme, then the page's classes, then the system", () => {
-  const dark = (options) => { const p = page(options); return detectDark(p.widget, p.matchMedia); };
+  const dark = (options?: Parameters<typeof page>[0]) => { const p = page(options); return detectDark(p.widget as unknown as HTMLElement, p.matchMedia as unknown as typeof globalThis.matchMedia); };
   assert.equal(dark({ paneTheme: "light", system: true }), false, "a light pane on a dark system is light");
   assert.equal(dark({ paneTheme: "dark", htmlTheme: "light" }), true, "the pane wins over the page");
   assert.equal(dark({ paneTheme: "system", htmlTheme: "dark" }), true, "another value passes the question on");
@@ -154,7 +154,7 @@ test("a second view of the same widget does not take the first view's update for
 });
 
 test("a second copy of the module (a cell run again) also sees the first copy's update as the page's", async () => {
-  const copy = await import("../../src/anywidget_graph/ui/defaults.js?copy=2");
+  const copy = await import("../../src/anywidget_graph/ui/defaults.ts?copy=2");
   const page = { dark: true };
   const host = liveModel({ dark_mode: true, _theme_explicit: false });
   const first = followHostTheme(host, () => page.dark);

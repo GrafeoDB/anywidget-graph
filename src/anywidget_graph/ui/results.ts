@@ -1,12 +1,19 @@
 /**
  * Results drawer component with collapsible lip toggle.
  */
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
+import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
 
 /**
  * Create the results drawer (bottom panel with lip toggle).
  */
-export function createResultsDrawer(model) {
+export function createResultsDrawer(model: WidgetModel): {
+  element: HTMLDivElement;
+  open: () => void;
+  close: () => void;
+  toggle: () => void;
+  isOpen: () => boolean;
+} {
   const drawer = document.createElement("div");
   drawer.className = "awg-results-drawer";
 
@@ -27,8 +34,8 @@ export function createResultsDrawer(model) {
 
   function updateLipTiming() {
     const ms = model.get("query_time") || 0;
-    const nodes = model.get("nodes") || [];
-    const edges = model.get("edges") || [];
+    const nodes = (model.get("nodes") ?? []) as GraphNode[];
+    const edges = (model.get("edges") ?? []) as GraphEdge[];
     const parts = [];
     if (nodes.length > 0 || edges.length > 0) {
       parts.push(`${nodes.length}n / ${edges.length}e`);
@@ -74,7 +81,7 @@ export function createResultsDrawer(model) {
 
   let activeTab = "nodes";
 
-  function setActiveTab(tab) {
+  function setActiveTab(tab: string): void {
     activeTab = tab;
     nodesTab.classList.toggle("awg-results-tab-active", tab === "nodes");
     edgesTab.classList.toggle("awg-results-tab-active", tab === "edges");
@@ -86,7 +93,7 @@ export function createResultsDrawer(model) {
 
   function renderTable() {
     tableContainer.innerHTML = "";
-    const items = model.get(activeTab === "nodes" ? "nodes" : "edges") || [];
+    const items = (model.get(activeTab === "nodes" ? "nodes" : "edges") ?? []) as (GraphNode | GraphEdge)[];
 
     if (items.length === 0) {
       const empty = document.createElement("div");
@@ -98,10 +105,10 @@ export function createResultsDrawer(model) {
 
     // Collect all keys across items (skip internal rendering keys)
     const skipKeys = new Set(["x", "y", "size", "color"]);
-    const keys = [];
-    const seen = new Set();
-    items.forEach((item) => {
-      Object.keys(item).forEach((k) => {
+    const keys: string[] = [];
+    const seen = new Set<string>();
+    items.forEach((item: GraphNode | GraphEdge) => {
+      Object.keys(item).forEach((k: string) => {
         if (!seen.has(k) && !skipKeys.has(k)) {
           seen.add(k);
           keys.push(k);
@@ -115,7 +122,7 @@ export function createResultsDrawer(model) {
     // Header
     const thead = document.createElement("thead");
     const headerRow = document.createElement("tr");
-    keys.forEach((k) => {
+    keys.forEach((k: string) => {
       const th = document.createElement("th");
       th.textContent = k;
       headerRow.appendChild(th);
@@ -128,7 +135,7 @@ export function createResultsDrawer(model) {
     const limit = Math.min(items.length, 100);
     for (let i = 0; i < limit; i++) {
       const row = document.createElement("tr");
-      keys.forEach((k) => {
+      keys.forEach((k: string) => {
         const td = document.createElement("td");
         const val = items[i][k];
         if (val === undefined || val === null) {

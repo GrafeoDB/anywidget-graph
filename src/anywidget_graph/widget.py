@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -15,7 +16,7 @@ from traitlets import observe
 
 from anywidget_graph.backends import DatabaseBackend
 from anywidget_graph.backends.grafeo import GrafeoBackend
-from anywidget_graph.ui import get_css, get_esm, get_vendor_js
+from anywidget_graph.ui import get_css, get_esm, get_export3d_js, get_export_js, get_vendor_js, get_vendor_js_3d
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,8 +27,48 @@ def _script_json(value: Any) -> str:
     return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-# The page to_html() fills in (a str.format template: literal braces are doubled)
+# The page to_html() fills in (a str.format template: literal braces are doubled), and the 3D view's page
 _EXPORT_TEMPLATE = Path(__file__).parent / "ui" / "export.html"
+_EXPORT_3D_TEMPLATE = Path(__file__).parent / "ui" / "export3d.html"
+# The traits the 3D view's canvas reads, written into its export page as the page's model
+_EXPORT_3D_TRAITS = (
+    "layout",
+    "force3d_repulsion",
+    "force3d_link_distance",
+    "show_axes",
+    "show_grid",
+    "grid_divisions",
+    "axis_labels",
+    "camera_position",
+    "camera_target",
+    "background",
+    "dark_mode",
+    "theme",
+    "width",
+    "height",
+    "show_labels",
+    "edge_arrows",
+    "highlight_neighbors",
+    "show_tooltip",
+    "tooltip_fields",
+    "selection_mode",
+    "selected_nodes",
+    "pinned_nodes",
+    "color_field",
+    "color_scale",
+    "color_domain",
+    "size_field",
+    "size_range",
+    "edge_color_field",
+    "edge_color_scale",
+    "edge_size_field",
+    "edge_size_range",
+    "type_colors",
+    "levels",
+    "level_field",
+    "current_level",
+    "filtered_style",
+)
 
 # A CSS colour or length the page writes into its <style>: plain values only, so a value cannot end the element
 _CSS_VALUE = re.compile(r"^[#\w(),.%\s-]+$")
@@ -140,6 +181,12 @@ class Graph(anywidget.AnyWidget):
         >>> import grafeo
         >>> db = grafeo.GrafeoDB()
         >>> graph = Graph(database_backend="grafeo", grafeo_db=db)
+
+    With the 3D view (a Three.js scene you fly through, the graph laid out in three dimensions):
+
+        >>> from anywidget_graph import Graph3D
+        >>> graph = Graph3D(nodes=[{"id": "a"}, {"id": "b"}], edges=[{"source": "a", "target": "b"}])
+        >>> graph.view = "2d"  # switch views at runtime; Graph(view="3d") starts a Graph in the 3D view
     """
 
     _esm = get_esm()
@@ -161,6 +208,25 @@ class Graph(anywidget.AnyWidget):
     edge_arrows = traitlets.Bool(default_value=False).tag(sync=True)
     # A selected node keeps its neighbours and their edges lit; everything else dims
     highlight_neighbors = traitlets.Bool(default_value=False).tag(sync=True)
+
+    # === View: 2D or 3D ===
+    # "2d" is the Sigma canvas; "3d" (the default of Graph3D) renders with the bundled Three.js: nodes and edges
+    # laid out in three dimensions (the force layout's "bloom" and "spread" act in 3D) in a scene you fly through
+    # with OrbitControls. The toolbar's cube button and the settings panel switch it at runtime.
+    view = traitlets.CaselessStrEnum(values=["2d", "3d"], default_value="2d").tag(sync=True)
+
+    # === 3D view (view="3d") ===
+    # The 3D force layout: how strongly every pair of nodes pushes apart ("bloom") and the rest length of an
+    # edge ("spread"); link_distance None picks one from the node count
+    force3d_repulsion = traitlets.Float(default_value=1.0).tag(sync=True)
+    force3d_link_distance = traitlets.Float(default_value=None, allow_none=True).tag(sync=True)
+    # Scene furniture and camera of the 3D view
+    show_axes = traitlets.Bool(default_value=True).tag(sync=True)
+    show_grid = traitlets.Bool(default_value=True).tag(sync=True)
+    grid_divisions = traitlets.Int(default_value=10).tag(sync=True)
+    axis_labels = traitlets.Dict(default_value={"x": "X", "y": "Y", "z": "Z"}).tag(sync=True)
+    camera_position = traitlets.List(default_value=[2, 2, 2]).tag(sync=True)
+    camera_target = traitlets.List(default_value=[0, 0, 0]).tag(sync=True)
 
     # === Property-Based Styling (node) ===
     color_field = traitlets.Unicode(allow_none=True, default_value=None).tag(sync=True)
@@ -289,6 +355,7 @@ class Graph(anywidget.AnyWidget):
         show_toolbar: bool = True,
         show_settings: bool = True,
         show_query_input: bool = True,
+        view: str = "2d",
         dark_mode: bool | None = None,
         database_backend: str = "grafeo",
         connection_uri: str = "",
@@ -323,6 +390,8 @@ class Graph(anywidget.AnyWidget):
             Whether to show the settings button.
         show_query_input : bool
             Whether to show the query input.
+        view : str
+            "2d" (Sigma canvas) or "3d" (Three.js scene; the default of Graph3D).
         dark_mode : bool, optional
             Whether to use dark theme. Left out (None), the widget follows the page's light or dark theme and
             reports it here; given, it keeps that theme.
@@ -363,6 +432,7 @@ class Graph(anywidget.AnyWidget):
             show_toolbar=show_toolbar,
             show_settings=show_settings,
             show_query_input=show_query_input,
+            view=view,
             database_backend=database_backend,
             connection_uri=connection_uri,
             connection_username=connection_username,
@@ -463,6 +533,14 @@ class Graph(anywidget.AnyWidget):
             super().set_state(sync_data)
         finally:
             self._applying_frontend_state = False
+
+    @traitlets.validate("force3d_link_distance")
+    def _validate_link_distance(self, proposal: dict[str, Any]) -> float | None:
+        # 0 or a negative rest length collapses or inverts the 3D layout; None is the automatic one
+        value = proposal["value"]
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise traitlets.TraitError("force3d_link_distance must be a positive number, or None for automatic")
+        return value
 
     @observe("_execute_query")
     def _on_execute_query(self, change: dict) -> None:
@@ -999,6 +1077,8 @@ class Graph(anywidget.AnyWidget):
         The resulting HTML carries Graphology and Sigma.js itself (no CDN, so it opens offline),
         embeds all current node/edge data plus visual settings, and renders the
         graph with layout, color/size mapping, labels, zoom/pan, and tooltips.
+        A graph in the 3D view (``view="3d"``, as :class:`Graph3D`) exports the 3D view instead: the page carries
+        Three.js and draws the scene with the same layout, camera, axes and styling, to orbit, zoom and select in.
 
         Parameters
         ----------
@@ -1040,8 +1120,22 @@ class Graph(anywidget.AnyWidget):
             "edge_color_scale": self.edge_color_scale,
             "edge_size_field": self.edge_size_field,
             "edge_size_range": list(self.edge_size_range),
+            "type_colors": self.type_colors,
             "layout": self.layout,
         }
+        if self.view == "3d":
+            options_3d = {name: getattr(self, name) for name in _EXPORT_3D_TRAITS}
+            return _EXPORT_3D_TEMPLATE.read_text(encoding="utf-8").format(
+                title=html.escape(title),
+                background=background,
+                width=_css_value(width, "100%"),
+                height=_css_value(height, "600px"),
+                css=get_css(),
+                json_data=_script_json(data),
+                json_options=_script_json(options_3d),
+                vendor_js_3d=get_vendor_js_3d(),
+                export_js=get_export3d_js(),
+            )
         return _EXPORT_TEMPLATE.read_text(encoding="utf-8").format(
             title=html.escape(title),
             background=background,
@@ -1050,6 +1144,7 @@ class Graph(anywidget.AnyWidget):
             json_data=_script_json(data),
             json_options=_script_json(options),
             vendor_js=get_vendor_js(),
+            export_js=get_export_js(),
         )
 
     def save_html(self, path: str, **kwargs: Any) -> None:
@@ -1063,3 +1158,26 @@ class Graph(anywidget.AnyWidget):
             Forwarded to :meth:`to_html` (``width``, ``height``, ``title``).
         """
         Path(path).write_text(self.to_html(**kwargs), encoding="utf-8")
+
+
+class Graph3D(Graph):
+    """The :class:`Graph` widget with the 3D view as its default (``view="3d"``).
+
+    Nodes and edges are rendered with the bundled Three.js in a scene you can go through: drag to orbit,
+    right-drag to pan, wheel to zoom. The layout is a force layout in three dimensions: ``force3d_repulsion``
+    (the "bloom") pushes every pair of nodes apart and ``force3d_link_distance`` (the "spread") is the rest
+    length of an edge, so the graph spreads through the volume instead of a plane. Everything else (queries,
+    backends, styling, selection, the panels, and the toolbar's 2D/3D toggle) works as in :class:`Graph`.
+
+    Example
+    -------
+    >>> graph = Graph3D(
+    ...     nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+    ...     edges=[{"source": "a", "target": "b", "label": "KNOWS"}],
+    ... )
+    >>> graph.view = "2d"  # switch to the 2D view at any time
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("view", "3d")
+        super().__init__(*args, **kwargs)

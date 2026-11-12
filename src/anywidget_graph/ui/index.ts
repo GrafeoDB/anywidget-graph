@@ -2,40 +2,62 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
-import { withDefaults, followHostTheme, queryResultNote, detectDark, capQueryResult } from "./defaults.js";
-import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.js";
+import { withDefaults, followHostTheme, detectDark, WIDGET_FEATURES } from "./defaults.ts";
+import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.ts";
 
-import { ICONS } from "./icons.js";
-import { createToolbar } from "./toolbar.js";
-import { createSchemaPanel } from "./schema.js";
-import { createSettingsPanel } from "./settings.js";
-import { createPropertiesPanel } from "./properties.js";
-import { createResultsDrawer } from "./results.js";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.js";
-import * as neo4jBackend from "./neo4j.js";
-import * as grafeoBackend from "./grafeo.js";
-import * as grafeoEmbedBackend from "./grafeo-embed.js";
+import { ICONS } from "./icons.ts";
+import { createToolbar } from "./toolbar.ts";
+import { createSchemaPanel } from "./schema.ts";
+import { createSettingsPanel } from "./settings.ts";
+import { createPropertiesPanel } from "./properties.ts";
+import { createResultsDrawer } from "./results.ts";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
+import * as grafeoEmbedBackend from "./grafeo-embed.ts";
+import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, pointInPolygon } from "./styling.ts";
+import { executeQuery } from "./query.ts";
+import { springLayout } from "./spring.ts";
+import type { SpringNode } from "./spring.ts";
+import { render3D } from "./index3d.ts";
+import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
+import { errorText } from "./types.ts";
+import type { Band, Batch, Box, Lane, LaneIcon, LayoutNode, Point, RowBand } from "./lanes.ts";
+import type { StylingOpts } from "./styling.ts";
+import type { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
 
-// === Color Scales (same as anywidget-vector) ===
-const COLOR_SCALES = {
-  viridis: [[0.267,0.004,0.329],[0.282,0.141,0.458],[0.253,0.265,0.530],[0.207,0.372,0.553],[0.164,0.471,0.558],[0.128,0.567,0.551],[0.134,0.658,0.517],[0.267,0.749,0.441],[0.478,0.821,0.318],[0.741,0.873,0.150],[0.993,0.906,0.144]],
-  plasma: [[0.050,0.030,0.528],[0.295,0.012,0.615],[0.492,0.012,0.658],[0.654,0.072,0.639],[0.798,0.195,0.561],[0.897,0.329,0.445],[0.963,0.480,0.314],[0.993,0.640,0.186],[0.980,0.807,0.086],[0.940,0.975,0.131],[0.940,0.975,0.131]],
-  inferno: [[0.001,0.000,0.014],[0.110,0.066,0.290],[0.280,0.086,0.470],[0.447,0.096,0.460],[0.612,0.140,0.381],[0.762,0.233,0.272],[0.882,0.370,0.170],[0.959,0.551,0.069],[0.977,0.754,0.065],[0.936,0.960,0.309],[0.988,1.000,0.644]],
-  magma: [[0.001,0.000,0.014],[0.099,0.068,0.265],[0.232,0.094,0.450],[0.383,0.107,0.520],[0.533,0.137,0.512],[0.683,0.199,0.453],[0.822,0.303,0.369],[0.925,0.452,0.293],[0.975,0.637,0.264],[0.985,0.835,0.361],[0.987,0.991,0.750]],
-  cividis: [[0.000,0.135,0.305],[0.074,0.192,0.351],[0.145,0.247,0.382],[0.228,0.302,0.390],[0.310,0.358,0.393],[0.394,0.414,0.390],[0.482,0.470,0.379],[0.575,0.530,0.358],[0.672,0.595,0.325],[0.775,0.666,0.274],[0.880,0.742,0.199]],
-  turbo: [[0.190,0.072,0.232],[0.231,0.322,0.745],[0.137,0.572,0.938],[0.069,0.773,0.800],[0.200,0.910,0.510],[0.507,0.979,0.254],[0.775,0.953,0.136],[0.953,0.804,0.098],[0.993,0.561,0.090],[0.914,0.286,0.063],[0.647,0.082,0.033]],
-};
-const CATEGORICAL_COLORS = [
-  "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
-  "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
-];
-
-const DISPLAY_NAME_FIELDS = ["name", "title", "label", "display", "id"];
 
 /**
  * Find the two positions where a circle of radius r is tangent to circles a and b.
  */
-function tangentPositions(a, b, r) {
+/** A circle in screen coordinates. */
+type Circle = Point & { r: number };
+
+/** A node of a lane's d3 simulation: position plus the band it is clamped into and its collision radius. */
+type LaneSimNode = SimulationNodeDatum & { id: string; band: Band; radius: number; tall?: number; partner?: number };
+
+/** The linked-lanes state shared by a render's callbacks (empty unless the host sets lanes or batches). */
+interface LaneState {
+  lanes: Lane[];
+  bands: Band[];
+  laneById: Map<string, string>;
+  cross: { source: string; target: string; key: string }[];
+  appear: Map<string, number>;
+  edgeAppear: Map<string, number>;
+  crossAppear: Map<string, number>;
+  vanish: Map<string, number>;
+  edgeVanish: Map<string, number>;
+  sizeScale: Map<string, number>;
+  rows: Map<string, RowBand[]>;
+  move: Map<string, { from: Point; to: Point; start: number }>;
+  labelled: Map<string, string>;
+  labelText: Map<string, string>;
+  quietLanes: Set<string>;
+  hoverNode: string | null;
+  pulse: Set<string>;
+  lastSeq: number;
+  hoverAction: unknown;
+}
+
+function tangentPositions(a: Circle, b: Circle, r: number): Point[] {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const d = Math.sqrt(dx * dx + dy * dy);
@@ -61,143 +83,14 @@ function tangentPositions(a, b, r) {
   ];
 }
 
-function getColorFromScale(value, scaleName, domain) {
-  const scale = COLOR_SCALES[scaleName] || COLOR_SCALES.viridis;
-  const [min, max] = domain || [0, 1];
-  const t = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0.5;
-  const idx = t * (scale.length - 1);
-  const i = Math.floor(idx);
-  const f = idx - i;
-  if (i >= scale.length - 1) {
-    const c = scale[scale.length - 1];
-    return `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
-  }
-  const c1 = scale[i], c2 = scale[i + 1];
-  const r = Math.round((c1[0] + f * (c2[0] - c1[0])) * 255);
-  const g = Math.round((c1[1] + f * (c2[1] - c1[1])) * 255);
-  const b = Math.round((c1[2] + f * (c2[2] - c1[2])) * 255);
-  return `rgb(${r},${g},${b})`;
-}
-
-function getCategoricalColor(value) {
-  let hash = 0;
-  const str = String(value);
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-  return CATEGORICAL_COLORS[Math.abs(hash) % CATEGORICAL_COLORS.length];
-}
-
-function pointInPolygon(x, y, polygon) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
-    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-function computeNodeColor(node, colorField, colorScale, colorDomain, typeColors) {
-  if (node.color) return node.color;
-  if (!colorField || node[colorField] === undefined) {
-    // Color by node type: the host's colour for it (type_colors), else the palette (matches the filter panel swatches)
-    const nodeType = (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "");
-    return colorFor(node, nodeType, typeColors, nodeType ? getCategoricalColor(nodeType) : "#6366f1");
-  }
-  const value = node[colorField];
-  if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
-  return getCategoricalColor(value);
-}
-
-function computeNodeSize(node, sizeField, sizeDomain, sizeRange, degree) {
-  if (node.size !== undefined) return node.size;
-  if (sizeField && node[sizeField] !== undefined && sizeDomain) {
-    const [min, max] = sizeDomain;
-    const t = max > min ? (node[sizeField] - min) / (max - min) : 0.5;
-    return sizeRange[0] + t * (sizeRange[1] - sizeRange[0]);
-  }
-  // Auto-size by degree: hub nodes get bigger, leaf nodes smaller
-  if (degree !== undefined && degree > 0) {
-    return Math.max(4, Math.min(30, 4 + Math.sqrt(degree) * 3));
-  }
-  return 8;
-}
-
-function autoLabel(node) {
-  for (const field of DISPLAY_NAME_FIELDS) {
-    const val = node[field];
-    if (val != null && String(val)) return String(val);
-  }
-  // Try labels array (common from Neo4j)
-  if (Array.isArray(node.labels) && node.labels.length > 0) return node.labels[0];
-  return String(node.id || "");
-}
-
-function getStylingOpts(model, nodes, edges) {
-  const colorField = model.get("color_field");
-  const colorScale = model.get("color_scale") || "viridis";
-  let colorDomain = model.get("color_domain");
-  const sizeField = model.get("size_field");
-  const sizeRange = model.get("size_range") || [5, 30];
-
-  // Auto-compute color domain
-  if (colorField && !colorDomain) {
-    const vals = nodes.map(n => n[colorField]).filter(v => typeof v === "number");
-    if (vals.length > 0) colorDomain = [Math.min(...vals), Math.max(...vals)];
-  }
-
-  // Compute size domain
-  let sizeDomain = null;
-  if (sizeField) {
-    const vals = nodes.map(n => n[sizeField]).filter(v => typeof v === "number");
-    if (vals.length > 0) sizeDomain = [Math.min(...vals), Math.max(...vals)];
-  }
-
-  // Edge styling
-  const edgeColorField = model.get("edge_color_field");
-  const edgeColorScale = model.get("edge_color_scale") || "viridis";
-  let edgeColorDomain = null;
-  if (edgeColorField) {
-    const vals = edges.map(e => e[edgeColorField]).filter(v => typeof v === "number");
-    if (vals.length > 0) edgeColorDomain = [Math.min(...vals), Math.max(...vals)];
-  }
-
-  const edgeSizeField = model.get("edge_size_field");
-  const edgeSizeRange = model.get("edge_size_range") || [1, 8];
-  let edgeSizeDomain = null;
-  if (edgeSizeField) {
-    const vals = edges.map(e => e[edgeSizeField]).filter(v => typeof v === "number");
-    if (vals.length > 0) edgeSizeDomain = [Math.min(...vals), Math.max(...vals)];
-  }
-
-  // Compute degree map for auto-sizing when no sizeField is set
-  const degreeMap = new Map();
-  if (!sizeField) {
-    edges.forEach((e) => {
-      degreeMap.set(e.source, (degreeMap.get(e.source) || 0) + 1);
-      degreeMap.set(e.target, (degreeMap.get(e.target) || 0) + 1);
-    });
-  }
-
-  return {
-    colorField, colorScale, colorDomain, sizeField, sizeDomain, sizeRange,
-    edgeColorField, edgeColorScale, edgeColorDomain,
-    edgeSizeField, edgeSizeDomain, edgeSizeRange,
-    degreeMap,
-    typeColors: model.get("type_colors") || {},
-    levelField: model.get("level_field") || "level",
-  };
-}
-
-function buildNodeAttrs(node, opts) {
+function buildNodeAttrs(node: GraphNode, opts: StylingOpts): Record<string, unknown> {
   return {
     label: autoLabel(node),
     // Store the primary type for filtering
     nodeType: (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "Unlabeled"),
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
-    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(node.id)),
+    size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(String(node.id))),
     color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
     // Per-item style fields a host sets on a node (each optional): drawn by the reducers and the overlay
     opacity: node.opacity,
@@ -211,19 +104,15 @@ function buildNodeAttrs(node, opts) {
   };
 }
 
-function buildEdgeAttrs(edge, opts) {
-  let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
-  if (opts.edgeColorField && edge[opts.edgeColorField] !== undefined) {
-    const val = edge[opts.edgeColorField];
-    color = typeof val === "number"
-      ? getColorFromScale(val, opts.edgeColorScale, opts.edgeColorDomain)
-      : getCategoricalColor(val);
-  }
+function buildEdgeAttrs(edge: GraphEdge, opts: StylingOpts): Record<string, unknown> {
+  // Its own colour, else the field mapping, else the per-type colour (styling.ts, shared with the 3D view and the export)
+  const color = computeEdgeColor(edge, opts);
 
   let size = edge.size || 2;
   if (opts.edgeSizeField && edge[opts.edgeSizeField] !== undefined && opts.edgeSizeDomain) {
     const [min, max] = opts.edgeSizeDomain;
-    const t = max > min ? (edge[opts.edgeSizeField] - min) / (max - min) : 0.5;
+    const v = edge[opts.edgeSizeField];
+    const t = max > min && typeof v === "number" ? (v - min) / (max - min) : 0.5;
     size = opts.edgeSizeRange[0] + t * (opts.edgeSizeRange[1] - opts.edgeSizeRange[0]);
   }
 
@@ -238,86 +127,11 @@ function buildEdgeAttrs(edge, opts) {
   };
 }
 
-// The newest browser-side query of each model: an older one that finishes later must not replace its result
-const latestQuery = new WeakMap();
-
 /**
- * A browser-side mode connects with the configured settings on its first query, so the query box works without
- * pressing Connect in the settings panel first. False when the connection failed (its message is in query_error).
+ * Main render function for the 2D view (Sigma). The widget's render below picks this or the 3D view (index3d.ts)
+ * by the model's `view` trait.
  */
-async function connectForQuery(model, backend, mode) {
-  if (backend === "neo4j" && !neo4jBackend.isConnected(model)) {
-    return neo4jBackend.connect(model.get("connection_uri"), model.get("connection_username"), model.get("connection_password"), model);
-  }
-  if (backend === "grafeo" && mode === "server" && !grafeoBackend.isConnected(model)) {
-    return grafeoBackend.connect(model.get("grafeo_server_url"), model.get("connection_username"), model.get("connection_password"), model);
-  }
-  if (backend === "grafeo" && mode === "wasm" && !grafeoEmbedBackend.isConnected(model)) {
-    return grafeoEmbedBackend.connect(model);
-  }
-  return true;
-}
-
-/**
- * Execute a query based on the current backend and connection mode.
- */
-async function executeQuery(model) {
-  const backend = model.get("database_backend");
-  const query = model.get("query");
-  const mode = model.get("grafeo_connection_mode");
-  const language = model.get("query_language") || "cypher";
-
-  if (!query.trim()) {
-    model.set("query_error", "Please enter a query");
-    model.save_changes();
-    return;
-  }
-
-  // Every view of a widget shares one count, so a view's older query cannot replace another view's newer result
-  const key = model.host ?? model;
-  const ticket = (latestQuery.get(key) || 0) + 1;
-  latestQuery.set(key, ticket);
-  model.set("query_note", "");
-  if (!(await connectForQuery(model, backend, mode))) return;
-  const start = performance.now();
-  let result;
-
-  if (backend === "neo4j") {
-    // Browser-side Neo4j driver
-    result = await neo4jBackend.executeQuery(query, model.get("connection_database"), model);
-  } else if (backend === "grafeo" && mode === "server") {
-    // Browser-side Grafeo server HTTP
-    result = await grafeoBackend.executeQuery(query, language, model.get("connection_database"), model);
-  } else if (backend === "grafeo" && mode === "wasm") {
-    // Browser-side Grafeo WASM
-    result = await grafeoEmbedBackend.executeQuery(query, language, model);
-  } else {
-    // Python-side backends (grafeo-embedded, ladybug, arango, cosmosdb): the kernel runs queries one at a time
-    // and times them itself
-    model.set("_execute_query", model.get("_execute_query") + 1);
-    model.save_changes();
-    return;
-  }
-
-  if (!result || latestQuery.get(key) !== ticket) return;
-  model.set("query_time", performance.now() - start);
-  const note = queryResultNote(result.rows, result);
-  // A result without nodes or edges keeps what is drawn; one past max_query_nodes is cut, and the note says so
-  if (note) {
-    model.set("query_note", note);
-  } else {
-    const capped = capQueryResult(result, model.get("max_query_nodes"));
-    model.set("query_note", capped.note);
-    model.set("nodes", capped.graph.nodes);
-    model.set("edges", capped.graph.edges);
-  }
-  model.save_changes();
-}
-
-/**
- * Main render function for the anywidget.
- */
-function render({ model: host, el }) {
+function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }): () => void {
   const model = withDefaults(host);
   const wrapper = document.createElement("div");
   wrapper.className = "awg-wrapper";
@@ -332,7 +146,7 @@ function render({ model: host, el }) {
   model.on("change:fill", applySize);
 
   // Renderer reference (set after Sigma init, used by theme/filter callbacks)
-  let rendererRef = null;
+  let rendererRef: InstanceType<typeof Sigma> | null = null;
 
   // Auto-detect host theme (Tailwind dark/dark-theme class, data-theme, or prefers-color-scheme)
   const detectHostDark = () => detectDark(el);
@@ -387,17 +201,17 @@ function render({ model: host, el }) {
   const onExecuteQuery = () => executeQuery(model);
 
   // Filter state (shared with node/edge reducers)
-  let hiddenNodeTypes = new Set();
-  let hiddenEdgeTypes = new Set();
-  let typeColorOverrides = new Map(); // custom colors from filter panel
+  let hiddenNodeTypes = new Set<string>();
+  let hiddenEdgeTypes = new Set<string>();
+  let typeColorOverrides = new Map<string, string>(); // custom colors from filter panel
 
-  function onFilterChange(nodeTypes, edgeTypes) {
+  function onFilterChange(nodeTypes: Set<string>, edgeTypes: Set<string>): void {
     hiddenNodeTypes = nodeTypes;
     hiddenEdgeTypes = edgeTypes;
     rendererRef?.refresh();
   }
 
-  function onColorChange(colorMap) {
+  function onColorChange(colorMap: Map<string, string>): void {
     typeColorOverrides = colorMap;
     // Update node colors in the graph
     graph.forEachNode((id, attrs) => {
@@ -413,7 +227,7 @@ function render({ model: host, el }) {
   }
 
   // Create panels first (all collapsed by default)
-  function refreshLayout() {
+  function refreshLayout(): void {
     applyLayout(model.get("layout") || "spring");
     rendererRef?.refresh();
     rendererRef?.getCamera().animatedReset({ duration: 300 });
@@ -430,11 +244,11 @@ function render({ model: host, el }) {
 
   // Search state (shared with nodeReducer/edgeReducer)
   let searchTerm = "";
-  let searchDirectMatches = new Set(); // nodes that directly match the term
-  let searchVisibleNodes = new Set();  // direct matches + first-degree neighbors
-  let searchVisibleEdges = new Set();  // edges connecting direct matches to their neighbors
+  let searchDirectMatches = new Set<string>(); // nodes that directly match the term
+  let searchVisibleNodes = new Set<string>();  // direct matches + first-degree neighbors
+  let searchVisibleEdges = new Set<string>();  // edges connecting direct matches to their neighbors
 
-  function onSearch(term) {
+  function onSearch(term: string): void {
     searchTerm = (term || "").toLowerCase().trim();
     searchDirectMatches.clear();
     searchVisibleNodes.clear();
@@ -453,7 +267,7 @@ function render({ model: host, el }) {
 
       // Add first-degree neighbors and their connecting edges
       searchDirectMatches.forEach((nodeId) => {
-        graph.forEachEdge(nodeId, (edgeId, edgeAttrs, source, target) => {
+        graph.forEachEdge(nodeId, (edgeId, _edgeAttrs, source, target) => {
           searchVisibleEdges.add(edgeId);
           searchVisibleNodes.add(source);
           searchVisibleNodes.add(target);
@@ -505,8 +319,9 @@ function render({ model: host, el }) {
 
   // Linked lanes, append, pulse and theme: shared state (empty unless the host sets lanes, batches, pulse or theme)
   // A batch already in the model when this view renders is in its nodes and edges (Graph.append keeps them there)
-  const laneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), vanish: new Map(), edgeVanish: new Map(), sizeScale: new Map(), rows: new Map(), move: new Map(), labelled: new Map(), labelText: new Map(), quietLanes: new Set(), hoverNode: null, pulse: new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
-  model.set("_features", ["lanes", "append", "pulse", "theme", "lane_widths", "column_lanes", "lane_actions", "lane_icons", "action_edges", "remove", "totals", "force_layout", "lane_rows", "relayout", "type_colors", "lane_labels"]);
+  const laneState: LaneState = { lanes: [], bands: [], laneById: new Map(), cross: [], appear: new Map(), edgeAppear: new Map(), crossAppear: new Map(), vanish: new Map(), edgeVanish: new Map(), sizeScale: new Map(), rows: new Map(), move: new Map(), labelled: new Map(), labelText: new Map(), quietLanes: new Set(), hoverNode: null, pulse: new Set(), lastSeq: Number(model.get("append_batch")?.seq) || 0, hoverAction: null };
+  // The same list from either view, so a host reads what this build offers whichever view is mounted
+  model.set("_features", WIDGET_FEATURES);
   model.save_changes();
 
   // The data drawn: the host's nodes and edges with the appended batches merged in. A redraw (new lanes, a style)
@@ -515,31 +330,31 @@ function render({ model: host, el }) {
 
   // The data a drawn node or edge came from, so events, the tooltip and the properties panel carry its properties
   // and not only how it is drawn. Graph keys are strings; the data's ids may be numbers.
-  function dataOfNode(node) {
-    return drawn.nodes.get(node) ?? [...drawn.nodes.values()].find((n) => String(n.id) === node) ?? {};
+  function dataOfNode(node: string): GraphNode {
+    return drawn.nodes.get(node) ?? [...drawn.nodes.values()].find((n) => String(n.id) === node) ?? ({} as GraphNode);
   }
   // What clicks and hovers report (selected_node, hovered_node, selected_edge, hovered_edge): the item's own fields
   // plus how it is drawn (label as displayed, position, size, colour), not the widget's internal attributes
-  function nodePayload(node, attrs) {
+  function nodePayload(node: string, attrs: Record<string, any>): GraphNode {
     const { label, x, y, size, color } = attrs;
     return { ...dataOfNode(node), label, x, y, size, color, id: node };
   }
-  function edgePayload(source, target, attrs) {
+  function edgePayload(source: string, target: string, attrs: Record<string, any>): GraphEdge {
     const { label, size, color } = attrs;
     return { ...dataOfEdge(source, target, attrs.label), source, target, label, size, color };
   }
-  function dataOfEdge(source, target, label) {
+  function dataOfEdge(source: string, target: string, label: string | undefined): GraphEdge {
     const key = edgeKey({ source, target, label });
-    return drawn.edges.find((e) => edgeKey({ source: String(e.source), target: String(e.target), label: e.label }) === key) ?? {};
+    return drawn.edges.find((e) => edgeKey({ source: String(e.source), target: String(e.target), label: e.label }) === key) ?? ({} as GraphEdge);
   }
 
   // An edge end that is no node but an action lane's id: the edge ends at that lane's button (connect nodes to an action)
-  function actionLaneIndex(id) {
+  function actionLaneIndex(id: string): number {
     if (graph.hasNode(id)) return -1;
     return laneState.lanes.findIndex((lane) => lane.action && lane.id === id);
   }
-  const drawable = (id) => graph.hasNode(id) || actionLaneIndex(id) >= 0;
-  const overlayEdge = (edge) => actionLaneIndex(edge.source) >= 0 || actionLaneIndex(edge.target) >= 0 || isCrossEdge(edge, laneState.laneById);
+  const drawable = (id: string): boolean => graph.hasNode(id) || actionLaneIndex(id) >= 0;
+  const overlayEdge = (edge: GraphEdge): boolean => actionLaneIndex(edge.source) >= 0 || actionLaneIndex(edge.target) >= 0 || isCrossEdge(edge, laneState.laneById);
 
   // Add initial nodes and edges with property-based styling
   function rebuildGraph() {
@@ -561,7 +376,7 @@ function render({ model: host, el }) {
       const attrs = buildNodeAttrs(node, opts);
       if (laneState.lanes.length) {
         attrs.lane = laneOf(node, laneState.lanes);
-        laneState.laneById.set(node.id, attrs.lane);
+        laneState.laneById.set(node.id, attrs.lane as string);
       }
       graph.addNode(node.id, attrs);
     });
@@ -569,7 +384,7 @@ function render({ model: host, el }) {
     addEdges(edges, opts);
   }
 
-  function addEdges(edges, opts) {
+  function addEdges(edges: GraphEdge[], opts: StylingOpts): void {
     edges.forEach((edge) => {
       if (!drawable(edge.source) || !drawable(edge.target)) return;
       // Cross-lane edges (and edges into an action lane) are drawn on the overlay, not by sigma, and take no part in the layout
@@ -600,7 +415,7 @@ function render({ model: host, el }) {
   rebuildGraph();
 
   // Layout application (preserves pinned positions, respects filters)
-  function applyLayout(layoutName) {
+  function applyLayout(layoutName: string): void {
     // Lanes get their bands and framing also while empty: a live run starts from nothing, action glyphs show at once
     if (laneState.lanes.length) {
       layoutLanes();
@@ -609,10 +424,10 @@ function render({ model: host, el }) {
     }
     frameLanes();
     if (graph.order === 0) return;
-    const pinned = model.get("pinned_nodes") || {};
+    const pinned: Record<string, unknown> = model.get("pinned_nodes") || {};
 
     // Save pinned positions before layout
-    const savedPositions = {};
+    const savedPositions: Record<string, Point> = {};
     Object.keys(pinned).forEach((id) => {
       if (graph.hasNode(id)) {
         savedPositions[id] = { x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") };
@@ -630,7 +445,7 @@ function render({ model: host, el }) {
     switch (layoutName) {
       case "preset": {
         // The host placed the nodes: back to the positions they came with (also after another layout was tried)
-        for (const [id, at] of presetPositions(drawn.nodes.values())) {
+        for (const [id, at] of presetPositions([...drawn.nodes.values()])) {
           if (graph.hasNode(id)) graph.mergeNodeAttributes(id, at);
         }
         break;
@@ -668,8 +483,8 @@ function render({ model: host, el }) {
 
         // Step 2: Mini-force per cluster (organic internal layout)
         // Build a subgraph for each cluster, run ForceAtlas2, store relative positions
-        const clusterLayouts = new Map(); // clusterLabel -> { nodeId: {x, y} }
-        const clusterSizes = new Map();   // clusterLabel -> nodeCount
+        const clusterLayouts = new Map<string, Record<string, Point>>(); // clusterLabel -> { nodeId: {x, y} }
+        const clusterSizes = new Map<string, number>();   // clusterLabel -> nodeCount
 
         allGroups.forEach(([clusterLabel, nodeIds]) => {
           clusterSizes.set(clusterLabel, nodeIds.length);
@@ -677,14 +492,14 @@ function render({ model: host, el }) {
           const subGraph = new Graph({ multi: true });
 
           // Add cluster nodes
-          nodeIds.forEach((id) => {
+          nodeIds.forEach((id: string) => {
             if (graph.hasNode(id)) {
               subGraph.addNode(id, { x: Math.random() * 10, y: Math.random() * 10, size: 1 });
             }
           });
 
           // Add intra-cluster edges only
-          graph.forEachEdge((edgeId, attrs, source, target) => {
+          graph.forEachEdge((_edgeId, _attrs, source, target) => {
             if (nodeSet.has(source) && nodeSet.has(target) && subGraph.hasNode(source) && subGraph.hasNode(target)) {
               subGraph.addEdge(source, target);
             }
@@ -705,9 +520,9 @@ function render({ model: host, el }) {
           }
 
           // Store positions (centered at origin)
-          const positions = {};
+          const positions: Record<string, Point> = {};
           let sumX = 0, sumY = 0, count = 0;
-          subGraph.forEachNode((id, attrs) => {
+          subGraph.forEachNode((_id, attrs) => {
             sumX += attrs.x;
             sumY += attrs.y;
             count++;
@@ -736,7 +551,7 @@ function render({ model: host, el }) {
 
         // Place circles using a simple spiral packing algorithm
         // First circle at origin, second tangent to first, rest packed against existing
-        const placed = []; // { x, y, r, label }
+        const placed: (Circle & { label: string })[] = []; // { x, y, r, label }
 
         circles.forEach((circle, i) => {
           if (i === 0) {
@@ -791,7 +606,6 @@ function render({ model: host, el }) {
         placed.forEach(({ x: cx, y: cy, r, label }) => {
           const positions = clusterLayouts.get(label);
           if (!positions) return;
-          const size = clusterSizes.get(label);
           // Scale internal layout to fit within the cluster circle
           // Find the max extent of the internal layout
           let maxExt = 0;
@@ -818,7 +632,7 @@ function render({ model: host, el }) {
         graph.forEachNode((id, attrs) => {
           if (visibleNodes.has(id)) tempGraph.addNode(id, { ...attrs });
         });
-        graph.forEachEdge((edgeId, attrs, source, target) => {
+        graph.forEachEdge((_edgeId, attrs, source, target) => {
           if (visibleNodes.has(source) && visibleNodes.has(target)) {
             tempGraph.addEdge(source, target, { ...attrs });
           }
@@ -852,49 +666,20 @@ function render({ model: host, el }) {
         break;
       }
       case "spring": {
-        // d3-force spring layout: produces clean hub-spoke rings for hierarchical data
-        const n = visibleNodes.size || graph.order;
-
-        // Build node and link arrays for d3 (visible nodes only)
-        const d3Nodes = [];
-        const nodeIndexMap = new Map();
-        let idx = 0;
+        // d3-force spring layout (spring.ts, shared with the export page), visible nodes only
+        const d3Nodes: SpringNode[] = [];
         graph.forEachNode((id, attrs) => {
-          if (!visibleNodes.has(id)) return;
-          nodeIndexMap.set(id, idx);
-          d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
-          idx++;
+          if (visibleNodes.has(id)) d3Nodes.push({ id, x: attrs.x, y: attrs.y, size: attrs.size || 8 });
         });
+        const links: [string, string][] = [];
+        graph.forEachEdge((_edgeId, _attrs, source, target) => { links.push([source, target]); });
 
-        const d3Links = [];
-        graph.forEachEdge((edgeId, attrs, source, target) => {
-          if (nodeIndexMap.has(source) && nodeIndexMap.has(target)) {
-            d3Links.push({ source: nodeIndexMap.get(source), target: nodeIndexMap.get(target) });
+        for (const [id, p] of springLayout(d3Nodes, links)) {
+          if (graph.hasNode(id)) {
+            graph.setNodeAttribute(id, "x", p.x);
+            graph.setNodeAttribute(id, "y", p.y);
           }
-        });
-
-        // Configure forces: generous spacing so hub-spoke rings are clear
-        const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
-        const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
-
-        const simulation = d3Force.forceSimulation(d3Nodes)
-          .force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4))
-          .force("charge", d3Force.forceManyBody().strength(chargeStrength))
-          .force("center", d3Force.forceCenter(0, 0))
-          .force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8))
-          .stop();
-
-        // Run simulation synchronously
-        const ticks = Math.min(300, Math.max(100, n * 2));
-        for (let i = 0; i < ticks; i++) simulation.tick();
-
-        // Write positions back to graphology
-        d3Nodes.forEach((d) => {
-          if (graph.hasNode(d.id)) {
-            graph.setNodeAttribute(d.id, "x", d.x);
-            graph.setNodeAttribute(d.id, "y", d.y);
-          }
-        });
+        }
         break;
       }
     }
@@ -915,15 +700,15 @@ function render({ model: host, el }) {
     if (!rendererRef || laneState.lanes.length || graph.order === 0) return;
     const width = container.offsetWidth, height = container.offsetHeight;
     if (!width || !height) return;
-    const box = { x: [Infinity, -Infinity], y: [Infinity, -Infinity] };
+    const box: Box = { x: [Infinity, -Infinity], y: [Infinity, -Infinity] };
     let largest = 0;
     graph.forEachNode((_, attrs) => {
       box.x[0] = Math.min(box.x[0], attrs.x); box.x[1] = Math.max(box.x[1], attrs.x);
       box.y[0] = Math.min(box.y[0], attrs.y); box.y[1] = Math.max(box.y[1], attrs.y);
       largest = Math.max(largest, attrs.size || 0);
     });
-    const controls = (wrapper.querySelector(".awg-zoom-controls")?.offsetWidth || 100) + 20;
-    const chips = (model.get("levels") || []).length ? (wrapper.querySelector(".awg-level-chips")?.offsetHeight || 24) + 10 : 0;
+    const controls = ((wrapper.querySelector(".awg-zoom-controls") as HTMLElement | null)?.offsetWidth || 100) + 20;
+    const chips = (model.get("levels") || []).length ? ((wrapper.querySelector(".awg-level-chips") as HTMLElement | null)?.offsetHeight || 24) + 10 : 0;
     rendererRef.setCustomBBox(roomyFrame(box, largest, width, height, rendererRef.getSetting("stagePadding") ?? 30, controls, chips));
   }
 
@@ -945,8 +730,8 @@ function render({ model: host, el }) {
   }
 
   // A column lane's nodes stacked in the middle of its band (in their order in the graph)
-  function arrangeColumn(lane, index) {
-    const ids = [];
+  function arrangeColumn(lane: Lane, index: number): Record<string, Point> {
+    const ids: string[] = [];
     graph.forEachNode((node, attrs) => {
       if (attrs.lane === lane.id) ids.push(node);
     });
@@ -970,19 +755,19 @@ function render({ model: host, el }) {
   }
 
   // A lane uses the force layout when it asks for it; rows need it (each node is kept inside its row)
-  const forceLaid = (lane) => lane?.layout === "force" || Boolean(lane?.rows);
+  const forceLaid = (lane: Lane | undefined): boolean => lane?.layout === "force" || Boolean(lane?.rows);
 
   // The part of a lane a node goes in: its row when the lane has rows, else the lane's band less its margin
-  function nodeBand(lane, index, node) {
+  function nodeBand(lane: Lane, index: number, node: GraphNode | undefined): Band {
     const rows = laneState.rows.get(lane.id);
     if (!rows) return insetBand(laneState.bands[index]);
-    return (rows[rowOf(node || {}, lane.rows)] || rows.at(-1)).band;
+    return ((lane.rows ? rows[rowOf(node ?? ({} as GraphNode), lane.rows)] : undefined) ?? rows.at(-1))!.band;
   }
 
   // New positions for one lane's nodes (pinned ones stay); `placed` holds the nodes of the lanes laid out before it
-  function layoutLane(lane, index, placed) {
-    const pinned = model.get("pinned_nodes") || {};
-    const positions = new Map();
+  function layoutLane(lane: Lane, index: number, placed: Map<string, Point>): Map<string, Point> {
+    const pinned: Record<string, unknown> = model.get("pinned_nodes") || {};
+    const positions = new Map<string, Point>();
     if (lane.action || !laneState.bands[index]) return positions;
     if (lane.arrange === "column") {
       for (const [node, position] of Object.entries(arrangeColumn(lane, index))) if (!pinned[node]) positions.set(node, position);
@@ -995,12 +780,12 @@ function render({ model: host, el }) {
       laneState.rows.delete(lane.id);
       const sub = new Graph({ multi: true });
       for (const id of ids) sub.addNode(id, { x: hashUnit(id + "x"), y: hashUnit(id + "y") });
-      graph.forEachEdge((edge, attrs, source, target) => {
+      graph.forEachEdge((_edge, _attrs, source, target) => {
         if (sub.hasNode(source) && sub.hasNode(target)) sub.addEdge(source, target);
       });
       if (sub.order === 0) return positions;
       if (sub.order > 1) forceAtlas2.assign(sub, { iterations: 150, settings: { ...forceAtlas2.inferSettings(sub), gravity: 1 } });
-      const raw = {};
+      const raw: Record<string, Point> = {};
       sub.forEachNode((node, attrs) => {
         raw[node] = { x: attrs.x, y: attrs.y };
       });
@@ -1011,16 +796,16 @@ function render({ model: host, el }) {
     // Rows: the band split top to bottom by the values of the lane's field, by node count
     if (lane.rows) {
       const counts = new Array(lane.rows.order.length + 1).fill(0);
-      for (const id of ids) counts[rowOf(drawn.nodes.get(id) || {}, lane.rows)]++;
+      for (const id of ids) counts[rowOf(drawn.nodes.get(id) ?? ({} as GraphNode), lane.rows)]++;
       laneState.rows.set(lane.id, rowBands(band, lane.rows.order, counts, 0.12, 0.1, LABEL_ROW / laneScale()));
     } else {
       laneState.rows.delete(lane.id);
     }
-    const bandOf = (id) => nodeBand(lane, index, drawn.nodes.get(id));
+    const bandOf = (id: string): Band => nodeBand(lane, index, drawn.nodes.get(id));
     // A crowded lane draws its nodes smaller, so the layout has room (see the node reducer)
     const shrink = laneSizeScale(ids.map((id) => graph.getNodeAttribute(id, "size") || 5), band, laneScale());
     laneState.sizeScale.set(lane.id, shrink);
-    const start = (id) => {
+    const start = (id: string): Point => {
       const own = bandOf(id);
       return { x: own.x0 + (own.x1 - own.x0) * hashUnit(id + "x"), y: own.y0 + (own.y1 - own.y0) * hashUnit(id + "y") };
     };
@@ -1028,7 +813,7 @@ function render({ model: host, el }) {
       bandOf,
       shrink,
       start,
-      fixed: (id) => (pinned[id] ? graph.getNodeAttributes(id) : null),
+      fixed: (id: string): Record<string, unknown> | null => (pinned[id] ? graph.getNodeAttributes(id) : null),
       partners: partnerHeights(ids, laneState.cross, placed),
       ticks: 300,
     });
@@ -1040,7 +825,7 @@ function render({ model: host, el }) {
     const box = lanesBBox(laneState.bands);
     if (!laneState.lanes.at(-1)?.action) return box;
     const scale = fitScale(box, container.offsetWidth, container.offsetHeight, rendererRef?.getSetting("stagePadding") ?? 30);
-    const controls = (wrapper.querySelector(".awg-zoom-controls")?.offsetWidth || 100) + 20;
+    const controls = ((wrapper.querySelector(".awg-zoom-controls") as HTMLElement | null)?.offsetWidth || 100) + 20;
     return scale > 0 ? lanesBBox(laneState.bands, 120, controls / scale) : box;
   }
 
@@ -1051,10 +836,10 @@ function render({ model: host, el }) {
   }
 
   // Lanes with `labels: {count}` show the labels of their largest nodes at the default zoom, where each label has room
-  const labelMeasure = document.createElement("canvas").getContext("2d");
+  const labelMeasure = document.createElement("canvas").getContext("2d")!;
   // A lane label is at most this wide; a longer name is shortened with an ellipsis (the full name shows on hover)
   const LANE_LABEL_MAX = 110;
-  function pickLaneLabels() {
+  function pickLaneLabels(): void {
     laneState.labelled = new Map();
     laneState.labelText = new Map();
     laneState.quietLanes = new Set(laneState.lanes.filter((lane) => Number(lane.labels?.count) > 0).map((lane) => lane.id));
@@ -1096,31 +881,32 @@ function render({ model: host, el }) {
   // the node's band (its row, or the lane), and a pull to its partner height. Every step clamps each node into its
   // band. Seeded, so the same lane gives the same picture. `fixed(id)` gives a position for a node that must not move
   // (pinned, or the older nodes while appended ones settle). Returns the free nodes' positions.
-  function forceLane(laneId, ids, band, { start, fixed, partners, ticks, alpha = 1, shrink = 1, bandOf = () => band }) {
+  function forceLane(laneId: string, ids: string[], band: Band, { start, fixed, partners, ticks, alpha = 1, shrink = 1, bandOf = () => band }: { start: (id: string) => Point; fixed: (id: string) => Record<string, unknown> | null; partners: Map<string, number>; ticks: number; alpha?: number; shrink?: number; bandOf?: (id: string) => Band }): Map<string, Point> {
     const f = LANE_FORCES;
-    if (!ids.length) return new Map();
+    if (!ids.length) return new Map<string, Point>();
     const pxToUnits = 1 / laneScale();
     const spacing = laneSpacing(ids.length, band);
     const width = band.x1 - band.x0;
     const nodes = ids.map((id) => {
       const pin = fixed(id);
-      const at = pin || start(id);
+      const at: Point = (pin as Point | null) ?? start(id);
       const own = bandOf(id);
-      const node = { id, x: at.x, y: at.y, band: own, radius: ((graph.getNodeAttribute(id, "size") || 5) * shrink + f.collideGap) * pxToUnits };
+      const node: LaneSimNode = { id, x: at.x, y: at.y, band: own, radius: ((graph.getNodeAttribute(id, "size") || 5) * shrink + f.collideGap) * pxToUnits };
       // The pull to the middle follows the band's shape (stronger across a narrow side), so the graph takes that shape
       node.tall = Math.min(4, Math.max(0.25, (own.y1 - own.y0) / width));
       // The partner height, mapped into the node's row the way it sits in the lane (a node in a row keeps its partners'
       // order without piling up on the row's edge)
       if (partners.has(id)) {
-        const mapped = own.y0 + ((partners.get(id) - band.y0) / (band.y1 - band.y0 || 1)) * (own.y1 - own.y0);
+        const mapped = own.y0 + (((partners.get(id) ?? 0) - band.y0) / (band.y1 - band.y0 || 1)) * (own.y1 - own.y0);
         node.partner = Math.min(own.y1, Math.max(own.y0, mapped));
       }
       if (pin) Object.assign(node, { fx: pin.x, fy: pin.y });
       return node;
     });
-    const members = new Set(ids), degree = new Map();
-    const links = [];
-    graph.forEachEdge((edge, attrs, source, target) => {
+    const members = new Set<string>(ids);
+    const degree = new Map<string, number>();
+    const links: SimulationLinkDatum<LaneSimNode>[] = [];
+    graph.forEachEdge((_edge, _attrs, source, target) => {
       if (source === target || !members.has(source) || !members.has(target)) return;
       links.push({ source, target });
       degree.set(source, (degree.get(source) || 0) + 1);
@@ -1128,21 +914,21 @@ function render({ model: host, el }) {
     });
     const midX = (band.x0 + band.x1) / 2;
     const laneTall = Math.min(4, Math.max(0.25, (band.y1 - band.y0) / width));
-    const simulation = d3Force.forceSimulation(nodes)
+    const simulation = d3Force.forceSimulation<LaneSimNode>(nodes)
       .randomSource(seededRandom(laneId))
       .alpha(alpha)
       .stop()
       .force("charge", d3Force.forceManyBody().strength(-f.charge * spacing * spacing).distanceMax(spacing * f.reach))
-      .force("collide", d3Force.forceCollide().radius((d) => d.radius).strength(0.9).iterations(2))
-      .force("link", d3Force.forceLink(links).id((d) => d.id).distance(spacing * f.link)
-        .strength((link) => f.linkStrength / Math.min(degree.get(link.source.id) || 1, degree.get(link.target.id) || 1)))
+      .force("collide", d3Force.forceCollide<LaneSimNode>().radius((d) => d.radius).strength(0.9).iterations(2))
+      .force("link", d3Force.forceLink<LaneSimNode, SimulationLinkDatum<LaneSimNode>>(links).id((d) => d.id).distance(spacing * f.link)
+        .strength((link) => f.linkStrength / Math.min(degree.get((link.source as LaneSimNode).id) || 1, degree.get((link.target as LaneSimNode).id) || 1)))
       .force("x", d3Force.forceX(midX).strength(f.center * laneTall))
-      .force("y", d3Force.forceY((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => (d.partner !== undefined ? f.partner : f.center / d.tall)));
+      .force("y", d3Force.forceY<LaneSimNode>((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => (d.partner !== undefined ? f.partner : f.center / (d.tall ?? 1))));
     for (let i = 0; i < ticks; i++) {
       simulation.tick();
-      for (const node of nodes) if (node.fx === undefined) clampInto(node, node.band);
+      for (const node of nodes) if (node.fx === undefined) clampInto(node as unknown as LayoutNode, node.band);
     }
-    return new Map(nodes.filter((node) => node.fx === undefined).map((node) => [node.id, { x: node.x, y: node.y }]));
+    return new Map<string, Point>(nodes.filter((node) => node.fx === undefined).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }] as [string, Point]));
   }
 
   // Apply initial layout
@@ -1237,8 +1023,8 @@ function render({ model: host, el }) {
   // node's edge, nested when a node has several, with an arrowhead (edge_arrows) and the label (show_edge_labels)
   // What sigma's WebGL programs cannot draw: per-item marks a host sets (a node's ring, dashed outline and badge, a
   // dashed edge) and the ring of a pinned node. Hidden items (a filter, a search, a level) have none.
-  function drawItemMarks(ctx) {
-    const pinned = model.get("pinned_nodes") || {};
+  function drawItemMarks(ctx: CanvasRenderingContext2D): void {
+    const pinned: Record<string, unknown> = model.get("pinned_nodes") || {};
     const arrows = model.get("edge_arrows");
     graph.forEachEdge((edge, attrs, source, target) => {
       if (!attrs.dash || source === target) return;
@@ -1251,7 +1037,7 @@ function render({ model: host, el }) {
       if (length <= ra + rb) return;
       const ux = (q.x - p.x) / length, uy = (q.y - p.y) / length;
       const end = { x: q.x - ux * rb, y: q.y - uy * rb };
-      const color = shown.dashColor || attrs.color;
+      const color = (shown as unknown as Record<string, unknown>).dashColor || attrs.color;
       ctx.save();
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(1, shown.size || 1);
@@ -1320,20 +1106,20 @@ function render({ model: host, el }) {
     });
   }
 
-  function drawLoops(ctx) {
-    const perNode = new Map();
+  function drawLoops(ctx: CanvasRenderingContext2D): void {
+    const perNode = new Map<string, number>();
     const arrows = model.get("edge_arrows"), labels = model.get("show_edge_labels");
-    graph.forEachEdge((edge, attrs, source, target) => {
+    graph.forEachEdge((edge, _attrs, source, target) => {
       if (source !== target) return;
       const shown = renderer.getEdgeDisplayData(edge);
       const node = renderer.getNodeDisplayData(source);
-      if (!shown?.loop || !node || node.hidden) return;
+      if (!(shown as unknown as Record<string, unknown>)?.loop || !node || node.hidden) return;
       const index = perNode.get(source) || 0;
       perNode.set(source, index + 1);
       const circle = loopCircle(renderer.framedGraphToViewport(node), renderer.scaleSize(node.size), index);
-      const color = shown.color || "#94a3b8";
+      const color = (shown?.color as string) || "#94a3b8";
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.min(4, Math.max(1, shown.size || 1));
+      ctx.lineWidth = Math.min(4, Math.max(1, (shown?.size as number) || 1));
       ctx.beginPath();
       ctx.arc(circle.x, circle.y, circle.r, 0, Math.PI * 2);
       ctx.stroke();
@@ -1349,11 +1135,11 @@ function render({ model: host, el }) {
         ctx.closePath();
         ctx.fill();
       }
-      if (labels && shown.label) {
+      if (labels && shown?.label) {
         ctx.font = "500 11px system-ui, -apple-system, sans-serif";
         ctx.textAlign = "center";
         ctx.fillStyle = color;
-        ctx.fillText(shown.label, circle.x, circle.y - circle.r - 4);
+        ctx.fillText(String(shown.label), circle.x, circle.y - circle.r - 4);
         ctx.textAlign = "left";
       }
     });
@@ -1370,7 +1156,7 @@ function render({ model: host, el }) {
     if (!laneState.lanes.length) return;
     // The widget's own colours: its light or dark defaults, or the host theme (applyHostTheme sets these variables)
     const css = getComputedStyle(wrapper);
-    const color = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+    const color = (name: string, fallback: string): string => css.getPropertyValue(name).trim() || fallback;
     const accent = color("--awg-accent", "#0880ea"), muted = color("--awg-text-muted", "#9ca3af");
     const panel = color("--awg-bg-secondary", "#f8f9fa"), border = color("--awg-border", "#e2e8f0");
     const now = performance.now();
@@ -1386,7 +1172,7 @@ function render({ model: host, el }) {
       const top = Math.min(corners[0].y, corners[1].y);
       const x = narrow ? laneToViewport({ x: (band.x0 + band.x1) / 2, y: band.y0 }).x : corners[0].x;
       ctx.textAlign = narrow ? "center" : "left";
-      ctx.fillText(lane.title || lane.id, x, top - 14);
+      ctx.fillText(String(lane.title || lane.id), x, top - 14);
     });
     ctx.textAlign = "left";
 
@@ -1419,16 +1205,16 @@ function render({ model: host, el }) {
     // Cross-lane curves (under the buttons, so a curve into an action lane ends at its button's edge); an appearing
     // one is drawn up to its progress
     const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id, laneState.hoverAction].filter(Boolean));
-    const endPoint = (id) => {
+    const endPoint = (id: string): Point | null => {
       // A node hidden by a filter or a search (or not yet appeared) hides its curves too
-      if (graph.hasNode(id)) return renderer.getNodeDisplayData(id)?.hidden ? null : renderer.graphToViewport(graph.getNodeAttributes(id));
+      if (graph.hasNode(id)) return renderer.getNodeDisplayData(id)?.hidden ? null : renderer.graphToViewport(graph.getNodeAttributes(id) as unknown as { x: number; y: number });
       const index = actionLaneIndex(id);
       return index >= 0 && laneState.bands[index] ? actionCenter(index) : null;
     };
     for (const edge of laneState.cross) {
       const a = endPoint(edge.source), b = endPoint(edge.target);
       if (!a || !b) continue;
-      const start = laneState.crossAppear.get(edge.key);
+      const start = laneState.crossAppear.get(edge.key) as number | undefined;
       const t = start === undefined ? 1 : progress(start, now, 450);
       if (t <= 0) continue;
       const lit = focus.has(edge.source) || focus.has(edge.target);
@@ -1458,7 +1244,7 @@ function render({ model: host, el }) {
         ctx.font = "500 11px system-ui, -apple-system, sans-serif";
         ctx.fillStyle = hover ? accent : muted;
         ctx.textAlign = "center";
-        ctx.fillText(lane.caption, center.x, center.y + 40);
+        ctx.fillText(String(lane.caption), center.x, center.y + 40);
         ctx.textAlign = "left";
         ctx.font = "600 12px system-ui, -apple-system, sans-serif";
       }
@@ -1466,9 +1252,9 @@ function render({ model: host, el }) {
   }
 
   // An action lane's icon inside its 48 px button: an image (loaded once, then redrawn), stacked bars, or "open"
-  const iconImages = new Map();
+  const iconImages = new Map<string, HTMLImageElement>();
   const OPEN_ICON = [new Path2D("M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"), new Path2D("M15 3h6v6"), new Path2D("M10 14 21 3")];
-  function drawLaneIcon(ctx, icon, center, accent) {
+  function drawLaneIcon(ctx: CanvasRenderingContext2D, icon: LaneIcon, center: Point, accent: string): void {
     if (icon.kind === "image") {
       let image = iconImages.get(icon.src);
       if (!image) {
@@ -1488,7 +1274,7 @@ function render({ model: host, el }) {
     }
     if (icon.kind === "bars") {
       const barHeight = 7, gap = 4, total = icon.colors.length * barHeight + (icon.colors.length - 1) * gap;
-      icon.colors.forEach((color, i) => {
+      icon.colors.forEach((color: string, i: number) => {
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.roundRect(center.x - 14, center.y - total / 2 + i * (barHeight + gap), 28, barHeight, 2.5);
@@ -1508,20 +1294,20 @@ function render({ model: host, el }) {
   }
 
   // A lane point in viewport pixels; sigma leaves its transform stale on an empty graph, so the overlay fits the lanes itself then
-  function laneToViewport(point) {
+  function laneToViewport(point: Point): Point {
     if (graph.order > 0 || !laneState.bands.length) return renderer.graphToViewport(point);
     return fitBox(laneFrame(), container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding"))(point);
   }
 
   // The middle of an action lane's band, in viewport pixels
-  function actionCenter(index) {
+  function actionCenter(index: number): Point {
     const band = laneState.bands[index];
     return laneToViewport({ x: (band.x0 + band.x1) / 2, y: (band.y0 + band.y1) / 2 });
   }
 
   // The action lane under a viewport point, if any
-  function actionAt(point) {
-    const index = laneState.lanes.findIndex((lane, i) => lane.action && laneState.bands[i] && glyphHit(point, actionCenter(i)));
+  function actionAt(point: Point): Lane | null {
+    const index = laneState.lanes.findIndex((lane: Lane, i: number) => lane.action && laneState.bands[i] && glyphHit(point, actionCenter(i)));
     return index >= 0 ? laneState.lanes[index] : null;
   }
 
@@ -1587,9 +1373,9 @@ function render({ model: host, el }) {
   }
 
   // The nodes a selection keeps lit (highlight_neighbors, one selected node): worked out once per selection, not per node
-  const NOTHING_LIT = new Set();
-  let lit = { selected: null, edges: null, nodes: NOTHING_LIT };
-  function litNodes(selectedNodes) {
+  const NOTHING_LIT = new Set<string | number>();
+  let lit: { selected: string | null; edges: GraphEdge[] | null; nodes: Set<string | number> } = { selected: null, edges: null, nodes: NOTHING_LIT };
+  function litNodes(selectedNodes: string[]): Set<string | number> {
     if (!model.get("highlight_neighbors") || selectedNodes.length !== 1) return NOTHING_LIT;
     if (lit.selected !== selectedNodes[0] || lit.edges !== drawn.edges) {
       lit = { selected: selectedNodes[0], edges: drawn.edges, nodes: neighbourhood(drawn.edges, selectedNodes[0]) };
@@ -1598,9 +1384,9 @@ function render({ model: host, el }) {
   }
 
   // Node reducer for type filtering, search filtering, selection, and pinned indicator
-  renderer.setSetting("nodeReducer", (node, data) => {
-    const selectedNodes = model.get("selected_nodes") || [];
-    const res = { ...data };
+  renderer.setSetting("nodeReducer", (node: string, data: Record<string, any>) => {
+    const selectedNodes: string[] = model.get("selected_nodes") || [];
+    const res: Record<string, any> = { ...data };
 
     // Visibility levels: below the current level a node is hidden, or dimmed one level down (filtered_style "dim")
     const level = levelOf(data);
@@ -1764,7 +1550,7 @@ function render({ model: host, el }) {
   });
 
   // A node's visibility at the current level (levels, current_level, filtered_style)
-  function levelOf(attrs) {
+  function levelOf(attrs: Record<string, any>): string {
     return levelState(attrs.level, model.get("current_level"), model.get("levels") || [], model.get("filtered_style"));
   }
 
@@ -1803,8 +1589,8 @@ function render({ model: host, el }) {
   model.on("change:filtered_style", () => renderer.refresh());
 
   // Incremental append: merge new nodes and edges without moving what is drawn; new items appear one after another
-  function applyBatch(batch) {
-    laneState.lastSeq = batch.seq;
+  function applyBatch(batch: Batch): void {
+    laneState.lastSeq = Number(batch.seq) || 0;
     const nodes = batch.nodes || [], edges = batch.edges || [];
     drawn = applyBatchItems(drawn, batch);
     const opts = getStylingOpts(model, nodes, edges);
@@ -1824,19 +1610,19 @@ function render({ model: host, el }) {
     const t0 = performance.now();
     const lanes = laneState.lanes;
     // Without lanes, new nodes go inside the area already drawn, so sigma's camera keeps its scale and nothing moves
-    const extent = lanes.length ? null : extentBand(graph.mapNodes((node, attrs) => ({ x: attrs.x, y: attrs.y })));
+    const extent = lanes.length ? null : extentBand(graph.mapNodes((_node, attrs) => ({ x: attrs.x, y: attrs.y })));
     // Spots taken per lane (one group without lanes), so appended nodes do not land on one another
-    const occupied = new Map();
-    const taken = (lane) => occupied.get(lane ?? "") || occupied.set(lane ?? "", []).get(lane ?? "");
+    const occupied = new Map<string, Point[]>();
+    const taken = (lane: string | undefined): Point[] => occupied.get(lane ?? "") ?? occupied.set(lane ?? "", []).get(lane ?? "")!;
     graph.forEachNode((node, attrs) => {
       if (!removed.has(node)) taken(attrs.lane).push({ x: attrs.x, y: attrs.y });
     });
     // A label's room in graph units, at the framed view (the lanes, or the drawn area without lanes)
-    const frame = lanes.length ? laneFrame() : extent && { x: [extent.x0, extent.x1], y: [extent.y0, extent.y1] };
+    const frame: Box | null = lanes.length ? laneFrame() : extent && ({ x: [extent.x0, extent.x1], y: [extent.y0, extent.y1] } as Box);
     const scale = frame ? fitScale(frame, container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding")) : 0;
     const unit = scale > 0 ? { x: LABEL_COLUMN / scale, y: LABEL_ROW / scale } : undefined;
     let item = 0;
-    const added = new Map();  // lane id -> ids of the nodes this batch adds to it
+    const added = new Map<string, string[]>();  // lane id -> ids of the nodes this batch adds to it
 
     nodes.forEach((node) => {
       const at = t0 + schedule[item++];
@@ -1850,21 +1636,22 @@ function render({ model: host, el }) {
       const laneIndex = lanes.length ? lanes.findIndex((l) => l.id === lane) : 0;
       const band = !lanes.length ? extent || laneBands([{ id: "" }])[0]
         : laneState.bands[laneIndex] ? nodeBand(lanes[laneIndex], laneIndex, node) : insetBand(laneBands(lanes)[laneIndex]);
-      const cross = [], laneNeighbours = [];
+      const cross: Point[] = [], laneNeighbours: Point[] = [];
       for (const edge of edges) {
         const other = edge.source === node.id ? edge.target : edge.target === node.id ? edge.source : null;
         if (!other || !graph.hasNode(other)) continue;
         const position = graph.getNodeAttributes(other);
-        (lane && laneState.laneById.get(other) !== lane ? cross : laneNeighbours).push({ x: position.x, y: position.y });
+        (lane && laneState.laneById.get(other) !== lane ? cross : laneNeighbours).push({ x: position.x as number, y: position.y as number });
       }
       const spot = placeAppended(node.id, { cross, lane: laneNeighbours, occupied: taken(lane), unit }, band);
       taken(lane).push(spot);
       // labelRoom: placed with its label clear of every other one, so the label shows (see the node reducer)
       graph.addNode(node.id, { ...buildNodeAttrs(node, opts), x: spot.x, y: spot.y, lane, labelRoom: Boolean(unit) && !spot.crowded });
       if (lane) laneState.laneById.set(node.id, lane);
-      if (lane && !lanes[laneIndex]?.arrange) (added.get(lane) || added.set(lane, []).get(lane)).push(node.id);
+      if (lane && !lanes[laneIndex]?.arrange) (added.get(lane) ?? added.set(lane, []).get(lane))!.push(node.id);
       if (lanes[laneIndex]?.arrange === "column") {
-        for (const [id, position] of Object.entries(arrangeColumn(lanes[laneIndex], laneIndex))) graph.mergeNodeAttributes(id, position);
+        const columnLane = lanes[laneIndex];
+        if (columnLane) for (const [id, position] of Object.entries(arrangeColumn(columnLane, laneIndex))) graph.mergeNodeAttributes(id, position);
       }
       if (animated) laneState.appear.set(node.id, at);
     });
@@ -1897,7 +1684,8 @@ function render({ model: host, el }) {
       const lane = lanes[index];
       if (!lane || lane.action || lane.arrange === "column") continue;
       const fresh = added.get(laneId) || [];
-      if (lane.relayout > 0 && bigBatch(before.get(laneId) || 0, dropped.get(laneId) || 0, fresh.length, lane.relayout)) {
+      const relayoutEvery = Number(lane.relayout) || 0;
+      if (relayoutEvery > 0 && bigBatch(before.get(laneId) || 0, dropped.get(laneId) || 0, fresh.length, relayoutEvery)) {
         relayoutLane(lane, index, new Set(fresh), animated);
       } else if (forceLaid(lane) && fresh.length) {
         settle.set(laneId, fresh);
@@ -1912,18 +1700,18 @@ function render({ model: host, el }) {
 
   // Appended nodes settle with the lane's forces from where they were placed: they spread over the lane while the
   // older nodes stay fixed (they push, but do not move). A label is shown where its spot has room (labelRoom).
-  function settleAppended(added, unit) {
+  function settleAppended(added: Map<string, string[]>, unit: Point | undefined): void {
     if (!added.size) return;
-    const positions = new Map(graph.mapNodes((node, attrs) => [node, { x: attrs.x, y: attrs.y }]));
+    const positions = new Map<string, Point>(graph.mapNodes((node: string, attrs: Record<string, any>) => [node, { x: attrs.x as number, y: attrs.y as number }] as [string, Point]));
     for (const [laneId, fresh] of added) {
       const index = laneState.lanes.findIndex((lane) => lane.id === laneId);
       if (index < 0 || !laneState.bands[index]) continue;
       const freshIds = new Set(fresh);
-      const ids = graph.filterNodes((node, attrs) => attrs.lane === laneId && !laneState.vanish.has(node));
+      const ids = graph.filterNodes((node: string, attrs: Record<string, any>) => attrs.lane === laneId && !laneState.vanish.has(node));
       const settled = forceLane(laneId, ids, insetBand(laneState.bands[index]), {
-        bandOf: (id) => nodeBand(laneState.lanes[index], index, drawn.nodes.get(id)),
-        start: (id) => positions.get(id),
-        fixed: (id) => (freshIds.has(id) ? null : positions.get(id)),
+        bandOf: (id: string) => nodeBand(laneState.lanes[index], index, drawn.nodes.get(id)),
+        start: (id: string): Point => positions.get(id) ?? { x: 0, y: 0 },
+        fixed: (id: string): Record<string, unknown> | null => (freshIds.has(id) ? null : { x: positions.get(id)?.x, y: positions.get(id)?.y }),
         partners: partnerHeights(fresh, laneState.cross, positions),
         shrink: laneState.sizeScale.get(laneId) ?? 1,
         ticks: 120,
@@ -1931,16 +1719,16 @@ function render({ model: host, el }) {
       });
       for (const [id, spot] of settled) positions.set(id, spot);
       for (const [id, spot] of settled) {
-        const others = ids.filter((other) => other !== id).map((other) => positions.get(other));
-        graph.mergeNodeAttributes(id, { ...spot, labelRoom: Boolean(unit) && labelClear(spot, others, unit) });
+        const others = ids.filter((other) => other !== id).map((other) => positions.get(other)).filter((p): p is Point => Boolean(p));
+        graph.mergeNodeAttributes(id, { ...spot, labelRoom: Boolean(unit) && labelClear(spot, others, unit ?? { x: 0, y: 0 }) });
       }
     }
   }
 
   // One lane laid out again after a big batch: its new nodes go straight to their places, the older ones glide there
   // (at once without animation). The other lanes stay as they are. Labels are left to sigma's label grid again.
-  function relayoutLane(lane, index, fresh, animated) {
-    const placed = new Map(graph.filterNodes((node, attrs) => attrs.lane !== lane.id).map((node) => [node, graph.getNodeAttributes(node)]));
+  function relayoutLane(lane: Lane, index: number, fresh: Set<string>, animated: boolean): void {
+    const placed = new Map<string, Point>(graph.filterNodes((_node: string, nodeAttrs: Record<string, any>) => nodeAttrs.lane !== lane.id).map((node) => [node, { x: graph.getNodeAttribute(node, 'x') as number, y: graph.getNodeAttribute(node, 'y') as number }] as [string, Point]));
     const start = performance.now();
     for (const [node, to] of layoutLane(lane, index, placed)) {
       if (!animated || fresh.has(node)) {
@@ -1955,10 +1743,10 @@ function render({ model: host, el }) {
 
   // A batch's removals: the nodes (with their edges and cross-lane curves) and edges fade out, then leave the graph
   // (at once without animation). Nothing is laid out again. Returns the ids of the removed nodes.
-  function removeDrawn(remove, animated) {
-    const ids = new Set((remove.nodes || []).filter((id) => graph.hasNode(id)));
+  function removeDrawn(remove: { nodes?: string[]; edges?: GraphEdge[] }, animated: boolean): Set<string> {
+    const ids = new Set<string>((remove.nodes || []).filter((id) => graph.hasNode(id)));
     const specs = remove.edges || [];
-    const edgeKeys = [];
+    const edgeKeys: string[] = [];
     for (const spec of specs) {
       if (!graph.hasNode(spec.source) || !graph.hasNode(spec.target)) continue;
       for (const key of graph.edges(spec.source, spec.target)) {
@@ -1984,7 +1772,7 @@ function render({ model: host, el }) {
       }
     }
     // A removed node leaves the selection (else everything else stays dimmed)
-    const selected = model.get("selected_nodes") || [];
+    const selected: string[] = model.get("selected_nodes") || [];
     if (selected.some((id) => ids.has(id))) model.set("selected_nodes", selected.filter((id) => !ids.has(id)));
     if (ids.has(model.get("selected_node")?.id)) model.set("selected_node", null);
     model.save_changes();
@@ -1993,7 +1781,7 @@ function render({ model: host, el }) {
 
   // Pulsing nodes: a soft breath on the ids in pulse_nodes, until the list is empty
   function applyPulse() {
-    laneState.pulse = new Set((model.get("pulse_nodes") || []).filter((id) => graph.hasNode(id)));
+    laneState.pulse = new Set<string>((model.get("pulse_nodes") || []).filter((id: string) => graph.hasNode(id)));
     if (laneState.pulse.size) startAnimating();
     else renderer.refresh();
   }
@@ -2003,7 +1791,7 @@ function render({ model: host, el }) {
   model.on("change:pinned_nodes", () => { renderer.refresh(); });
 
   // === Node Dragging ===
-  let draggedNode = null;
+  let draggedNode: string | null = null;
   let isDragging = false;
   let justDragged = false;
 
@@ -2171,9 +1959,9 @@ function render({ model: host, el }) {
   updateSelectionMode();
   model.on("change:selection_mode", updateSelectionMode);
 
-  let boxStart = null;
+  let boxStart: Point | null = null;
   let isLassoing = false;
-  let lassoCoords = [];
+  let lassoCoords: [number, number][] = [];
 
   selectionOverlay.addEventListener("mousedown", (e) => {
     const mode = model.get("selection_mode");
@@ -2229,9 +2017,9 @@ function render({ model: host, el }) {
       selectionRect.style.display = "none";
 
       // Find nodes inside the box
-      const selected = [];
-      graph.forEachNode((id, attrs) => {
-        const pos = renderer.graphToViewport({ x: attrs.x, y: attrs.y });
+      const selected: string[] = [];
+      graph.forEachNode((id: string, attrs: Record<string, any>) => {
+        const pos = renderer.graphToViewport({ x: attrs.x as number, y: attrs.y as number });
         if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
           selected.push(id);
         }
@@ -2248,9 +2036,9 @@ function render({ model: host, el }) {
       lassoCoords.push(lassoCoords[0]);
 
       // Find nodes inside the lasso
-      const selected = [];
-      graph.forEachNode((id, attrs) => {
-        const pos = renderer.graphToViewport({ x: attrs.x, y: attrs.y });
+      const selected: string[] = [];
+      graph.forEachNode((id: string, attrs: Record<string, any>) => {
+        const pos = renderer.graphToViewport({ x: attrs.x as number, y: attrs.y as number });
         if (pointInPolygon(pos.x, pos.y, lassoCoords)) {
           selected.push(id);
         }
@@ -2266,12 +2054,12 @@ function render({ model: host, el }) {
   tooltip.className = "awg-tooltip";
   container.appendChild(tooltip);
 
-  function showTooltip(event, data) {
+  function showTooltip(event: MouseEvent | TouchEvent, data: Record<string, any>): void {
     if (!model.get("show_tooltip")) return;
     const fields = model.get("tooltip_fields") || ["label", "id"];
     // Built from text nodes: field names and values come from the data
-    const rows = [];
-    fields.forEach((f) => {
+    const rows: HTMLElement[] = [];
+    fields.forEach((f: string) => {
       if (data[f] !== undefined) {
         let val = data[f];
         if (typeof val === "number") val = val.toFixed(3);
@@ -2293,7 +2081,8 @@ function render({ model: host, el }) {
     tooltip.style.display = "block";
     // Below right of the pointer, or on the other side where the tooltip would leave the canvas
     const rect = container.getBoundingClientRect();
-    const px = event.clientX - rect.left, py = event.clientY - rect.top;
+    const point = "clientX" in event ? event : event.touches[0];
+    const px = point.clientX - rect.left, py = point.clientY - rect.top;
     const width = tooltip.offsetWidth, height = tooltip.offsetHeight;
     const x = px + 15 + width <= rect.width ? px + 15 : px - 15 - width;
     const y = py + 15 + height <= rect.height ? py + 15 : py - 15 - height;
@@ -2376,7 +2165,7 @@ function render({ model: host, el }) {
     const current = model.get("selected_nodes") || [];
     if (mode === "multi" || (event && event.original && event.original.shiftKey)) {
       if (current.includes(node)) {
-        model.set("selected_nodes", current.filter((id) => id !== node));
+        model.set("selected_nodes", current.filter((id: string) => id !== node));
       } else {
         model.set("selected_nodes", [...current, node]);
       }
@@ -2412,8 +2201,8 @@ function render({ model: host, el }) {
   // Keyboard shortcuts
   wrapper.tabIndex = 0;
   wrapper.style.outline = "none";
-  wrapper.addEventListener("keydown", (e) => {
-    const tag = e.target.tagName;
+  wrapper.addEventListener("keydown", (e: KeyboardEvent) => {
+    const tag = (e.target as HTMLElement).tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
 
     if (e.key === "f" || e.key === "F") {
@@ -2459,15 +2248,15 @@ function render({ model: host, el }) {
 
   // What the host changes together (lanes, nodes and edges, a style, a batch, pulses) is drawn once, in this order,
   // after it has all arrived: a host that sets lanes, nodes and edges one by one gets one layout, not three
-  const pending = new Set();
-  function queueSync(kind) {
+  const pending = new Set<string>();
+  function queueSync(kind: string): void {
     if (!pending.size) queueMicrotask(sync);
     pending.add(kind);
   }
 
   function sync() {
     if (destroyed) return;
-    const changed = new Set(pending);
+    const changed = new Set<string>(pending);
     pending.clear();
     // The widget's own write-back of what it draws: nothing to do
     if (written && model.get("nodes") === written.nodes && model.get("edges") === written.edges) changed.delete("data");
@@ -2506,7 +2295,7 @@ function render({ model: host, el }) {
   // The model's nodes and edges hold what is drawn. After a batch the host has not merged into them itself (as
   // Graph.append does), the widget writes the merged lists back, so the node count, the results table, the schema
   // panel and the host see the appended items too.
-  let written = null;
+  let written: { nodes: GraphNode[]; edges: GraphEdge[] } | null = null;
   function writeBack() {
     if (sameItems(drawn, model.get("nodes") || [], model.get("edges") || [])) return;
     written = { nodes: [...drawn.nodes.values()], edges: [...drawn.edges] };
@@ -2555,7 +2344,7 @@ function render({ model: host, el }) {
           await grafeoEmbedBackend.loadStatements(JSON.parse(demoDataStr), model);
         }
       } catch (err) {
-        console.warn("Demo WASM init:", err.message);
+        console.warn("Demo WASM init:", errorText(err));
       }
     })();
   }
@@ -2569,6 +2358,26 @@ function render({ model: host, el }) {
     darkScheme?.removeEventListener("change", onSchemeChange);
     resizeObserver.disconnect();
     renderer.kill();
+  };
+}
+
+/**
+ * The widget's render: the 3D view when the model says so, else the 2D view. Switching `view` (the toolbar's
+ * cube button, the settings' View select) tears the current view down and mounts the other one in its place.
+ */
+function render({ model: host, el }: { model: WidgetModel; el: HTMLElement }): (() => void) | undefined {
+  const model = withDefaults(host);
+  let destroy: (() => void) | undefined;
+  function mountView() {
+    destroy?.();
+    el.replaceChildren();
+    destroy = model.get("view") === "3d" ? render3D({ model: host, el }) : render2D({ model: host, el });
+  }
+  mountView();
+  model.on("change:view", mountView);
+  return () => {
+    model.off?.("change:view", mountView);
+    destroy?.();
   };
 }
 

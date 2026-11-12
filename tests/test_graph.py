@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from anywidget_graph import Graph
+from anywidget_graph import Graph, Graph3D
 
 # ------------------------------------------------------------------ #
 #  Initialization                                                      #
@@ -1049,3 +1049,98 @@ def test_append_sends_the_lists_and_the_batch_in_one_message(monkeypatch):
     )
     graph.append(nodes=[{"id": "b"}])
     assert sent == [["append_batch", "nodes"]]
+
+
+# ------------------------------------------------------------------ #
+#  3D view (Graph3D / view="3d")                                       #
+# ------------------------------------------------------------------ #
+
+
+def test_graph_defaults_to_the_2d_view_and_graph3d_to_the_3d_view():
+    assert Graph().view == "2d"
+    assert Graph(view="3d").view == "3d"
+    assert Graph3D().view == "3d"
+    # An explicit view wins over the Graph3D default
+    assert Graph3D(view="2d").view == "2d"
+    # Switching at runtime is just the trait
+    graph = Graph()
+    graph.view = "3d"
+    assert graph.view == "3d"
+
+
+def test_view_trait_rejects_other_values():
+    from traitlets import TraitError
+
+    with pytest.raises(TraitError):
+        Graph(view="4d")
+
+
+def test_graph3d_is_a_graph_with_data_and_options():
+    graph = Graph3D(
+        nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+        edges=[{"source": "a", "target": "b", "label": "KNOWS"}],
+        width=900,
+        force3d_repulsion=2.0,
+    )
+    assert isinstance(graph, Graph)
+    assert graph.view == "3d"
+    assert len(graph.nodes) == 2 and len(graph.edges) == 1
+    assert graph.width == 900
+    assert graph.force3d_repulsion == 2.0
+
+
+def test_3d_view_traits_have_their_defaults():
+    graph = Graph()
+    assert graph.force3d_repulsion == 1.0
+    assert graph.force3d_link_distance is None
+    assert graph.show_axes is True
+    assert graph.show_grid is True
+    assert graph.grid_divisions == 10
+    assert graph.axis_labels == {"x": "X", "y": "Y", "z": "Z"}
+    assert graph.camera_position == [2, 2, 2]
+    assert graph.camera_target == [0, 0, 0]
+
+
+def test_force3d_link_distance_is_a_positive_number_or_automatic():
+    from traitlets import TraitError
+
+    assert Graph3D(force3d_link_distance=12.5).force3d_link_distance == 12.5
+    assert Graph3D(force3d_link_distance=None).force3d_link_distance is None
+    for bad in (0, -3, float("inf"), float("nan")):
+        with pytest.raises(TraitError):
+            Graph3D(force3d_link_distance=bad)
+
+
+def test_to_html_of_the_3d_view_exports_the_3d_scene():
+    """A graph in the 3D view exports a page that draws the Three.js scene with its 3D settings, offline."""
+    graph = Graph3D(
+        nodes=[{"id": "a", "label": "Alice"}, {"id": "b", "label": "Bob"}],
+        edges=[{"source": "a", "target": "b"}],
+        force3d_repulsion=2.5,
+        show_grid=False,
+        camera_position=[3, 1, 2],
+    )
+    page = graph.to_html(title="Scene")
+    assert "<title>Scene</title>" in page
+    assert "anywidgetGraph3dVendor" in page
+    assert "createCanvas3D" in page
+    assert '"force3d_repulsion": 2.5' in page
+    assert '"show_grid": false' in page
+    assert '"camera_position": [3, 1, 2]' in page
+    # Nothing loads from the network (Three.js cites a paper in a shader comment, which is not a load)
+    script = page.split("<script", 1)[1].replace("https://jcgt.org/published/0007/04/01/", "")
+    assert "https://" not in script
+    # The inlined library and styles do not end the script early
+    assert page.count("<script") == page.count("</script>") == 1
+    # The same graph in the 2D view exports the Sigma page, without Three.js
+    graph.view = "2d"
+    flat = graph.to_html()
+    assert "anywidgetGraph3dVendor" not in flat
+    assert "anywidgetGraphVendor" in flat
+
+
+def test_to_html_carries_the_type_colors_in_both_views():
+    nodes = [{"id": "a", "labels": ["Person"]}]
+    colors = {"nodes": {"Person": "#ff8800"}}
+    assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in Graph(nodes=nodes, type_colors=colors).to_html()
+    assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in Graph3D(nodes=nodes, type_colors=colors).to_html()

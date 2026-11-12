@@ -29,8 +29,8 @@ VERSION_RE = re.compile(r'export const GRAFEO_WASM_VERSION = "([^"]+)";')
 
 
 def _wasm_version() -> str:
-    match = VERSION_RE.search((UI_DIR / "grafeo-embed.js").read_text(encoding="utf-8"))
-    assert match, "GRAFEO_WASM_VERSION not found in grafeo-embed.js"
+    match = VERSION_RE.search((UI_DIR / "grafeo-embed.ts").read_text(encoding="utf-8"))
+    assert match, "GRAFEO_WASM_VERSION not found in grafeo-embed.ts"
     return match.group(1)
 
 
@@ -100,9 +100,9 @@ def test_the_bundled_libraries_carry_their_licenses():
 def test_wasm_version_is_pinned_exactly_once():
     """The browser engine URL is built from one constant: an engine bump is a one-line change."""
     hits = {
-        path.name: len(WASM_URL_RE.findall(path.read_text(encoding="utf-8"))) for path in sorted(UI_DIR.glob("*.js"))
+        path.name: len(WASM_URL_RE.findall(path.read_text(encoding="utf-8"))) for path in sorted(UI_DIR.glob("*.ts"))
     }
-    assert {name: count for name, count in hits.items() if count} == {"grafeo-embed.js": 1}
+    assert {name: count for name, count in hits.items() if count} == {"grafeo-embed.ts": 1}
     # An exact npm version (0.6.0, or a pre-release such as 0.6.0-beta.1), never a range
     assert re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", _wasm_version()), "pin an exact version"
 
@@ -132,8 +132,8 @@ def test_bundle_parses_with_node(esm, node_bin, tmp_path):
 
 
 def test_js_unit_tests(node_bin):
-    # Every Node test file, so a new one cannot be left out (`node --test "tests/js/*.test.mjs"` by hand)
-    tests = sorted(path.relative_to(ROOT).as_posix() for path in (ROOT / "tests" / "js").glob("*.test.mjs"))
+    # Every Node test file, so a new one cannot be left out (`node --test tests/js/*.test.ts` by hand)
+    tests = sorted(path.relative_to(ROOT).as_posix() for path in (ROOT / "tests" / "js").glob("*.test.ts"))
     assert len(tests) >= 4
     _run_node(node_bin, "--test", *tests)
 
@@ -143,7 +143,7 @@ def test_js_unit_tests(node_bin):
 # ------------------------------------------------------------------ #
 
 _JS_CONVERT = """
-import { grafeoRowsToGraph } from "./src/anywidget_graph/ui/grafeo-result.js";
+import { grafeoRowsToGraph } from "./src/anywidget_graph/ui/grafeo-result.ts";
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const { rows, nodes, edges } = JSON.parse(chunks.join(""));
@@ -157,7 +157,7 @@ process.stdout.write(JSON.stringify(await grafeoRowsToGraph(rows, lookup)));
 """
 
 _JS_LOOKUP_QUERIES = """
-import { grafeoNodeLookupQuery, grafeoEdgeLookupQuery } from "./src/anywidget_graph/ui/grafeo-result.js";
+import { grafeoNodeLookupQuery, grafeoEdgeLookupQuery } from "./src/anywidget_graph/ui/grafeo-result.ts";
 const [nodeIds, edgeIds] = JSON.parse(process.argv[1]);
 process.stdout.write(JSON.stringify([grafeoNodeLookupQuery(nodeIds), grafeoEdgeLookupQuery(edgeIds)]));
 """
@@ -208,9 +208,9 @@ def test_js_lookup_queries_run_on_the_engine(grafeo_db, ids, node_bin):
 
 
 def _trait_defaults_js() -> dict:
-    source = (UI_DIR / "defaults.js").read_text(encoding="utf-8")
-    match = re.search(r"export const TRAIT_DEFAULTS = (\{.*?\});\s*$", source, re.DOTALL | re.MULTILINE)
-    assert match, "defaults.js holds export const TRAIT_DEFAULTS = {...};"
+    source = (UI_DIR / "defaults.ts").read_text(encoding="utf-8")
+    match = re.search(r"export const TRAIT_DEFAULTS(?:: [^=]+)? = (\{.*?\});\s*$", source, re.DOTALL | re.MULTILINE)
+    assert match, "defaults.ts holds export const TRAIT_DEFAULTS = {...};"
     return json.loads(match.group(1))
 
 
@@ -228,3 +228,13 @@ def test_front_end_defaults_match_the_python_traits():
 def test_bundle_carries_the_defaults(esm):
     assert re.search(r"\b(var|const|let) TRAIT_DEFAULTS = \{", esm)
     assert "export const TRAIT_DEFAULTS" not in esm
+
+
+def test_bundle_carries_three_js_for_the_3d_view(esm):
+    """The 3D view (Graph3D / view="3d") renders with the bundled Three.js (vendor/three.min.js), not a CDN."""
+    assert "anywidgetGraph3dVendor" in esm
+    assert "createCanvas3D" in esm
+    assert "render3D" in esm
+    assert "esm.sh" not in esm
+    # The 3D force layout (bloom/spread in three dimensions) is bundled too
+    assert "createForce3D" in esm

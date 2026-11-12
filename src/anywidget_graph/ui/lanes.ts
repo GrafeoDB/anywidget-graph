@@ -1,25 +1,67 @@
 // Pure helpers for linked lanes, incremental append, pulse and host theme.
-// No DOM and no sigma here: index.js uses them, Node tests cover them (tests/js/lanes.test.mjs).
+import type { GraphEdge, GraphNode } from "./types.ts";
+
+// No DOM and no sigma here: index.ts uses them, Node tests cover them (tests/js/lanes.test.ts).
+
+/** A rectangle in graph coordinates. */
+export interface Band { x0: number; x1: number; y0: number; y1: number }
+
+/** A point in graph or screen coordinates. */
+export interface Point { x: number; y: number }
+
+/** Ranges on both axes. */
+export interface Box { x: [number, number]; y: [number, number] }
+
+/** A lane (an entry of the `lanes` trait). */
+export interface Lane {
+  id: string;
+  width?: number;
+  icon?: string;
+  glyph?: string[];
+  action?: boolean;
+  layout?: string;
+  arrange?: string;
+  rows?: { field: string; order: unknown[] };
+  labels?: { count?: number };
+  relayout?: unknown;
+  [key: string]: unknown;
+}
+
+/** A drawn node with its layout fields. */
+export type LayoutNode = GraphNode & { x: number; y: number; vx?: number; vy?: number; width?: number; degree?: number }
+
+/** The drawn data: nodes by id, edges as a list. */
+export interface DrawnItems { nodes: Map<string, GraphNode>; edges: GraphEdge[] }
+
+/** A batch of changes: removals first, then nodes and edges to merge in. */
+export interface Batch { seq?: number; remove?: { nodes?: string[]; edges?: GraphEdge[] }; nodes?: GraphNode[]; edges?: GraphEdge[] }
+
+/** A band split into rows, one per value plus the extra row. */
+export interface RowBand { label: string; y0: number; y1: number; band: Band }
+
+/** What an action lane's button shows. */
+export type LaneIcon = { kind: "image"; src: string } | { kind: "bars"; colors: string[] } | { kind: "open" }
 
 export const LANE_WIDTH = 1000;
 export const LANE_HEIGHT = 1000;
 export const LANE_GAP = 400;
 
 /** The lane of a node: its own when it names one of the lanes, else the first lane. */
-export function laneOf(node, lanes) {
+export function laneOf(node: GraphNode, lanes: Lane[]): string {
   const ids = lanes.map((lane) => lane.id);
-  return ids.includes(node.lane) ? node.lane : ids[0];
+  const laneId = typeof node.lane === "string" ? node.lane : "";
+  return ids.includes(laneId) ? laneId : ids[0];
 }
 
 /** The band of lane number `index`, left to right with a gap. */
-export function laneBand(index, { width = LANE_WIDTH, height = LANE_HEIGHT, gap = LANE_GAP } = {}) {
+export function laneBand(index: number, { width = LANE_WIDTH, height = LANE_HEIGHT, gap = LANE_GAP }: { width?: number; height?: number; gap?: number } = {}): Band {
   const x0 = index * (width + gap);
   return { x0, x1: x0 + width, y0: 0, y1: height };
 }
 
 /** The bands of all lanes, left to right with a gap; a lane's `width` is its share of the standard width (default 1). */
-export function laneBands(lanes, { width = LANE_WIDTH, height = LANE_HEIGHT, gap = LANE_GAP } = {}) {
-  const bands = [];
+export function laneBands(lanes: Lane[], { width = LANE_WIDTH, height = LANE_HEIGHT, gap = LANE_GAP }: { width?: number; height?: number; gap?: number } = {}): Band[] {
+  const bands: Band[] = [];
   let x0 = 0;
   for (const lane of lanes) {
     const share = typeof lane.width === "number" && lane.width > 0 ? lane.width : 1;
@@ -30,13 +72,13 @@ export function laneBands(lanes, { width = LANE_WIDTH, height = LANE_HEIGHT, gap
 }
 
 /** The part of a band nodes go in: a margin of `share` on every side, so none sits under the title or on the border. */
-export function insetBand(band, share = 0.06) {
+export function insetBand(band: Band, share = 0.06): Band {
   const dx = (band.x1 - band.x0) * share, dy = (band.y1 - band.y0) * share;
   return { x0: band.x0 + dx, x1: band.x1 - dx, y0: band.y0 + dy, y1: band.y1 - dy };
 }
 
 /** The area the camera frames: every band (nodes or not) and a margin for titles and glyphs, plus room on the right. */
-export function lanesBBox(bands, margin = 120, right = 0) {
+export function lanesBBox(bands: Band[], margin = 120, right = 0): Box {
   return {
     x: [Math.min(...bands.map((band) => band.x0)) - margin, Math.max(...bands.map((band) => band.x1)) + margin + right],
     y: [Math.min(...bands.map((band) => band.y0)) - margin, Math.max(...bands.map((band) => band.y1)) + margin],
@@ -44,11 +86,11 @@ export function lanesBBox(bands, margin = 120, right = 0) {
 }
 
 /** A column lane: its nodes stacked around the middle of the band, evenly spaced, in the given order. */
-export function columnPositions(ids, band) {
+export function columnPositions(ids: string[], band: Band): Record<string, Point> {
   const height = band.y1 - band.y0;
   const spacing = ids.length > 1 ? Math.min(height / ids.length, height * 0.12) : 0;
   const cx = (band.x0 + band.x1) / 2, cy = (band.y0 + band.y1) / 2;
-  const placed = {};
+  const placed: Record<string, Point> = {};
   ids.forEach((id, i) => {
     placed[id] = { x: cx, y: cy + (i - (ids.length - 1) / 2) * spacing };
   });
@@ -60,7 +102,7 @@ export function columnPositions(ids, band) {
  * Framed as sigma frames it, so nothing moves when the first node arrives: the smaller side less `padding` on each end
  * (sigma's stagePadding).
  */
-export function fitBox(box, width, height, padding = 0) {
+export function fitBox(box: Box, width: number, height: number, padding = 0): (point: Point) => Point {
   const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
   const scale = fitScale(box, width, height, padding);
   const offsetX = (width - spanX * scale) / 2, offsetY = (height - spanY * scale) / 2;
@@ -69,7 +111,7 @@ export function fitBox(box, width, height, padding = 0) {
 }
 
 /** Pixels per graph unit when sigma frames the box whole in a width x height viewport (see fitBox). */
-export function fitScale(box, width, height, padding = 0) {
+export function fitScale(box: Box, width: number, height: number, padding = 0): number {
   const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
   const side = Math.min(width, height);
   const shrink = side > 0 ? Math.max(0, side - 2 * padding) / side : 0;
@@ -82,7 +124,7 @@ export function fitScale(box, width, height, padding = 0) {
  * the controls over the canvas and `top` pixels at the top (the level chips). Two passes, since the room in graph
  * units depends on the scale it changes.
  */
-export function roomyFrame(box, largest, width, height, padding, right, top = 0) {
+export function roomyFrame(box: Box, largest: number, width: number, height: number, padding: number, right: number, top = 0): Box {
   let frame = box;
   for (let pass = 0; pass < 2; pass++) {
     const scale = fitScale(frame, width, height, padding);
@@ -102,7 +144,7 @@ export const LABEL_COLUMN = 120;
  * What an action lane's button shows: the host's `icon` (SVG markup, where currentColor takes the accent, or an image
  * URL), stacked bars for `glyph` colours, else a neutral "open" icon. The widget has no domain icon of its own.
  */
-export function laneIcon(lane, accent) {
+export function laneIcon(lane: { icon?: unknown; glyph?: unknown; [key: string]: unknown }, accent: string): LaneIcon {
   const icon = typeof lane.icon === "string" ? lane.icon.trim() : "";
   if (icon.startsWith("<svg")) {
     return { kind: "image", src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(icon.replaceAll("currentColor", accent))}` };
@@ -113,12 +155,12 @@ export function laneIcon(lane, accent) {
 }
 
 /** Whether a viewport point falls on an action lane's glyph (a square of `half` pixels around its centre). */
-export function glyphHit(point, center, half = 24) {
+export function glyphHit(point: Point, center: Point, half = 24): boolean {
   return Math.abs(point.x - center.x) <= half && Math.abs(point.y - center.y) <= half;
 }
 
 /** Positions scaled into a band; a single node sits in the middle. */
-export function fitToBand(positions, band) {
+export function fitToBand(positions: Record<string, Point>, band: Band): Record<string, Point> {
   const ids = Object.keys(positions);
   if (!ids.length) return {};
   const xs = ids.map((id) => positions[id].x);
@@ -126,7 +168,7 @@ export function fitToBand(positions, band) {
   const minX = Math.min(...xs), minY = Math.min(...ys);
   const spanX = Math.max(...xs) - minX || 1, spanY = Math.max(...ys) - minY || 1;
   const width = band.x1 - band.x0, height = band.y1 - band.y0;
-  const placed = {};
+  const placed: Record<string, Point> = {};
   for (const id of ids) {
     placed[id] = ids.length === 1
       ? { x: band.x0 + width / 2, y: band.y0 + height / 2 }
@@ -136,15 +178,15 @@ export function fitToBand(positions, band) {
 }
 
 /** True when an edge joins two lanes: marked `cross`, or its ends sit in different known lanes. */
-export function isCrossEdge(edge, laneById) {
+export function isCrossEdge(edge: GraphEdge, laneById: Map<string, string>): boolean {
   if (edge.cross) return true;
   const a = laneById.get(edge.source), b = laneById.get(edge.target);
   return a !== undefined && b !== undefined && a !== b;
 }
 
 /** The partners in other lanes of the given nodes, through the cross-lane links either way (for a search). */
-export function crossNeighbours(ids, cross) {
-  const partners = new Set();
+export function crossNeighbours(ids: Set<string>, cross: GraphEdge[]): Set<string> {
+  const partners = new Set<string>();
   for (const edge of cross) {
     if (ids.has(edge.source)) partners.add(edge.target);
     if (ids.has(edge.target)) partners.add(edge.source);
@@ -153,7 +195,7 @@ export function crossNeighbours(ids, cross) {
 }
 
 /** The identity of a cross-lane edge. */
-export function crossKey(edge) {
+export function crossKey(edge: GraphEdge): string {
   return `${edge.source}|${edge.target}`;
 }
 
@@ -161,11 +203,11 @@ export function crossKey(edge) {
  * A stable number in [0, 1) for a text (FNV-1a), for deterministic placement. The final mix (murmur3's fmix32)
  * spreads ids that differ only at the end (y1, y2, ...), which FNV alone maps to nearly the same number.
  */
-export function hashUnit(text) {
+export function hashUnit(text: string): number {
   return hash32(text) / 4294967296;
 }
 
-function hash32(text) {
+function hash32(text: string): number {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
@@ -180,7 +222,7 @@ function hash32(text) {
 }
 
 /** A random source in [0, 1) seeded by a text (mulberry32), so a lane's force layout gives the same picture again. */
-export function seededRandom(seed) {
+export function seededRandom(seed: unknown): () => number {
   let state = hash32(String(seed));
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -192,7 +234,7 @@ export function seededRandom(seed) {
 }
 
 /** Keeps a simulated node inside its band (a lane stays its own graph): a node over an edge stops at it. */
-export function clampInto(node, band) {
+export function clampInto<T extends { x: number; y: number; vx?: number; vy?: number }>(node: T, band: Band): T {
   if (node.x < band.x0 || node.x > band.x1) {
     node.x = clamp(node.x, band.x0, band.x1);
     if ("vx" in node) node.vx = 0;
@@ -205,20 +247,21 @@ export function clampInto(node, band) {
 }
 
 /** The mean height of each node's cross-lane partners among the nodes already placed (lanes laid out before it). */
-export function partnerHeights(ids, cross, placed) {
-  const wanted = new Set(ids), sums = new Map();
+export function partnerHeights(ids: string[], cross: GraphEdge[], placed: Map<string, Point>): Map<string, number> {
+  const wanted = new Set(ids);
+  const sums = new Map<string, [number, number]>();
   for (const edge of cross) {
     for (const [own, other] of [[edge.source, edge.target], [edge.target, edge.source]]) {
       if (!wanted.has(own) || !placed.has(other)) continue;
-      const [sum, count] = sums.get(own) || [0, 0];
-      sums.set(own, [sum + placed.get(other).y, count + 1]);
+      const [sum, count] = sums.get(own) ?? [0, 0];
+      sums.set(own, [sum + placed.get(other)!.y, count + 1]);
     }
   }
-  return new Map(ids.filter((id) => sums.has(id)).map((id) => [id, sums.get(id)[0] / sums.get(id)[1]]));
+  return new Map(ids.filter((id) => sums.has(id)).map((id) => [id, sums.get(id)![0] / sums.get(id)![1]] as [string, number]));
 }
 
 /** A lane's natural spacing: the side of the square each node would get if its nodes shared the band evenly. */
-export function laneSpacing(count, band) {
+export function laneSpacing(count: number, band: Band): number {
   const area = (band.x1 - band.x0) * (band.y1 - band.y0);
   return Math.sqrt(area / Math.max(1, count));
 }
@@ -227,14 +270,14 @@ export function laneSpacing(count, band) {
  * How much smaller a lane draws its nodes (1 = as styled) so their discs take at most `share` of its area: a crowded
  * lane would otherwise be a packed box with no room for the layout. Sizes are radii in pixels, the band in graph units.
  */
-export function laneSizeScale(sizes, band, pxPerUnit, share = 0.35) {
+export function laneSizeScale(sizes: number[], band: Band, pxPerUnit: number, share = 0.35): number {
   const discs = sizes.reduce((sum, size) => sum + Math.PI * size * size, 0);
   const area = (band.x1 - band.x0) * (band.y1 - band.y0) * pxPerUnit * pxPerUnit;
   return discs > 0 ? Math.min(1, Math.sqrt((share * area) / discs)) : 1;
 }
 
 /** A node's row in a lane with rows ({field, order}): the index of its field's value, else the extra row after them. */
-export function rowOf(node, rows) {
+export function rowOf(node: Record<string, unknown>, rows: { field: string; order: unknown[] }): number {
   const index = rows.order.indexOf(node[rows.field]);
   return index >= 0 ? index : rows.order.length;
 }
@@ -244,12 +287,12 @@ export function rowOf(node, rows) {
  * nodes for it. Row heights follow the counts, each at least `minShare` of the band (equal when nothing is counted).
  * Each row's `band` is inset from its top and bottom, so nodes keep away from the separators.
  */
-export function rowBands(band, order, counts, minShare = 0.12, inset = 0.1, nameRoom = 0) {
+export function rowBands(band: Band, order: unknown[], counts: number[], minShare = 0.12, inset = 0.1, nameRoom = 0): RowBand[] {
   const used = counts[order.length] > 0 ? order.length + 1 : order.length;
   const least = Math.min(minShare, 1 / used);
   // A row under the minimum gets the minimum; the others share the rest by count (repeated until none is under it)
-  const shares = new Array(used).fill(1 / used);
-  const fixed = new Set();
+  const shares: number[] = new Array(used).fill(1 / used);
+  const fixed = new Set<number>();
   for (let changed = true; changed; ) {
     changed = false;
     const rest = 1 - fixed.size * least;
@@ -280,14 +323,14 @@ export function rowBands(band, order, counts, minShare = 0.12, inset = 0.1, name
 }
 
 /** Whether a batch removes or adds more than `share` of a lane's nodes (or fills an empty lane): a whole new layout. */
-export function bigBatch(before, removed, added, share = 1 / 3) {
+export function bigBatch(before: number, removed: number, added: number, share = 1 / 3): boolean {
   if (!removed && !added) return false;
   return before === 0 || removed > before * share || added > before * share;
 }
 
 /** An item's colour: its own `color`, else its type's colour from the host (type_colors), else the palette's. */
-export function colorFor(item, type, typeColors, fallback) {
-  return item.color || typeColors?.[type] || fallback;
+export function colorFor(item: { color?: unknown }, type: string, typeColors: Record<string, string> | undefined, fallback: string): string {
+  return (typeof item.color === "string" ? item.color : undefined) || typeColors?.[type] || fallback;
 }
 
 /**
@@ -297,27 +340,28 @@ export function colorFor(item, type, typeColors, fallback) {
  * of a node as large or larger, not a node already labelled, and not (by `margin`) another label; a node under a
  * label already chosen gets none. Nor may it cover `taken` space (boxes such as a row's name). Returns [{id, side}].
  */
-export function labelsThatFit(nodes, count, { height, gap = 0, margin = 0, band, taken = [] } = {}) {
+export function labelsThatFit(nodes: LayoutNode[], count: number, { height, gap = 0, margin = 0, band, taken = [] }: { height: number; gap?: number; margin?: number; band?: Pick<Band, "x0" | "x1">; taken?: Band[] }): { id: string; side: string }[] {
   const ranked = [...nodes].sort((a, b) => (b.size || 0) - (a.size || 0) || (b.degree || 0) - (a.degree || 0));
-  const boxOf = (node, side) => {
+  const boxOf = (node: LayoutNode, side: "right" | "left"): Band => {
     const y0 = node.y - height / 2, y1 = node.y + height / 2;
     if (side === "right") {
       const x0 = node.x + (node.size || 0) + gap;
-      return { x0, x1: x0 + node.width, y0, y1 };
+      return { x0, x1: x0 + (node.width ?? 0), y0, y1 };
     }
     const x1 = node.x - (node.size || 0) - gap;
-    return { x0: x1 - node.width, x1, y0, y1 };
+    return { x0: x1 - (node.width ?? 0), x1, y0, y1 };
   };
-  const overlap = (a, b) => a.x0 < b.x1 + margin && b.x0 < a.x1 + margin && a.y0 < b.y1 + margin && b.y0 < a.y1 + margin;
-  const coversDisc = (box, other) => {
+  const overlap = (a: Band, b: Band) => a.x0 < b.x1 + margin && b.x0 < a.x1 + margin && a.y0 < b.y1 + margin && b.y0 < a.y1 + margin;
+  const coversDisc = (box: Band, other: LayoutNode) => {
     const dx = Math.max(box.x0 - other.x, 0, other.x - box.x1), dy = Math.max(box.y0 - other.y, 0, other.y - box.y1);
     return Math.hypot(dx, dy) < (other.size || 0) * 0.5;
   };
-  const chosenIds = new Set();
-  const chosen = [];
+  const chosenIds = new Set<string>();
+  const chosen: { id: string; side: "right" | "left"; box: Band }[] = [];
   for (const node of ranked) {
     if (chosen.length >= count) break;
-    let side = "right", box = boxOf(node, "right");
+    let side: "right" | "left" = "right";
+    let box: Band = boxOf(node, "right");
     if (band && box.x1 > band.x1) {
       side = "left";
       box = boxOf(node, "left");
@@ -325,7 +369,7 @@ export function labelsThatFit(nodes, count, { height, gap = 0, margin = 0, band,
     }
     if (taken.some((space) => overlap(box, space))) continue;
     if (chosen.some((other) => overlap(box, other.box) || coversDisc(other.box, node))) continue;
-    const blocked = (other) => other.id !== node.id && ((other.size || 0) >= (node.size || 0) || chosenIds.has(other.id)) && coversDisc(box, other);
+    const blocked = (other: LayoutNode) => other.id !== node.id && ((other.size || 0) >= (node.size || 0) || chosenIds.has(other.id)) && coversDisc(box, other);
     if (nodes.some(blocked)) continue;
     chosen.push({ id: node.id, side, box });
     chosenIds.add(node.id);
@@ -334,7 +378,7 @@ export function labelsThatFit(nodes, count, { height, gap = 0, margin = 0, band,
 }
 
 /** A label cut to `maxWidth` (as `measure` gives widths) with an ellipsis; one that fits stays as it is. */
-export function shortenLabel(text, maxWidth, measure) {
+export function shortenLabel(text: string, maxWidth: number, measure: (text: string) => number): string {
   if (!text || measure(text) <= maxWidth) return text;
   let cut = text;
   while (cut && measure(cut + "\u2026") > maxWidth) cut = cut.slice(0, -1);
@@ -342,11 +386,11 @@ export function shortenLabel(text, maxWidth, measure) {
 }
 
 /** Whether a label box (unit.x wide, unit.y high) at `spot` is clear of every occupied one. */
-export function labelClear(spot, occupied, unit) {
+export function labelClear(spot: Point, occupied: Point[], unit: Point): boolean {
   return occupied.every((o) => Math.abs(o.x - spot.x) >= unit.x * 0.999 || Math.abs(o.y - spot.y) >= unit.y * 0.999);
 }
 
-function clamp(value, low, high) {
+function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
 
@@ -357,9 +401,9 @@ function clamp(value, low, high) {
  * width across, one label line down, in graph units), it takes the nearest free row or column instead. A band with no
  * room left gives the spot itself, marked `crowded`.
  */
-export function placeAppended(nodeId, { cross = [], lane = [], occupied = [], unit }, band) {
+export function placeAppended(nodeId: string, { cross = [], lane = [], occupied = [], unit }: { cross?: Point[]; lane?: Point[]; occupied?: Point[]; unit?: Point }, band: Band): Point & { crowded?: boolean } {
   const width = band.x1 - band.x0, height = band.y1 - band.y0;
-  let spot;
+  let spot: Point;
   if (cross.length) {
     // In the middle of the band at their height: nodes of the same neighbours stack there as rows
     const y = cross.reduce((sum, p) => sum + p.y, 0) / cross.length;
@@ -380,15 +424,15 @@ export function placeAppended(nodeId, { cross = [], lane = [], occupied = [], un
  * rows above and below it, then the next columns (a column costs three rows; on a tie the column goes first), inside
  * the band. The occupied spots are bucketed by label box, so each try looks at its nine neighbouring buckets only.
  */
-function freeSpot(spot, occupied, band, unit) {
-  const cell = (p) => [Math.floor(p.x / unit.x), Math.floor(p.y / unit.y)];
-  const buckets = new Map();
+function freeSpot(spot: Point, occupied: Point[], band: Band, unit: Point): Point & { crowded?: boolean } {
+  const cell = (p: Point): [number, number] => [Math.floor(p.x / unit.x), Math.floor(p.y / unit.y)];
+  const buckets = new Map<string, Point[]>();
   for (const o of occupied) {
     const key = cell(o).join(",");
     if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(o);
+    buckets.get(key)!.push(o);
   }
-  const clear = (p) => {
+  const clear = (p: Point) => {
     const [cx, cy] = cell(p);
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
@@ -419,36 +463,36 @@ function freeSpot(spot, occupied, band, unit) {
 }
 
 /** Control point of a soft curve from a to b (bows to one side by a share of the distance). */
-export function curveControl(a, b, bend = 0.18) {
+export function curveControl(a: Point, b: Point, bend = 0.18): Point {
   return { x: (a.x + b.x) / 2 - (b.y - a.y) * bend, y: (a.y + b.y) / 2 + (b.x - a.x) * bend };
 }
 
 /** Point at t on the quadratic curve a, c, b. */
-export function curvePoint(a, c, b, t) {
+export function curvePoint(a: Point, c: Point, b: Point, t: number): Point {
   const u = 1 - t;
   return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
 }
 
 /** The first part of the curve, up to t, as its own quadratic (control and end; de Casteljau split). */
-export function curveUntil(a, c, b, t) {
+export function curveUntil(a: Point, c: Point, b: Point, t: number): { control: Point; end: Point } {
   return { control: { x: a.x + (c.x - a.x) * t, y: a.y + (c.y - a.y) * t }, end: curvePoint(a, c, b, t) };
 }
 
 /** Start offsets (ms) for the n items of a batch, `stagger` apart, the whole batch under `maxTotal`. */
-export function staggerSchedule(n, stagger, maxTotal = 1500) {
+export function staggerSchedule(n: number, stagger: number, maxTotal = 1500): number[] {
   if (n <= 0) return [];
   const step = n > 1 ? Math.min(stagger, maxTotal / (n - 1)) : 0;
   return Array.from({ length: n }, (_, i) => Math.round(i * step));
 }
 
 /** Eased progress (ease-out cubic) of an animation that starts at `start` and lasts `duration`, at `now`. */
-export function progress(start, now, duration) {
+export function progress(start: number, now: number, duration: number): number {
   const t = Math.min(1, Math.max(0, (now - start) / duration));
   return 1 - Math.pow(1 - t, 3);
 }
 
 /** Size factor of a pulsing node at time t (ms): a soft breath between 1 and 1 + amplitude. */
-export function pulseScale(t, period = 1400, amplitude = 0.35) {
+export function pulseScale(t: number, period = 1400, amplitude = 0.35): number {
   return 1 + amplitude * (0.5 - 0.5 * Math.cos((2 * Math.PI * t) / period));
 }
 
@@ -465,8 +509,8 @@ const THEME_VARIABLES = {
  * The widget's CSS variables for a host theme ({background, panel, text, muted, border, accent}). A key the theme
  * leaves out maps to "", which removes the variable, so the widget's light or dark colour shows again.
  */
-export function themeVariables(theme) {
-  const variables = {};
+export function themeVariables(theme: Record<string, unknown> | null | undefined): Record<string, string> {
+  const variables: Record<string, string> = {};
   for (const [key, names] of Object.entries(THEME_VARIABLES)) {
     const value = theme?.[key];
     for (const name of names) variables[name] = typeof value === "string" ? value : "";
@@ -475,17 +519,17 @@ export function themeVariables(theme) {
 }
 
 /** The label colour: the host theme's text colour, else the light or dark default. */
-export function labelColor(theme, dark) {
+export function labelColor(theme: { text?: string } | null | undefined, dark: boolean): string {
   return theme?.text || (dark ? "#e0e0e0" : "#333");
 }
 
 /** The next lane_action for a click on a lane's glyph; it counts on from the model's value, which every view shares. */
-export function nextLaneAction(lane, current) {
+export function nextLaneAction(lane: string, current: ({ seq?: unknown } & Record<string, unknown>) | null | undefined): { lane: string; seq: number } {
   return { lane, seq: (Number(current?.seq) || 0) + 1 };
 }
 
 /** The identity of an edge among the drawn data: its ends and its label. */
-export function edgeKey(edge) {
+export function edgeKey(edge: GraphEdge): string {
   return `${edge.source}|${edge.target}|${edge.label || ""}`;
 }
 
@@ -493,8 +537,8 @@ export function edgeKey(edge) {
  * The drawn data with nodes and edges merged in: a node by id (its properties updated), an edge once per ends and
  * label. Without `items`, the host's lists as they are (parallel edges kept). Returns new data; `items` is unchanged.
  */
-export function mergeItems(items, nodes = [], edges = []) {
-  const merged = { nodes: new Map(items?.nodes), edges: [...(items?.edges || [])] };
+export function mergeItems(items: DrawnItems | null | undefined, nodes: GraphNode[] = [], edges: GraphEdge[] = []): DrawnItems {
+  const merged: DrawnItems = { nodes: new Map(items?.nodes ?? []), edges: [...(items?.edges ?? [])] };
   for (const node of nodes) merged.nodes.set(node.id, { ...merged.nodes.get(node.id), ...node });
   if (!items) {
     merged.edges.push(...edges);
@@ -510,30 +554,30 @@ export function mergeItems(items, nodes = [], edges = []) {
 }
 
 /** Whether an edge is the one a removal names: the same ends, and the same label when the removal gives one. */
-export function edgeMatches(edge, spec) {
+export function edgeMatches(edge: GraphEdge, spec: GraphEdge): boolean {
   if (edge.source !== spec.source || edge.target !== spec.target) return false;
   return spec.label === undefined || spec.label === null || (edge.label || "") === spec.label;
 }
 
 /** The drawn data without the given nodes (and every edge touching them) and edges. Returns new data. */
-export function removeItems(items, remove = {}) {
-  const ids = new Set(remove.nodes || []);
-  const specs = remove.edges || [];
-  const gone = (edge) => ids.has(edge.source) || ids.has(edge.target) || specs.some((spec) => edgeMatches(edge, spec));
+export function removeItems(items: DrawnItems, remove: { nodes?: string[]; edges?: GraphEdge[] } = {}): DrawnItems {
+  const ids = new Set<string>(remove.nodes || []);
+  const specs: GraphEdge[] = remove.edges || [];
+  const gone = (edge: GraphEdge) => ids.has(edge.source) || ids.has(edge.target) || specs.some((spec) => edgeMatches(edge, spec));
   return { nodes: new Map([...items.nodes].filter(([id]) => !ids.has(id))), edges: items.edges.filter((edge) => !gone(edge)) };
 }
 
 /** The drawn data after a batch: its removals first, then its nodes and edges merged in. */
-export function applyBatchItems(items, batch) {
+export function applyBatchItems(items: DrawnItems, batch: Batch): DrawnItems {
   return mergeItems(removeItems(items, batch.remove), batch.nodes || [], batch.edges || []);
 }
 
 /** Whether the host's lists hold exactly the drawn items (the same node ids, the same edges): a copy, not new data. */
-export function sameItems(items, nodes, edges) {
+export function sameItems(items: DrawnItems, nodes: GraphNode[], edges: GraphEdge[]): boolean {
   const ids = new Set(nodes.map((node) => node.id));
   if (ids.size !== items.nodes.size || [...ids].some((id) => !items.nodes.has(id))) return false;
   if (edges.length !== items.edges.length) return false;
-  const counts = new Map();
+  const counts = new Map<string, number>();
   for (const edge of items.edges) counts.set(edgeKey(edge), (counts.get(edgeKey(edge)) || 0) + 1);
   for (const edge of edges) {
     const left = counts.get(edgeKey(edge));
@@ -547,7 +591,7 @@ export function sameItems(items, nodes, edges) {
  * The area the drawn nodes cover, as a band to place appended nodes in when there are no lanes (so sigma's camera
  * keeps its scale). A flat or single-node graph gets an area as high as it is wide (or LANE_WIDTH around it).
  */
-export function extentBand(points) {
+export function extentBand(points: Point[]): Band | null {
   if (!points.length) return null;
   const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
   let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -562,8 +606,8 @@ export function extentBand(points) {
  * type with a total gets it, and a type the host lists that the drawn data lacks shows with count 0. The host
  * supplies totals (it may hold far more than it sends); the widget never makes them up.
  */
-export function withTotals(counts, totals) {
-  const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([name, count]) => (totals && name in totals ? { name, count, total: totals[name] } : { name, count }));
+export function withTotals(counts: Map<string, number>, totals: Record<string, number> | null | undefined): { name: string; count: number; total?: number }[] {
+  const rows: { name: string; count: number; total?: number }[] = [...counts].sort((a, b) => b[1] - a[1]).map(([name, count]) => (totals && name in totals ? { name, count, total: totals[name] } : { name, count }));
   if (totals) {
     for (const [name, total] of Object.entries(totals)) if (!counts.has(name)) rows.push({ name, count: 0, total });
   }
@@ -571,26 +615,27 @@ export function withTotals(counts, totals) {
 }
 
 /** "shown / total" (with thousands separators), or the count alone without a total. */
-export function shownOf(count, total) {
+export function shownOf(count: number, total?: number | null): string {
   if (total === undefined || total === null) return String(count);
   return `${Number(count).toLocaleString("en-US")} / ${Number(total).toLocaleString("en-US")}`;
 }
 
 /** A node's type as the schema panel groups it: its first label, else its label, else "Unlabeled". */
-export function nodeType(node) {
-  return node.labels && node.labels.length > 0 ? node.labels[0] : node.label || "Unlabeled";
+export function nodeType(node: Record<string, unknown>): string {
+  const labels = node.labels;
+  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || "Unlabeled");
 }
 
 /** An edge's type as the schema panel groups it: its type, else its label, else "unknown". */
-export function edgeType(edge) {
-  return edge.type || edge.label || "unknown";
+export function edgeType(edge: Record<string, unknown>): string {
+  return String(edge.type || edge.label || "unknown");
 }
 
 /**
  * The total behind the shown items: the host's per-type totals, plus the shown items of a type it gives no total
  * for (a type the host shows in full). Undefined when the host gives no totals.
  */
-export function totalShown(items, typeOf, group) {
+export function totalShown<T extends Record<string, unknown>>(items: T[], typeOf: (item: T) => string, group?: Record<string, unknown> | null): number | undefined {
   const totals = Object.entries(group || {}).filter(([, n]) => Number.isFinite(Number(n)));
   if (!totals.length) return undefined;
   const listed = new Set(totals.map(([type]) => type));
@@ -598,7 +643,7 @@ export function totalShown(items, typeOf, group) {
 }
 
 /** A #rrggbb colour with an alpha, as rgba(); anything else unchanged. */
-export function withAlpha(hex, alpha) {
+export function withAlpha(hex: string, alpha: number): string {
   const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
   if (!match) return hex;
   const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
@@ -606,9 +651,9 @@ export function withAlpha(hex, alpha) {
 }
 
 // A node and every node it shares an edge with (either direction); empty without a node
-export function neighbourhood(edges, id) {
+export function neighbourhood(edges: GraphEdge[], id: string | number | null | undefined): Set<string | number> {
   if (id === null || id === undefined) return new Set();
-  const near = new Set([id]);
+  const near = new Set<string | number>([id as string | number]);
   for (const edge of edges) {
     if (edge.source === id) near.add(edge.target);
     if (edge.target === id) near.add(edge.source);
@@ -618,25 +663,25 @@ export function neighbourhood(edges, id) {
 
 // The circle a self-loop is drawn as (viewport pixels): over the node's upper right edge, each further loop of the
 // node a little wider, so they nest instead of overlapping
-export function loopCircle(center, radius, index) {
+export function loopCircle(center: Point, radius: number, index: number): Point & { r: number } {
   const r = Math.max(7, radius * 0.7) + index * 5;
   const reach = (radius + r * 0.4) * Math.SQRT1_2;
   return { x: center.x + reach, y: center.y - reach, r };
 }
 
 // The `preset` layout: the positions the nodes bring (numeric x and y); the others keep theirs
-export function presetPositions(nodes) {
-  const positions = new Map();
+export function presetPositions(nodes: (Record<string, unknown> & { id: string | number })[]): Map<string, Point> {
+  const positions = new Map<string, Point>();
   for (const node of nodes) {
     if (typeof node.x === "number" && typeof node.y === "number" && Number.isFinite(node.x) && Number.isFinite(node.y)) {
-      positions.set(node.id, { x: node.x, y: node.y });
+      positions.set(String(node.id), { x: node.x, y: node.y });
     }
   }
   return positions;
 }
 
 // A colour as [r, g, b]: #rrggbb (an #rrggbbaa's alpha is dropped) or rgb()/rgba(); null for anything else
-function rgbOf(color) {
+function rgbOf(color: string | null | undefined): number[] | null {
   const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(color || "");
   if (hex) return hex.slice(1, 4).map((part) => parseInt(part, 16));
   const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color || "");
@@ -647,12 +692,12 @@ function rgbOf(color) {
 // blending does not treat a colour's alpha as transparency (a translucent colour stays bright on a dark canvas and
 // all but vanishes on a light one), so an opaque mix is what reads the same on both.
 const DIM_MIX = 0.65;
-export function dimColor(color, background) {
+export function dimColor(color: string, background: string): string {
   return mixColor(color, background, DIM_MIX);
 }
 
 /** `color` mixed `amount` (0-1) of the way towards `background`, opaque; the colour itself when either is not #hex or rgb(). */
-export function mixColor(color, background, amount) {
+export function mixColor(color: string, background: string, amount: number): string {
   const [from, to] = [rgbOf(color), rgbOf(background)];
   if (!from || !to) return color;
   return `#${from.map((v, i) => Math.round(v + (to[i] - v) * amount).toString(16).padStart(2, "0")).join("")}`;
@@ -662,13 +707,13 @@ export function mixColor(color, background, amount) {
  * A per-item `opacity` (0-1) as an opaque colour on the canvas (see dimColor for why not alpha); the colour itself
  * for 1, a missing value or anything that is not a number.
  */
-export function fadeColor(color, background, opacity) {
+export function fadeColor(color: string, background: string, opacity: unknown): string {
   if (typeof opacity !== "number" || !(opacity < 1)) return color;
   return mixColor(color, background, 1 - Math.max(0, opacity));
 }
 
 /** A per-item `dash` as a canvas line dash: true is a plain dash, "4 3" or [4, 3] the given one; null for no dash. */
-export function dashPattern(dash) {
+export function dashPattern(dash: unknown): number[] | null {
   if (dash === true) return [5, 4];
   const parts = Array.isArray(dash) ? dash : typeof dash === "string" ? dash.trim().split(/[\s,]+/) : [];
   const pattern = parts.map(Number).filter((n) => Number.isFinite(n) && n >= 0);
@@ -676,7 +721,7 @@ export function dashPattern(dash) {
 }
 
 /** Text that reads on `color`: near black on a light colour, white on a dark one (or on one it cannot read). */
-export function contrastText(color) {
+export function contrastText(color: string): string {
   const rgb = rgbOf(color);
   if (!rgb) return "#ffffff";
   const [r, g, b] = rgb;
@@ -688,10 +733,10 @@ export function contrastText(color) {
  * below with filtered_style "dim", "hidden" further below (or one below with "hide"). Levels are compared by their
  * position in `levels` when they name one, else as numbers.
  */
-export function levelState(level, current, levels = [], style = "dim") {
+export function levelState(level: unknown, current: unknown, levels: { id: unknown }[] = [], style = "dim"): string {
   if (level === undefined || level === null || !levels.length) return "shown";
-  const ids = levels.map((entry) => entry.id);
-  const rank = (value) => (ids.includes(value) ? ids.indexOf(value) : Number(value));
+  const ids: unknown[] = levels.map((entry) => entry.id);
+  const rank = (value: unknown): number => (ids.includes(value) ? ids.indexOf(value) : Number(value));
   const gap = rank(current) - rank(level);
   if (!(gap > 0)) return "shown";
   return gap === 1 && style === "dim" ? "dim" : "hidden";

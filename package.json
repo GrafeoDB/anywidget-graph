@@ -1,0 +1,24 @@
+{
+  "name": "anywidget-graph",
+  "private": true,
+  "type": "module",
+  "description": "Front end of the anywidget-graph widget, in TypeScript (bundled with esbuild; type-checked with tsc)",
+  "scripts": {
+    "build": "npm run build:esm --prefix scripts/vendor",
+    "check": "npm run check:esm --prefix scripts/vendor",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/js/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/d3-force": "3.0.10",
+    "@types/node": "26.6.6",
+    "@types/three": "0.186.0",
+    "d3-force": "3.0.0",
+    "graphology": "0.25.4",
+    "graphology-layout": "0.6.1",
+    "graphology-layout-forceatlas2": "0.10.1",
+    "sigma": "3.0.3",
+    "three": "0.186.1",
+    "typescript": "7.0.2"
+  }
+}

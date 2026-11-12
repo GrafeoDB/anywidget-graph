@@ -1,6 +1,36 @@
 # Changelog
 
-## 0.5.2 2026-10-28
+All notable changes to anywidget-graph, an interactive graph widget for Python notebooks built on anywidget.
+
+## [0.5.3] - 2026-11-12
+
+3D release: a graph can be drawn as a Three.js scene with a force layout in three dimensions, and the Grafeo backend moves to grafeo 0.6.2 in Python and in the browser. An environment with the `grafeo` extra upgrades grafeo to 0.6.2 or later, below 0.7; stay on 0.5.2 to keep an older 0.6.x.
+
+### Added
+
+- **3D view**: `Graph3D`, or `Graph(view="3d")`, draws the graph with the bundled Three.js 0.186.1 in a scene to orbit, pan and zoom, with hover tooltips, click and box or lasso selection; the toolbar's cube button and the settings panel switch views at runtime. The layout is a force layout in three dimensions, set with `force3d_repulsion` (the "bloom") and `force3d_link_distance` (the "spread", a positive number or `None` for automatic), with optional axes, grid and labels (`show_axes`, `show_grid`, `grid_divisions`, `axis_labels`, `camera_position`, `camera_target`).
+- **The 3D view keeps its layout on change**: `Graph.append()`, `remove()` and a restyle leave the drawn nodes and the camera where they are, and a new node is placed next to the nodes it links to. Setting `nodes` or `edges` to other data lays the graph out again, as in the 2D view.
+- **3D export**: `to_html()` and `save_html()` on a graph in the 3D view write a page that draws the Three.js scene with its layout, camera, axes and styling, to orbit, hover and select offline. A graph in the 2D view exports the Sigma page as before.
+- **`3d` extra**: `anywidget-graph[3d]` is a marker extra; Three.js ships in the wheel (`ui/vendor/three.min.js`, licenses in `ui/vendor/three.LICENSES.txt`), so the 3D view needs no further Python packages and loads nothing from a CDN.
+- **3D example**: `examples/demo_3d.py` shows a citation network in the 3D view.
+
+### Changed
+
+- **Schema properties from grafeo 0.6.2**: The schema panel lists each label's and edge type's property names; grafeo 0.6.2's `schema()` entries carry `properties` as `{name, types}`, which `GrafeoBackend.fetch_schema` reduces to the names.
+- **Front end in TypeScript**: The modules in `ui/` are TypeScript, bundled by esbuild into `ui/dist/` (`npm run build`), and CI type-checks them with `tsc` and runs the JavaScript tests in a `frontend` job. Running the JavaScript checks locally needs Node 22.18 or later.
+
+### Fixed
+
+- **The HTML export draws what the widget draws**: a `to_html()` page draws parallel edges and numeric ids, applies the default `spring` layout, `type_colors` and degree-based sizes, and skips an edge to a node that is not in the data. Parallel edges or such an edge left the page blank.
+- **An edge's own `color` wins**: an edge with a `color` keeps it when `edge_color_field` is set, as the per-item style rule says; the field mapping replaced it.
+- **Large numeric styling fields render**: `color_field`, `size_field` and the edge fields compute their range over any number of values; a few hundred thousand values stopped the render with a `RangeError`.
+
+### Dependencies
+
+- **grafeo 0.6.2** (requires `>=0.6.2,<0.7`): The `grafeo` extra needs grafeo 0.6.2 (it was `>=0.6.0` with no upper bound), and the WASM mode loads `@grafeo-db/wasm` 0.6.2 (`GRAFEO_WASM_VERSION` in `ui/grafeo-embed.ts`).
+- **Locked versions refreshed**: ty 0.0.100, pandas 3.1.1, ruff 0.17.4, prek 0.5.10, websockets 17.4 and python-dateutil 4.0.0, among others. Front-end build tools: esbuild 0.28.2, TypeScript 7.0.2, three 0.186.1 and `@types/three` 0.186.0.
+
+## [0.5.2] - 2026-10-28
 
 ### Features
 
@@ -14,7 +44,7 @@
 
 - Node and Python tests for the cut: off by default, the best-connected nodes kept with their edges, the note
 
-## 0.5.1 2026-10-28
+## [0.5.1] - 2026-10-28
 
 ### Features
 
@@ -48,7 +78,7 @@
 - The grafeo-server client against a fake `fetch` answering grafeo-server's endpoints with pinned responses (health, schema, query, paths, tagged values, an error, two widgets with two servers); per-widget WASM databases; the notes; level, colour and dash rules; the frame with room for the controls; filter paging; the cut at `max_nodes`; every backend taking the language; the Neo4j schema quoting
 - Browser tests (`tests/e2e`, Playwright and Chromium, their own CI job): the widget mounted through a plain model with no network, hostile values as text in the tooltip and the properties panel, no listener left after destroy and redraw, the theme following the page in two views and kept when chosen, level chips, the server-mode query box (connect on the first query, a note for a write, an error), a narrow pane's toolbar, per-item marks, and an HTML export that runs no markup from the data
 
-## 0.5.0 2026-10-28
+## [0.5.0] - 2026-10-28
 
 Grafeo 0.6 release: the Grafeo backends move to grafeo 0.6 (embedded, grafeo-server and WASM). Stay on 0.4.x for grafeo 0.5.
 
@@ -91,13 +121,13 @@ Grafeo 0.6 release: the Grafeo backends move to grafeo 0.6 (embedded, grafeo-ser
 - Node tests for the WASM client with a fake engine: two copies of the module share one loaded engine, the same statements load into a database once, and rows with nothing to draw say so; Python tests that the export's background and label colours follow the mode, an explicit `background` and the host `theme`, and that a colour or size that is not a plain CSS value is dropped
 - pytest runs every `tests/js/*.test.mjs` file, so a new Node test file cannot be left out
 
-## 0.4.6 2026-10-20
+## [0.4.6] - 2026-10-20
 
 ### Bug Fixes
 
 - **Dimmed items read the same on a light and a dark canvas**: a selection dims the other nodes and edges by mixing their colour towards the canvas colour (opaque) instead of making it translucent. Sigma's blending does not treat a colour's alpha as transparency, so the old translucent dimming barely dimmed on a dark canvas and all but vanished on a light one
 
-## 0.4.5 2026-10-20
+## [0.4.5] - 2026-10-20
 
 ### Features
 
@@ -111,21 +141,21 @@ Grafeo 0.6 release: the Grafeo backends move to grafeo 0.6 (embedded, grafeo-ser
 - **Settings follow the model**: `show_edge_labels` and the new `edge_arrows` and `highlight_neighbors` apply when they change after the widget is drawn
 - **`to_html()` and `save_html()` need no CDN**: the exported page carries the bundled graph libraries itself instead of loading graphology and sigma from esm.sh, so it opens offline and behind a network filter
 
-## 0.4.4 2026-10-19
+## [0.4.4] - 2026-10-19
 
 ### Bug Fixes
 
 - **The widget loads without a CDN**: graphology, sigma, graphology-layout, graphology-layout-forceatlas2 and d3-force are bundled with the widget (`ui/vendor/graph-libs.min.js`, built from pinned npm versions by `scripts/vendor`, licenses in `ui/vendor/graph-libs.LICENSES.txt`) instead of loaded from esm.sh on every render. A page that could not reach esm.sh or cdn.jsdelivr.net (offline, a network filter, a blocker, a CDN outage) showed "Failed to fetch dynamically imported module" instead of the graph
 - **neo4j-driver loads when a Neo4j connection is made**: it was imported from cdn.jsdelivr.net with the widget, so every host needed the CDN even without Neo4j. The Neo4j backend and the Grafeo WASM backend are now the only parts that load code from the network, and only when they connect
 
-## 0.4.3 2026-10-12
+## [0.4.3] - 2026-10-12
 
 ### Improvements
 
 - **Python 3.15**: supported, and tested in CI on 3.12 to 3.15. marimo, which the widget does not import, installs on 3.12 to 3.14 only for now: its dependency loro has no 3.15 wheels yet (the widget works in marimo as soon as marimo installs on 3.15)
 - **marimo moved to the `examples` extra**: the widget does not import marimo, so it is no longer a dependency; `pip install anywidget-graph[examples]` adds marimo to run the apps in `examples/`
 
-## 0.4.2 2026-10-09
+## [0.4.2] - 2026-10-09
 
 ### Features
 
@@ -148,7 +178,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Fixed the zoom controls covering the caption of an action lane at the right edge on a narrow canvas: when the rightmost lane is an action lane, the framing leaves room for the controls
 - Fixed the empty canvas mapping lanes with the y axis pointing down while sigma points it up (nothing visible depended on it before rows)
 
-## 0.4.1 2026-10-09
+## [0.4.1] - 2026-10-09
 
 ### Features
 
@@ -180,7 +210,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Fixed appended nodes and their labels landing on top of each other: ids that differ only at the end (`n1`, `n2`, ...) got nearly the same spot, and nodes next to the same neighbour could share one. Nodes of the same neighbours now stack as rows at its height, one label line apart (then in the next column), clear of the labels already drawn, and their labels show at the default zoom (sigma's label grid dropped all but two of a stack)
 - Fixed lane titles sitting at the top edge of an empty canvas, and the lanes jumping when the first node arrived (for example at the start of a live append): an empty canvas is now framed with sigma's stage padding, like a canvas with nodes
 
-## 0.4.0 2026-10-09
+## [0.4.0] - 2026-10-09
 
 ### Features
 
@@ -217,7 +247,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Demo mode loads its statements one at a time and refreshes the schema panel afterwards
 - Fixed `Sigma: Container has no width` when the widget is mounted in a hidden or not yet sized container (a closed panel, a tab); it now renders once the container has a size
 
-## 0.3.1 2026-03-16
+## [0.3.1] - 2026-03-16
 
 ### New Features
 
@@ -228,7 +258,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Fixed missing ICONS import causing zoom and lasso buttons to fail
 - Fixed `lassoSvg` referenced before declaration, crashing widget on load
 
-## 0.3.0
+## [0.3.0] - 2026-03-16
 
 ### New Features
 
@@ -242,7 +272,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Theme toggle auto-hidden when running inside a themed host (e.g. marimo)
 - Dark mode label colors update dynamically with theme changes
 
-## 0.2.10
+## [0.2.10] - 2026-03-15
 
 ### New Features
 
@@ -257,7 +287,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Cluster layout filters out hidden node types before packing
 - Filter panel refresh button triggers a layout refresh
 
-## 0.2.9
+## [0.2.9] - 2026-03-15
 
 ### New Features
 
@@ -282,7 +312,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - Edge type shown in properties panel on click
 - Internal attributes (`nodeType`, `edgeType`) hidden from properties panel
 
-## 0.2.8
+## [0.2.8] - 2026-03-14
 
 ### New Features
 
@@ -294,7 +324,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 
 - Added playground link at grafeo.ai to README
 
-## 0.2.7
+## [0.2.7] - 2026-03-04
 
 ### Bug Fixes
 
@@ -304,7 +334,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 
 - Quality-of-life improvements to search and toolbar
 
-## 0.2.6
+## [0.2.6] - 2026-03-02
 
 ### New Features
 
@@ -322,7 +352,7 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 - HTML export template fix
 - Zoom controls added to graph container
 
-## 0.2.5
+## [0.2.5] - 2026-02-12
 
 ### New Features
 
@@ -337,33 +367,38 @@ All opt-in per lane: a lane without these options is laid out exactly as in 0.4.
 
 - Consistent code formatting with ruff
 
-## 0.2.4
+## [0.2.4] - 2026-02-09
 
 ### Bug Fixes
 
 - Fixed ESM bundling issue in UI init
 
-## 0.2.3
+## [0.2.3] - 2026-02-07
 
 ### Bug Fixes
 
 - Fixed rendering issue in graph container
 - Updated dependencies
 
-## 0.2.2
+## [0.2.2] - 2026-02-07
 
 ### Improvements
 
 - Added Apache 2.0 license
 - ESM bundle aggregation for widget JS
 
-## 0.2.1
+## [0.2.1] - 2026-02-03
 
 ### Improvements
 
 - Updated README with usage examples
 - Code formatting pass
 
-## 0.1.0
+## [0.1.0] - 2026-02-02
 
 - Initial release of anywidget-graph
+
+---
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
