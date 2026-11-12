@@ -480,9 +480,21 @@ def test_the_html_export_draws_parallel_edges_numeric_ids_and_skips_dangling_edg
         ],
     )
     path = export_dir / "export.html"
-    graph.save_html(str(path))
+    graph.save_html(str(path), width="420px", height="320px")
     page.goto(path.as_uri())
     page.wait_for_timeout(800)
     assert page.errors == []
-    drawn = page.evaluate("() => document.querySelectorAll('#container canvas').length")
-    assert drawn > 0
+    # Each node is drawn and its tooltip shows its own data, numeric ids included: sweep the canvas for them
+    box = page.locator("#container").bounding_box()
+    tip = page.locator("#tooltip")
+    found: set[str] = set()
+    y = box["y"] + 4
+    while y < box["y"] + box["height"] - 4 and len(found) < 3:
+        x = box["x"] + 4
+        while x < box["x"] + box["width"] - 4:
+            page.mouse.move(x, y)
+            text = tip.text_content() or "" if tip.is_visible() else ""
+            found.update(label for label in ("One", "Two", "Three") if f"label:{label}" in text.replace(" ", ""))
+            x += 8
+        y += 8
+    assert found == {"One", "Two", "Three"}, found
