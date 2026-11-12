@@ -1,13 +1,13 @@
 /**
  * The 3D view's canvas (used when the model's `view` is "3d"): nodes and edges drawn with the bundled Three.js in a
  * scene you can fly through with OrbitControls (drag to orbit, right-drag to pan, wheel to zoom). The layout runs
- * in three dimensions (force3d.js): the "bloom" (force3d_repulsion, the push between every pair of nodes) and the
+ * in three dimensions (force3d.ts): the "bloom" (force3d_repulsion, the push between every pair of nodes) and the
  * "spread" (force3d_link_distance, the rest length of an edge) spread the graph through the volume instead of a
  * plane. Reads the same model traits as the 2D view, so queries, styling, selection and the panels work the same.
  */
 
 import { THREE, OrbitControls } from "./vendor-globals3d.ts";
-import { createForce3D, fitPositions } from "./force3d.ts";
+import { createForce3D, fitPositions, keepPositions, keepsPositions } from "./force3d.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, pointInPolygon } from "./styling.ts";
 import { labelColor, levelState } from "./lanes.ts";
 import { ICONS } from "./icons.ts";
@@ -81,6 +81,10 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
   let byKey = new Map<string, NodeRecord>();
   let edgeRecords: EdgeRecord[] = [];
   let sim: ReturnType<typeof createForce3D> | null = null;
+  let simDone = false; // the force layout has used its ticks: positions stay until a new layout or a reheat
+  let userMoved = false; // the camera was moved by hand since the layout started, so settling does not re-frame it
+  let lastSeq = Number(model.get("append_batch")?.seq) || 0; // the last Graph.append batch drawn
+  let rebuildQueued = false;
   let worldScale = 1;
   let layoutName = "spring";
   let hovered: { kind: "node" | "edge"; key: string; rec?: NodeRecord; edge?: EdgeRecord } | null = null;
@@ -149,6 +153,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     controls.maxDistance = 50;
     const target = model.get("camera_target") || [0, 0, 0];
     controls.target.set(target[0], target[1], target[2]);
+    controls.addEventListener("start", () => { userMoved = true; });
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 0.5));
@@ -184,27 +189,62 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
   //  Data -> records, meshes                                            //
   // ------------------------------------------------------------------ //
 
+  /** Frees an object's GPU resources: its geometry, its materials and their textures (a label's canvas image). */
+  function disposeObject(raw: THREE_NS.Object3D): void {
+    const o = raw as THREE_NS.Object3D & { geometry?: THREE_NS.BufferGeometry; material?: THREE_NS.Material | THREE_NS.Material[] };
+    o.geometry?.dispose?.();
+    if (!o.material) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      (m as THREE_NS.Material & { map?: THREE_NS.Texture | null }).map?.dispose?.();
+      m.dispose?.();
+    }
+  }
+
   function disposeGroup(group: THREE_NS.Group): void {
     while (group.children.length > 0) {
-      const obj = group.children[0] as THREE_NS.Object3D & { geometry?: THREE_NS.BufferGeometry; material?: THREE_NS.Material | THREE_NS.Material[] };
+      const obj = group.children[0];
       group.remove(obj);
-      obj.traverse?.((raw: THREE_NS.Object3D) => {
-        const o = raw as THREE_NS.Object3D & { geometry?: THREE_NS.BufferGeometry; material?: THREE_NS.Material | THREE_NS.Material[] };
-        o.geometry?.dispose?.();
-        if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m: THREE_NS.Material) => m.dispose?.());
-      });
-      if (!obj.traverse) {
-        obj.geometry?.dispose?.();
-        (obj.material as THREE_NS.Material | undefined)?.dispose?.();
-      }
+      obj.traverse(disposeObject);
     }
+  }
+
+  /** A node's type, as the schema panel's filter names it. */
+  function nodeTypeOf(r: NodeRecord): string {
+    return String(r.data.labels?.[0] ?? r.data.label ?? "");
+  }
+
+  /** Not drawn: hidden by the visibility level, or its type is filtered out in the schema panel. */
+  function isHidden(r: NodeRecord): boolean {
+    return r.level === "hidden" || hiddenNodeTypes.has(nodeTypeOf(r));
+  }
+
+  /** Not drawn: its type is filtered out, or one of its ends is not drawn. */
+  function isEdgeHidden(e: EdgeRecord): boolean {
+    const s = byKey.get(e.source), t = byKey.get(e.target);
+    return hiddenEdgeTypes.has(e.edgeType) || !s || !t || isHidden(s) || isHidden(t);
   }
 
   function nodeRadius(sizePx: number): number {
     return (sizePx / 30) * 0.03 * SCENE_SIZE;
   }
 
+  /** Rebuild once for a burst of model changes (Graph.append sets nodes, edges and the batch together). */
+  function queueRebuild(): void {
+    if (rebuildQueued) return;
+    rebuildQueued = true;
+    queueMicrotask(() => {
+      rebuildQueued = false;
+      if (!destroyed) rebuild();
+    });
+  }
+
   function rebuild() {
+    // What is drawn now, so an append, a removal or a restyle keeps it where it is instead of laying out again
+    const previous = new Map(records.map((r) => [r.key, r.pos]));
+    const seq = Number(model.get("append_batch")?.seq) || 0;
+    const appended = seq !== lastSeq;
+    lastSeq = seq;
+
     disposeGroup(nodesGroup);
     disposeGroup(edgesGroup);
     disposeGroup(arrowsGroup);
@@ -268,11 +308,26 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     buildEdgeLines();
     buildArrowCones();
     buildLabels();
-    applyLayout(model.get("layout") || "spring");
+    const layout = model.get("layout") || "spring";
+    const keep = keepsPositions(previous, records.map((r) => r.key), appended, layout);
+    if (keep) placeKeepingPositions(previous);
+    else applyLayout(layout);
     applyLevelStates();
     applyColors();
     updateTransforms();
-    fitToView();
+    if (!keep) fitToView();
+  }
+
+  /** What is drawn keeps its place (keepPositions in force3d.ts); a new node goes next to the nodes it links to. */
+  function placeKeepingPositions(previous: Map<string, Vec3>): void {
+    layoutName = model.get("layout") || "spring";
+    // The same nodes restyled: a force layout still running carries on. Nodes added or removed: it stops where it
+    // is, so it does not pull the kept nodes away from where they are drawn
+    const sameNodes = previous.size === records.length && records.every((r) => previous.has(r.key));
+    if (sim && !sameNodes) simDone = true;
+    const links = edgeRecords.filter((e) => !e.selfLoop).map((e) => [e.source, e.target] as [string, string]);
+    const placed = keepPositions(previous, records.map((r) => r.key), links, { fallbackStep: SCENE_SIZE * 0.08, radius: SCENE_SIZE * 0.45 });
+    for (const r of records) r.pos = placed.get(r.key) ?? r.pos;
   }
 
   function buildNodeMeshes() {
@@ -405,6 +460,8 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     }
 
     // spring / force / cluster and anything else: the 3D force layout
+    simDone = false;
+    userMoved = false;
     sim = createForce3D({
       repulsion: model.get("force3d_repulsion") ?? 1,
       linkDistance: model.get("force3d_link_distance") ?? null,
@@ -419,9 +476,14 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
 
   /** One animation step: advance the simulation a few ticks, then push positions to the meshes. */
   function stepSimulation() {
-    if (!sim) return;
+    if (!sim || simDone) return;
+    // tick() returns 0 once the layout has cooled or used its ticks, whichever comes first
+    let settled = false;
     for (let k = 0; k < TICKS_PER_FRAME; k++) {
-      if (sim.tick() === 0) break;
+      if (sim.tick() === 0) {
+        settled = true;
+        break;
+      }
     }
     const pos = sim.positions();
     // Fit the current extent to the scene (gravity keeps the cloud centred, so scaling alone suffices)
@@ -435,13 +497,14 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       if (p) r.pos = { x: p.x * worldScale, y: p.y * worldScale, z: p.z * worldScale };
     }
     updateTransforms();
-    if (sim.alpha === 0) {
-      // Settled: fit exactly and stop the simulation
+    if (settled) {
+      // Settled: fit exactly once and stop stepping; the camera is framed unless it was moved by hand meanwhile
+      simDone = true;
       const fitted = fitPositions(new Map(records.map((r) => [r.key, r.pos])), SCENE_SIZE);
       for (const r of records) r.pos = fitted.get(r.key) ?? r.pos;
       worldScale = 1;
       updateTransforms();
-      fitToView();
+      if (!userMoved) fitToView();
     }
   }
 
@@ -453,7 +516,8 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     const matrix = new THREE.Matrix4();
     const selected = new Set((model.get("selected_nodes") || []).map(String));
     for (const r of records) {
-      const scale = r.level === "hidden" ? 0 : r.radius * (selected.has(r.key) ? 1.6 : 1);
+      const hidden = isHidden(r);
+      const scale = hidden ? 0 : r.radius * (selected.has(r.key) ? 1.6 : 1);
       const mesh = r.mesh;
       if (!mesh) continue;
       if (mesh.userData.isInstanced) {
@@ -462,12 +526,12 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
         matrix.setPosition(r.pos.x, r.pos.y, r.pos.z);
         (mesh as THREE_NS.InstancedMesh).setMatrixAt(r.instanceIndex ?? 0, matrix);
       } else {
-        mesh.visible = r.level !== "hidden";
+        mesh.visible = !hidden;
         mesh.position.set(r.pos.x, r.pos.y, r.pos.z);
         mesh.scale.set(scale, scale, scale);
       }
       if (r.labelSprite) {
-        r.labelSprite.visible = r.level !== "hidden" && Boolean(model.get("show_labels")) && records.length <= LABEL_BUDGET;
+        r.labelSprite.visible = !hidden && Boolean(model.get("show_labels")) && records.length <= LABEL_BUDGET;
         r.labelSprite.position.set(r.pos.x, r.pos.y + r.radius * 1.8, r.pos.z);
       }
     }
@@ -485,7 +549,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
         if (!s) continue;
         const t = byKey.get(e.target);
         if (!t) continue;
-        const hidden = hiddenEdgeTypes.has(e.edgeType) || s.level === "hidden" || t.level === "hidden";
+        const hidden = isEdgeHidden(e);
         const base = e.color;
         for (let k = 0; k < (e.segCount ?? 0); k++) {
           const vi = ((e.segOffset ?? 0) + k * 2) * 3;
@@ -522,7 +586,12 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
         if (!s) continue;
         const t = byKey.get(e.target);
         if (!t) continue;
-        if (!s || !t) continue;
+        if (isEdgeHidden(e)) {
+          // A hidden edge's arrowhead goes with it
+          matrix.makeScale(0, 0, 0);
+          (arrows as THREE_NS.InstancedMesh).setMatrixAt(e.arrowIndex ?? 0, matrix);
+          continue;
+        }
         dir.set(t.pos.x - s.pos.x, t.pos.y - s.pos.y, t.pos.z - s.pos.z);
         const len = dir.length();
         if (len < 1e-6) continue;
@@ -561,10 +630,9 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     for (const r of records) {
       let c = r.baseColor.clone();
       // Type color overrides from the schema panel's filter
-      const override = typeColorOverrides.get(String(r.data.labels?.[0] ?? r.data.label ?? ""));
+      const override = typeColorOverrides.get(nodeTypeOf(r));
       if (override) c = new THREE.Color(override);
       if (r.level === "dim") c.multiplyScalar(0.25);
-      if (hiddenNodeTypes.has(r.data.labels?.[0] ?? r.data.label ?? "")) c.multiplyScalar(0);
       if (searchTerm && !matchesSearch(r)) c.multiplyScalar(0.08);
       if (highlightNeighbors && !selected.has(r.key) && !neighbors.has(r.key)) c.multiplyScalar(0.15);
       if (selected.has(r.key)) c.lerp(new THREE.Color(0xffffff), 0.35);
@@ -602,7 +670,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     if (records.length === 0) return;
     const box = new THREE.Box3();
     for (const r of records) {
-      if (r.level === "hidden") continue;
+      if (isHidden(r)) continue;
       box.expandByPoint(new THREE.Vector3(r.pos.x, r.pos.y, r.pos.z));
     }
     if (box.isEmpty()) return;
@@ -639,7 +707,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       const hit = nodeHits[0];
       const key = hit.object.userData.isInstanced ? hit.object.userData.keys[hit.instanceId ?? 0] : hit.object.userData.key;
       const rec = byKey.get(key);
-      if (rec && rec.level !== "hidden") return { kind: "node", rec };
+      if (rec && !isHidden(rec)) return { kind: "node", rec };
     }
     const edgeHits = raycaster.intersectObjects(edgesGroup.children, false);
     if (edgeHits.length > 0) {
@@ -648,12 +716,11 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       let best = null;
       let bestD = Infinity;
       for (const e of edgeRecords) {
-        if (e.selfLoop) continue;
+        if (e.selfLoop || isEdgeHidden(e)) continue;
         const s = byKey.get(e.source);
         if (!s) continue;
         const t = byKey.get(e.target);
         if (!t) continue;
-        if (!s || !t) continue;
         const d = pointToSegment(p, s.pos, t.pos);
         if (d < bestD) {
           bestD = d;
@@ -816,11 +883,13 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
 
     const zoomInBtn = mkBtn(ICONS.zoomIn, "Zoom in");
     zoomInBtn.addEventListener("click", () => {
+      userMoved = true;
       camera.position.lerp(controls.target, 0.3);
       controls.update();
     });
     const zoomOutBtn = mkBtn(ICONS.zoomOut, "Zoom out");
     zoomOutBtn.addEventListener("click", () => {
+      userMoved = true;
       const offset = camera.position.clone().sub(controls.target);
       camera.position.add(offset.multiplyScalar(0.3));
       controls.update();
@@ -896,7 +965,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       if (x2 - x1 < 4 && y2 - y1 < 4) return;
       const ids = [];
       for (const r of records) {
-        if (r.level === "hidden") continue;
+        if (isHidden(r)) continue;
         const p = projectToScreen(r);
         if (p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2) ids.push(r.key);
       }
@@ -950,7 +1019,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       lassoCoords.push(lassoCoords[0]);
       const ids = [];
       for (const r of records) {
-        if (r.level === "hidden") continue;
+        if (isHidden(r)) continue;
         const p = projectToScreen(r);
         if (pointInPolygon(p.x, p.y, lassoCoords)) ids.push(r.key);
       }
@@ -1029,8 +1098,9 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
   // ------------------------------------------------------------------ //
 
   function bindModelEvents() {
-    model.on("change:nodes", rebuild);
-    model.on("change:edges", rebuild);
+    model.on("change:nodes", queueRebuild);
+    model.on("change:edges", queueRebuild);
+    model.on("change:append_batch", queueRebuild);
     model.on("change:layout", () => { applyLayout(model.get("layout") || "spring"); });
     for (const name of ["color_field", "color_scale", "color_domain", "size_field", "size_range", "edge_color_field", "edge_color_scale", "edge_size_field", "edge_size_range", "type_colors", "edge_arrows"]) {
       model.on(`change:${name}`, rebuild);
@@ -1052,7 +1122,10 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     model.on("change:pinned_nodes", () => {
       const pinned = pinnedSet();
       for (const r of records) r.pinned = pinned.has(r.key);
-      if (sim) sim.reheat(0.4);
+      if (sim) {
+        sim.reheat(0.4);
+        simDone = false;
+      }
     });
     model.on("change:force3d_repulsion", () => { if (layoutName !== "preset" && layoutName !== "circular" && layoutName !== "random") applyLayout(layoutName); });
     model.on("change:force3d_link_distance", () => { if (layoutName !== "preset" && layoutName !== "circular" && layoutName !== "random") applyLayout(layoutName); });
@@ -1084,14 +1157,10 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     resizeObserver?.disconnect();
     controls?.dispose();
     renderer?.dispose();
-    scene?.traverse((raw) => {
-      const obj = raw as THREE_NS.Object3D & { geometry?: THREE_NS.BufferGeometry; material?: THREE_NS.Material | THREE_NS.Material[] };
-      obj.geometry?.dispose?.();
-      if (obj.material) (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m: THREE_NS.Material) => m.dispose?.());
-    });
+    scene?.traverse(disposeObject);
   }
 
-  // Called by the 3D view's wiring (index3d.js): toolbar search, schema panel filters and color overrides
+  // Called by the 3D view's wiring (index3d.ts): toolbar search, schema panel filters and color overrides
   function applySearch(term: string): void {
     searchTerm = (term || "").toLowerCase().trim();
     applyColors();

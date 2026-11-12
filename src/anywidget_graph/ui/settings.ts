@@ -401,10 +401,15 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
       input.step = "1";
       const current = model.get("force3d_link_distance");
       input.value = current === null || current === undefined ? "" : String(current);
-      input.addEventListener("input", (e) => {
-        const raw = (e.target as HTMLInputElement).value.trim();
-        model.set("force3d_link_distance", raw === "" ? null : Number(raw));
+      // On commit (enter or leaving the field), so a value is not cleared while it is being typed
+      input.addEventListener("change", () => {
+        const raw = input.value.trim();
+        const value = Number(raw);
+        // 0 or a negative rest length would collapse or invert the layout: anything but a positive number is automatic
+        const next = raw !== "" && Number.isFinite(value) && value > 0 ? value : null;
+        model.set("force3d_link_distance", next);
         model.save_changes();
+        input.value = next === null ? "" : String(next);
       });
       model.on("change:force3d_link_distance", () => {
         const v = model.get("force3d_link_distance");

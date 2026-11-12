@@ -1284,6 +1284,14 @@
   border-color: var(--awg-accent, #6366f1);
 }
 
+/* Touch: the 3D view's buttons get the same 44px target as .awg-btn (after the base rule, so it wins) */
+@media (pointer: coarse) {
+  .awg3-zoom-btn {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .awg3-mode-active {
   background: var(--awg-accent, #6366f1);
   color: #fff;
