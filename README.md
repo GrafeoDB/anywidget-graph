@@ -11,6 +11,7 @@ Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidg
 - **Universal**: One widget, every notebook environment
 - **Backend-agnostic**: Grafeo, Neo4j, NetworkX, pandas, or raw dicts
 - **Interactive**: Pan, zoom, click, drag, pin, expand neighbors, box select
+- **2D and 3D**: the Sigma canvas, or a Three.js scene you fly through where the layout blooms in 3D (`Graph3D` / `view="3d"`)
 - **Customizable**: Colors, sizes, layouts, dark mode
 - **Exportable**: HTML, JSON
 
@@ -29,6 +30,7 @@ uv add "anywidget-graph[grafeo]"     # Grafeo backend (grafeo 0.6)
 uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
 uv add "anywidget-graph[neo4j]"      # Neo4j Python driver (Neo4jBackend)
 uv add "anywidget-graph[arango]"     # ArangoDB (ArangoBackend)
+uv add "anywidget-graph[3d]"         # 3D view (Graph3D / view="3d"); Three.js is bundled, no extra deps
 uv add "anywidget-graph[examples]"   # marimo, to run the apps in examples/
 ```
 
@@ -302,6 +304,52 @@ Graph.from_dict(data, layout="random")
 Graph(nodes=[{"id": "a", "x": 0, "y": 0}, {"id": "b", "x": 10, "y": 5}], layout="preset")  # The nodes' own x and y
 ```
 
+## 3D view
+
+`Graph3D` is the same widget with the 3D view as its default; any `Graph` can switch with `view="3d"` (or the
+cube button in the toolbar, or the View select in the settings panel; it switches at runtime, both ways).
+A citation network of scientific papers (topic-coloured clusters, hub papers sized by citations, no author
+roster), laid out and rendered in three dimensions:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-3d-dark.png">
+  <img src="assets/demo-3d-light.png" alt="3D view of a papers citation network">
+</picture>
+
+```python
+from anywidget_graph import Graph3D
+
+graph = Graph3D(nodes=nodes, edges=edges, width=800, height=600)
+# or: graph = Graph(nodes=nodes, edges=edges, view="3d")
+```
+
+The graph is rendered with the bundled Three.js (no CDN) in a scene you can go through: drag to orbit,
+right-drag to pan, wheel to zoom, `f` to fit. Nodes are spheres, edges are lines (cone arrowheads with
+`edge_arrows=True`), labels are camera-facing sprites. Hover shows a tooltip, click selects, box/lasso select
+work, and the query box, backends, styling (`color_field`, `size_field`, `type_colors`, ...), visibility levels
+and the panels behave as in the 2D view.
+
+The layout is a force layout **in three dimensions**: every pair of nodes pushes apart ("bloom") and every edge
+pulls its ends towards a rest length ("spread"), so the graph spreads through the volume instead of a plane:
+
+```python
+graph = Graph3D(
+    nodes=nodes,
+    edges=edges,
+    force3d_repulsion=1.0,  # bloom: repulsion strength between nodes (try 0.2 ... 3)
+    force3d_link_distance=None,  # spread: edge rest length; None picks one from the node count
+    layout="spring",  # "spring"/"force" run the 3D layout; "circular" packs a sphere, "random" a ball, "preset" uses the nodes' own x/y/z
+    show_axes=True,  # axes and grid of the 3D scene
+    show_grid=True,
+    grid_divisions=10,
+    axis_labels={"x": "X", "y": "Y", "z": "Z"},
+    camera_position=[2, 2, 2],  # initial camera; camera_target the point it looks at
+    camera_target=[0, 0, 0],
+)
+```
+
+See `examples/demo_3d.py`.
+
 ## Options
 
 ```python
@@ -319,6 +367,9 @@ graph = Graph(
     show_toolbar=True,  # Toolbar visibility
     show_settings=True,  # Settings panel
     show_query_input=True,  # Query input box
+    view="2d",  # "2d" (Sigma) or "3d" (Three.js scene; the default of Graph3D)
+    force3d_repulsion=1.0,  # 3D layout bloom (node repulsion)
+    force3d_link_distance=None,  # 3D layout spread (edge rest length); None is automatic
     dark_mode=None,  # None follows the page's light or dark theme; True or False keeps that theme
     show_tooltip=True,  # Hover tooltips
     tooltip_fields=["label", "id"],
@@ -333,7 +384,7 @@ graph = Graph(
 
 Grafeo runs in one of three modes, picked with `grafeo_connection_mode` or in the settings panel.
 
-**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo~=0.6.0`).
+**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.6.2,<0.7`).
 
 ```python
 import grafeo
@@ -348,7 +399,7 @@ graph = Graph(database_backend="grafeo", grafeo_db=db, query_language="gql")
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="server", grafeo_server_url="http://localhost:7474")
 ```
 
-**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.0) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
+**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.2) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
 
 ```python
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="wasm", query_language="gql")
@@ -455,6 +506,7 @@ uv run --with playwright pytest tests/e2e
 ## Related
 
 - [anywidget](https://anywidget.dev/), custom Jupyter widgets made easy
+- [anywidget-vector](https://github.com/GrafeoDB/anywidget-vector), the sibling widget this 3D view follows: 3D vector clouds with Three.js
 - [Grafeo](https://github.com/GrafeoDB/grafeo), embeddable graph database
 - [grafeo-web](https://github.com/GrafeoDB/grafeo-web), Grafeo in the browser
 - [Playground](https://grafeo.ai), interactive browser playground for Grafeo

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.5.3] - 2026-11-12
+
+3D release: a graph can be drawn as a Three.js scene with a force layout in three dimensions, and the Grafeo backend moves to grafeo 0.6.2 in Python and in the browser. An environment with the `grafeo` extra upgrades grafeo to 0.6.2 or later, below 0.7; stay on 0.5.2 to keep an older 0.6.x.
+
+### Added
+
+- **3D view**: `Graph3D`, or `Graph(view="3d")`, draws the graph with the bundled Three.js 0.186.1 in a scene to orbit, pan and zoom, with hover tooltips, click and box or lasso selection; the toolbar's cube button and the settings panel switch views at runtime. The layout is a force layout in three dimensions, set with `force3d_repulsion` (the "bloom") and `force3d_link_distance` (the "spread"), with optional axes, grid and labels (`show_axes`, `show_grid`, `grid_divisions`, `axis_labels`, `camera_position`, `camera_target`).
+- **`3d` extra**: `anywidget-graph[3d]` is a marker extra; Three.js ships in the wheel (`ui/vendor/three.min.js`, licenses in `ui/vendor/three.LICENSES.txt`), so the 3D view needs no further Python packages and loads nothing from a CDN.
+- **3D example**: `examples/demo_3d.py` shows a citation network in the 3D view.
+
+### Changed
+
+- **Schema properties from grafeo 0.6.2**: The schema panel lists each label's and edge type's property names; grafeo 0.6.2's `schema()` entries carry `properties` as `{name, types}`, which `GrafeoBackend.fetch_schema` reduces to the names.
+- **Front end in TypeScript**: The modules in `ui/` are TypeScript, bundled by esbuild into `ui/dist/widget.js` and `ui/dist/export.js` (`npm run build`). CI type-checks them with `tsc` (`npm run typecheck`) and runs the JavaScript tests (`npm test`).
+
+### Dependencies
+
+- **grafeo 0.6.2** (requires `>=0.6.2,<0.7`): The `grafeo` extra needs grafeo 0.6.2 (it was `>=0.6.0` with no upper bound), and the WASM mode loads `@grafeo-db/wasm` 0.6.2 (`GRAFEO_WASM_VERSION` in `ui/grafeo-embed.ts`).
+- **Locked versions refreshed**: ty 0.0.100, pandas 3.1.1, ruff 0.17.4, prek 0.5.10, websockets 17.4 and python-dateutil 4.0.0, among others. Front-end build tools: esbuild 0.28.2, TypeScript 7.0.2, three 0.186.1 and `@types/three` 0.186.0.
+
 ## 0.5.2 2026-10-28
 
 ### Features

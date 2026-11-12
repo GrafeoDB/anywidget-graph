@@ -97,8 +97,9 @@ class GrafeoBackend:
     def fetch_schema(self) -> tuple[list[dict], list[dict]]:
         """Fetch schema from Grafeo database.
 
-        ``db.schema()`` returns ``{"labels": [{"name", "count"}], "edge_types": [...]}``;
-        plain string entries are accepted as well.
+        ``db.schema()`` returns ``{"labels": [{"name", "count", "properties"}], ...}``; since
+        grafeo 0.6.2 each label's ``properties`` lists ``{"name", "types"}`` entries, which are
+        reduced to their names here. Plain string entries are accepted as well.
         """
         if not hasattr(self._db, "schema"):
             return [], []
@@ -112,7 +113,11 @@ class GrafeoBackend:
     @staticmethod
     def _schema_entry(item: Any, key: str) -> dict:
         if isinstance(item, dict):
-            entry: dict = {key: str(item.get("name", "")), "properties": list(item.get("properties") or [])}
+            props = item.get("properties") or []
+            entry: dict = {
+                key: str(item.get("name", "")),
+                "properties": [p.get("name", str(p)) if isinstance(p, dict) else str(p) for p in props],
+            }
             if isinstance(item.get("count"), int):
                 entry["count"] = item["count"]
             return entry
