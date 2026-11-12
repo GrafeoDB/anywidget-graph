@@ -1,7 +1,7 @@
 /**
  * The 3D view of the widget (model `view` = "3d", or Graph3D): the same toolbar, schema, settings, properties and
- * results panels as the 2D view (index.js), but the graph canvas is the Three.js scene from canvas3d.js — nodes and
- * edges laid out in three dimensions (force3d.js), flown through with OrbitControls. index.js's render mounts this
+ * results panels as the 2D view (index.ts), but the graph canvas is the Three.js scene from canvas3d.ts: nodes and
+ * edges laid out in three dimensions (force3d.ts), flown through with OrbitControls. index.ts's render mounts this
  * instead of render2D when the model says so, and re-mounts when `view` changes.
  */
 

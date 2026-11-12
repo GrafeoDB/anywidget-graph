@@ -1,4 +1,4 @@
-// The model view index.js renders through (defaults.js). Run with: node --test "tests/js/*.test.mjs"
+// The model view index.ts renders through (defaults.ts). Run with: node --test tests/js/*.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 

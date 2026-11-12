@@ -1,4 +1,4 @@
-// The WASM client's page-wide engine and its demo data loading. Run with: node --test "tests/js/*.test.mjs"
+// The WASM client's page-wide engine and its demo data loading. Run with: node --test tests/js/*.test.ts
 // A fake engine stands in for @grafeo-db/wasm: it is put where the client looks for the loaded bindings.
 import assert from "node:assert/strict";
 import { test } from "node:test";

@@ -1,5 +1,5 @@
 // The grafeo-server client against a fake fetch that answers grafeo-server's endpoints with pinned responses: the
-// contract a host serving these endpoints itself (Deriva's studio) must keep. Run with: node --test "tests/js/*.test.mjs"
+// contract a host serving these endpoints itself (Deriva's studio) must keep. Run with: node --test tests/js/*.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 

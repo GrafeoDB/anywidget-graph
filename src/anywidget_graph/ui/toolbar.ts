@@ -156,7 +156,7 @@ export function createToolbar(
   model.on("change:query_time", updateTiming);
   toolbar.appendChild(timingBadge);
 
-  // 2D/3D view toggle: switches the model's `view` trait; index.js's render re-mounts the matching view
+  // 2D/3D view toggle: switches the model's `view` trait; index.ts's render re-mounts the matching view
   const viewBtn = document.createElement("button");
   viewBtn.className = "awg-btn awg-view-btn";
   viewBtn.innerHTML = ICONS.cube;

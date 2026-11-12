@@ -1,6 +1,6 @@
 /**
- * Query execution for the toolbar's run button and the schema panel, shared by the 2D view (index.js) and the 3D
- * view (index3d.js): browser-side backends (Neo4j driver, Grafeo server, Grafeo WASM) run here; Python-side backends
+ * Query execution for the toolbar's run button and the schema panel, shared by the 2D view (index.ts) and the 3D
+ * view (index3d.ts): browser-side backends (Neo4j driver, Grafeo server, Grafeo WASM) run here; Python-side backends
  * are triggered through the _execute_query trait and answer by replacing nodes/edges.
  */
 
