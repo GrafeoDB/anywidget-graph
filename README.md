@@ -1,6 +1,7 @@
-# anywidget-graph
-
-Interactive graph visualization for Python notebooks.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/.github/readme/header-dark.svg">
+  <img alt="anywidget-graph: Interactive graph visualization for Python notebooks." src="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/.github/readme/header-light.svg" width="100%">
+</picture>
 
 Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidget.dev/) runs.
 
