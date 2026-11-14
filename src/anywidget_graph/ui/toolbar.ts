@@ -94,12 +94,13 @@ export function createToolbar(
     playBtn.title = "Run query";
     playBtn.addEventListener("click", () => onExecuteQuery());
 
-    model.on("change:query_running", () => {
-      playBtn.disabled = model.get("query_running");
-      playBtn.innerHTML = model.get("query_running")
-        ? '<span class="awg-spinner"></span>'
-        : ICONS.play;
-    });
+    // While a query runs the button shows a spinner (there is no cancel); also when the widget opens mid-query
+    const showRunning = () => {
+      playBtn.disabled = Boolean(model.get("query_running"));
+      playBtn.innerHTML = model.get("query_running") ? '<span class="awg-spinner"></span>' : ICONS.play;
+    };
+    model.on("change:query_running", showRunning);
+    showRunning();
 
     queryContainer.appendChild(playBtn);
     toolbar.appendChild(queryContainer);
@@ -117,6 +118,8 @@ export function createToolbar(
   searchInput.type = "text";
   searchInput.className = "awg-search-input";
   searchInput.placeholder = "Filter nodes...";
+  // A narrow widget shows only the icon (styles.css), so the field keeps its name for screen readers
+  searchInput.setAttribute("aria-label", "Filter nodes");
   searchInput.addEventListener("input", () => {
     onSearch?.(searchInput.value);
   });
@@ -164,6 +167,7 @@ export function createToolbar(
   function updateViewBtn() {
     const is3d = (model.get("view") || "2d") === "3d";
     viewBtn.classList.toggle("awg-view-active", is3d);
+    viewBtn.setAttribute("aria-pressed", String(is3d));
     viewBtn.title = is3d ? "Switch to 2D view" : "Switch to 3D view";
   }
   viewBtn.addEventListener("click", () => {
@@ -172,7 +176,8 @@ export function createToolbar(
   });
   model.on("change:view", updateViewBtn);
   updateViewBtn();
-  toolbar.appendChild(viewBtn);
+  // show_view_toggle false: a host with a fixed view keeps the switch out
+  if (model.get("show_view_toggle") !== false) toolbar.appendChild(viewBtn);
 
   // Settings button (mutual exclusion with properties)
   if (model.get("show_settings")) {

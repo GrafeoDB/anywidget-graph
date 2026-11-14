@@ -4,8 +4,9 @@
  * scripts/vendor/build-esm.mjs into dist/export.js and inlined into the page after those constants, so the page
  * needs no CDN and no module files.
  */
-import { Graph, Sigma, circular, random, forceAtlas2 } from "./vendor-globals.ts";
-import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts } from "./styling.ts";
+import { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2 } from "./vendor-globals.ts";
+import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, nodeDisplay } from "./styling.ts";
+import { LABEL_FONT } from "./lanes.ts";
 import { springLayout } from "./spring.ts";
 import type { SpringNode } from "./spring.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
@@ -27,6 +28,12 @@ const graph = new Graph({ multi: true });
 const nodes = DATA.nodes || [];
 const edges = DATA.edges || [];
 const opts = getStylingOpts(model, nodes, edges);
+
+/** A node's colour, ring and fill (styling.ts nodeDisplay) over the page's background */
+function ringed(color: string) {
+  const { fillColor } = nodeDisplay(color, OPTIONS.background || opts.palette.background);
+  return { color, borderColor: color, fillColor };
+}
 // Graph keys are strings; the data's ids may be numbers
 // The first node with an id is the one drawn (later ones with the same id are skipped), and the one its tooltip shows
 const nodeByKey = new Map<string, GraphNode>();
@@ -40,7 +47,8 @@ nodes.forEach((node) => {
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
     size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(key)),
-    color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
+    // Ink nodes as in the widget: the ring in the colour, the inside filled with it at 38% over the page
+    ...ringed(computeNodeColor(node, opts)),
   });
 });
 
@@ -90,9 +98,19 @@ const container = document.getElementById("container")!;
 const renderer = new Sigma(graph, container, {
   renderLabels: OPTIONS.show_labels,
   renderEdgeLabels: OPTIONS.show_edge_labels,
-  defaultNodeColor: "#6366f1",
-  defaultEdgeColor: "#94a3b8",
+  defaultNodeColor: opts.palette.data[0],
+  defaultEdgeColor: opts.palette.edge,
+  nodeProgramClasses: {
+    bordered: createNodeBorderProgram({
+      borders: [
+        { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
+        { size: { fill: true }, color: { attribute: "fillColor" } },
+      ],
+    }),
+  },
+  defaultNodeType: "bordered",
   labelColor: { color: OPTIONS.label_color },
+  labelFont: LABEL_FONT,
   labelSize: 12,
   labelWeight: "500",
   defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line",

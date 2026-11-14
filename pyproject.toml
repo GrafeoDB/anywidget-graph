@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-graph"
-version = "0.5.3"
+version = "1.0.0"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
@@ -58,8 +58,24 @@ build-backend = "hatchling.build"
 packages = ["src/anywidget_graph"]
 
 [tool.hatch.build.targets.sdist]
-# Local agent notes and settings (ignored only by a global gitignore) stay out of a locally built sdist
-exclude = [".claude"]
+only-include = [
+    "src",
+    "tests",
+    "examples",
+    "scripts",
+    "assets",
+    ".github",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "uv.lock",
+    ".python-version",
+    ".gitattributes",
+    ".gitignore",
+]
 
 [tool.ruff]
 line-length = 120

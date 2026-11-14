@@ -404,3 +404,16 @@ export function keepPositions(
   }
   return out;
 }
+
+/**
+ * How far from `center` a camera with a vertical field of view of `fovDeg` (and the canvas's `aspect`, width over
+ * height) stands to see every point: the cloud's real radius over the sine of the tighter half-angle, plus a small
+ * margin for the node spheres. Framing the bounding box's diagonal instead put a round cloud about twice too far.
+ */
+export function fitDistance(points: Iterable<Vec3>, center: Vec3, fovDeg: number, aspect: number): number {
+  let radius = 0;
+  for (const p of points) radius = Math.max(radius, Math.hypot(p.x - center.x, p.y - center.y, p.z - center.z));
+  const halfV = (fovDeg * Math.PI) / 360;
+  const half = aspect < 1 ? Math.atan(Math.tan(halfV) * aspect) : halfV;
+  return (radius / Math.sin(half)) * 1.08;
+}

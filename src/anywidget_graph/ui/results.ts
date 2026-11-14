@@ -137,14 +137,7 @@ export function createResultsDrawer(model: WidgetModel): {
       const row = document.createElement("tr");
       keys.forEach((k: string) => {
         const td = document.createElement("td");
-        const val = items[i][k];
-        if (val === undefined || val === null) {
-          td.textContent = "";
-        } else if (typeof val === "object") {
-          td.textContent = JSON.stringify(val);
-        } else {
-          td.textContent = String(val);
-        }
+        td.textContent = cellText(items[i][k]);
         row.appendChild(td);
       });
       tbody.appendChild(row);
@@ -187,4 +180,12 @@ export function createResultsDrawer(model: WidgetModel): {
     toggle,
     isOpen: () => isOpen,
   };
+}
+
+/** A cell's text: a list of plain values as a comma list (labels read "Person, Admin"), objects as JSON, else text. */
+export function cellText(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (Array.isArray(value) && value.every((v) => v === null || typeof v !== "object")) return value.join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }

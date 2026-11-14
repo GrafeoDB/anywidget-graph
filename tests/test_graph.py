@@ -48,8 +48,9 @@ def test_default_options():
     """Test default widget options."""
     graph = Graph()
 
-    assert graph.width == 800
-    assert graph.height == 600
+    # 0 is "not given": the widget fills the cell's width at 16:10, between 360px and 80% of the screen
+    assert graph.width == 0
+    assert graph.height == 0
     assert graph.show_labels is True
     assert graph.show_edge_labels is False
     assert graph.dark_mode is True
@@ -565,7 +566,7 @@ def test_to_html_labels_read_on_the_page_background():
     """The page uses the widget's canvas colour for its mode, so labels are never light on light."""
     nodes = [{"id": "a"}]
     dark = _export_options(Graph(nodes=nodes))
-    assert (dark["background"], dark["label_color"]) == ("#181c1a", "#e0e0e0")
+    assert (dark["background"], dark["label_color"]) == ("#161a19", "#e0e0e0")
     light = _export_options(Graph(nodes=nodes, dark_mode=False))
     assert (light["background"], light["label_color"]) == ("#ffffff", "#333333")
     # A background set on the graph wins, with labels that contrast with it
@@ -1144,3 +1145,13 @@ def test_to_html_carries_the_type_colors_in_both_views():
     colors = {"nodes": {"Person": "#ff8800"}}
     assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in Graph(nodes=nodes, type_colors=colors).to_html()
     assert '"type_colors": {"nodes": {"Person": "#ff8800"}}' in Graph3D(nodes=nodes, type_colors=colors).to_html()
+
+
+def test_layout_menu_and_view_toggle_show_by_default():
+    """A host with a fixed view (Deriva Studio's linked view) hides the layout menu and the 2D/3D switch."""
+    graph = Graph()
+    assert graph.show_layout_menu is True
+    assert graph.show_view_toggle is True
+    fixed = Graph(show_layout_menu=False, show_view_toggle=False)
+    assert fixed.show_layout_menu is False
+    assert fixed.show_view_toggle is False

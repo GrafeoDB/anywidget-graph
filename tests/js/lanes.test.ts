@@ -8,7 +8,7 @@ import {
   laneBands, lanesBBox, columnPositions, glyphHit, fitBox, labelColor, nextLaneAction, edgeKey, mergeItems,
   sameItems, extentBand, crossNeighbours, laneIcon, removeItems, edgeMatches, applyBatchItems,
   withTotals, shownOf, totalShown, nodeType, edgeType, insetBand,
-  seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
+  seededRandom, clampInto, laneBounds, groupCentroids, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
   colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, roomyFrame,
   mixColor, fadeColor, dashPattern, contrastText, levelState,
 } from "../../src/anywidget_graph/ui/lanes.ts";
@@ -299,6 +299,20 @@ test("every step keeps a node inside its lane, so the lanes stay distinct graphs
   assert.deepEqual(inside, { x: 150, y: 20 });
   // A node pushed over the edge stops there (its velocity towards the edge is dropped)
   assert.deepEqual(outside, { x: 200, y: 0, vx: 0, vy: 0 });
+});
+
+test("a free force lane has no hard edge; rows and the default keep the band's rectangle", () => {
+  // free: the graph's own structure and the centring pull decide its outline (opt-in, so existing lanes are unchanged)
+  assert.equal(laneBounds({ id: "intermediate", layout: "force", free: true }), "none");
+  assert.equal(laneBounds({ id: "intermediate", layout: "force" }), "rect");
+  // rows are bands of their own: a node stays in its row even in a free lane
+  assert.equal(laneBounds({ id: "output", layout: "force", free: true, rows: { field: "layer", order: [] } }), "rect");
+});
+
+test("a lane's groups (its `group` field) pull towards their own centroid, so clusters show in the layout", () => {
+  const nodes = [{ x: 0, y: 0, g: "a" }, { x: 10, y: 0, g: "a" }, { x: 5, y: 5, g: "b" }, { x: 99, y: 99 }];
+  const centroids = groupCentroids(nodes, (n) => (n as { g?: string }).g);
+  assert.deepEqual(Object.fromEntries(centroids), { a: { x: 5, y: 0 }, b: { x: 5, y: 5 } });
 });
 
 test("a node is pulled towards the mean height of its partners in lanes already laid out", () => {

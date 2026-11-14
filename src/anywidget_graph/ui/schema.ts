@@ -3,6 +3,9 @@
  * Shows node/edge types from current graph data with toggle checkboxes.
  * Clicking a type name still fires the query (schema browse behavior).
  */
+import { DARK, LIGHT } from "./palette.ts";
+import type { Palette } from "./registry.ts";
+import { Registries, assignNodeTypes } from "./styling.ts";
 import { ICONS } from "./icons.ts";
 import { fetchSchema as neo4jFetchSchema } from "./neo4j.ts";
 import { fetchSchema as grafeoFetchSchema } from "./grafeo.ts";
@@ -13,16 +16,6 @@ import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 // Types a filter section shows before "Show more"
 export const FILTER_PAGE = 50;
 
-const FILTER_COLORS = [
-  "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
-  "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
-];
-
-function hashColor(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-  return FILTER_COLORS[Math.abs(hash) % FILTER_COLORS.length];
-}
 
 /**
  * Extract node types and edge types from current graph data, with the host's totals ({nodes: {type: n},
@@ -73,6 +66,11 @@ export function createSchemaPanel(
   onFilterChange?: (hiddenNodes: Set<string>, hiddenEdges: Set<string>) => void,
   onColorChange?: (colors: Map<string, string>) => void,
   onRefreshLayout?: () => void,
+  // The widget's colour assignments and palette, so a swatch shows the colour the view draws
+  colors: { registries: Registries; palette: () => Palette } = {
+    registries: new Registries(),
+    palette: () => (model.get("dark_mode") ? DARK : LIGHT),
+  },
 ): Panel {
   const panel = document.createElement("div");
   panel.className = "awg-schema-panel";
@@ -151,6 +149,9 @@ export function createSchemaPanel(
     content.innerHTML = "";
 
     const { nodeTypes, edgeTypes } = extractTypesFromData(model);
+    // The drawn nodes take their colour slots first (as on the canvas); a type known only from the counts follows
+    assignNodeTypes(colors.registries, (model.get("nodes") ?? []) as GraphNode[]);
+    colors.registries.for("node-type").assign(new Map(nodeTypes.map(({ label, count }) => [label, count])));
     const schemaNodeTypes = (model.get("schema_node_types") ?? []) as { label: string; properties?: string[] }[];
     const schemaEdgeTypes = (model.get("schema_edge_types") ?? []) as { type: string; properties?: string[] }[];
 
@@ -243,7 +244,7 @@ export function createSchemaPanel(
           name: label,
           count,
           total,
-          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || hashColor(label),
+          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || colors.registries.for("node-type").colorFor(label, colors.palette()),
           kind: "node",
           properties: props,
           isHidden: hiddenNodeTypes.has(label),
@@ -309,7 +310,7 @@ export function createSchemaPanel(
           name: type,
           count,
           total,
-          color: typeColorMap.get(type) || (model.get("type_colors")?.edges || {})[type] || hashColor(type),
+          color: typeColorMap.get(type) || (model.get("type_colors")?.edges || {})[type] || colors.palette().edge,
           kind: "edge",
           properties: props,
           isHidden: hiddenEdgeTypes.has(type),
@@ -338,6 +339,8 @@ export function createSchemaPanel(
   model.on("change:schema_edge_types", renderFilters);
   model.on("change:totals", renderFilters);
   model.on("change:type_colors", renderFilters);
+  // Each theme has its own data colours: the swatches follow the switch, as the canvas does
+  model.on("change:dark_mode", renderFilters);
   renderFilters();
 
   panel.appendChild(content);

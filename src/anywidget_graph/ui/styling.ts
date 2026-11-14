@@ -4,7 +4,64 @@
  */
 
 import { colorFor } from "./lanes.ts";
+import { DARK, LIGHT } from "./palette.ts";
+import { CategoryRegistry, countBy, mixOver } from "./registry.ts";
+import type { Palette } from "./registry.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
+
+/**
+ * The categorical colour registries of one widget, one per colouring: node types ("node-type"), a node colour
+ * field ("node:<field>") and an edge colour field ("edge:<field>"). Shared by the 2D view, the 3D view and the
+ * filter panel, so a category keeps its colour across renders, view switches and appended batches.
+ */
+export class Registries {
+  private byDimension = new Map<string, CategoryRegistry>();
+
+  for(dimension: string): CategoryRegistry {
+    let registry = this.byDimension.get(dimension);
+    if (!registry) this.byDimension.set(dimension, (registry = new CategoryRegistry()));
+    return registry;
+  }
+}
+
+const WIDGET_REGISTRIES = new WeakMap<object, Registries>();
+
+/** The registries of one widget (keyed by its host model), created on first use. */
+export function registriesFor(model: object): Registries {
+  let registries = WIDGET_REGISTRIES.get(model);
+  if (!registries) WIDGET_REGISTRIES.set(model, (registries = new Registries()));
+  return registries;
+}
+
+/** How much of a node's colour fills it, over the background (the ring is the full colour) */
+export const NODE_FILL = 0.38;
+
+/** A node as drawn: the ring in its colour, the inside the colour at 38% composited onto the background (opaque). */
+export function nodeDisplay(color: string, background: string): { color: string; fillColor: string } {
+  return { color, fillColor: mixOver(color, background, NODE_FILL) };
+}
+
+/** A node's type for colouring: its first label, else its `label`; undefined when it has neither. */
+export function nodeTypeOf(node: GraphNode): string | undefined {
+  const type = node.labels && node.labels.length > 0 ? node.labels[0] : node.label;
+  return type ? String(type) : undefined;
+}
+
+/**
+ * Give the node types of `nodes` their colour slots (the largest 8 by count; earlier assignments stay). The canvas
+ * and the filter panel both call this before reading a type's colour, so whichever is built first, they agree.
+ */
+export function assignNodeTypes(registries: Registries, nodes: GraphNode[]): void {
+  registries.for("node-type").assign(countBy(nodes, nodeTypeOf));
+}
+
+/** The categorical (non-number) values of a field, counted. */
+function categoricalCounts<T extends Record<string, unknown>>(items: T[], field: string): Map<string, number> {
+  return countBy(items, (item) => {
+    const v = item[field];
+    return v === undefined || v === null || typeof v === "number" ? undefined : String(v);
+  });
+}
 
 /** The host per-type colors (the `type_colors` trait): a map for nodes and one for edges. */
 export interface TypeColors { nodes?: Record<string, string>; edges?: Record<string, string> }
@@ -26,6 +83,12 @@ export interface StylingOpts {
   degreeMap: Map<string, number>;
   typeColors: TypeColors;
   levelField: string;
+  /** The theme's data colours, Other, background and edge colour (palette.ts) */
+  palette: Palette;
+  /** The widget's categorical colour assignments (a fresh set for the export page) */
+  registries: Registries;
+  /** Whether any node has a type: an untyped node is then Other, else (a graph without types) the first colour */
+  anyTyped?: boolean;
 }
 
 // === Color Scales (same as anywidget-vector) ===
@@ -37,11 +100,6 @@ export const COLOR_SCALES = {
   cividis: [[0.000,0.135,0.305],[0.074,0.192,0.351],[0.145,0.247,0.382],[0.228,0.302,0.390],[0.310,0.358,0.393],[0.394,0.414,0.390],[0.482,0.470,0.379],[0.575,0.530,0.358],[0.672,0.595,0.325],[0.775,0.666,0.274],[0.880,0.742,0.199]],
   turbo: [[0.190,0.072,0.232],[0.231,0.322,0.745],[0.137,0.572,0.938],[0.069,0.773,0.800],[0.200,0.910,0.510],[0.507,0.979,0.254],[0.775,0.953,0.136],[0.953,0.804,0.098],[0.993,0.561,0.090],[0.914,0.286,0.063],[0.647,0.082,0.033]],
 };
-export const CATEGORICAL_COLORS = [
-  "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
-  "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
-];
-
 export const DISPLAY_NAME_FIELDS = ["name", "title", "label", "display", "id"];
 
 export function getColorFromScale(value: number, scaleName: string, domain?: number[] | null): string {
@@ -62,13 +120,6 @@ export function getColorFromScale(value: number, scaleName: string, domain?: num
   return `rgb(${r},${g},${b})`;
 }
 
-export function getCategoricalColor(value: unknown): string {
-  let hash = 0;
-  const str = String(value);
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-  return CATEGORICAL_COLORS[Math.abs(hash) % CATEGORICAL_COLORS.length];
-}
-
 export function pointInPolygon(x: number, y: number, polygon: [number, number][]): boolean {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -81,16 +132,19 @@ export function pointInPolygon(x: number, y: number, polygon: [number, number][]
   return inside;
 }
 
-export function computeNodeColor(node: GraphNode, colorField: string | null, colorScale: string, colorDomain: number[] | null, typeColors: Record<string, string> | undefined): string {
+export function computeNodeColor(node: GraphNode, opts: StylingOpts): string {
   if (node.color) return node.color;
+  const { colorField, palette, registries } = opts;
   if (!colorField || node[colorField] === undefined) {
-    // Color by node type: the host's colour for it (type_colors), else the palette (matches the filter panel swatches)
-    const nodeType = (node.labels && node.labels.length > 0) ? node.labels[0] : (node.label || "");
-    return colorFor(node, nodeType, typeColors, nodeType ? getCategoricalColor(nodeType) : "#6366f1");
+    // Color by node type: the host's colour for it (type_colors), else the data palette (as the filter panel
+    // swatches); a node without a type is Other next to typed nodes, and the first colour in a graph without types
+    const nodeType = nodeTypeOf(node);
+    const fallback = nodeType ? registries.for("node-type").colorFor(nodeType, palette) : opts.anyTyped ? palette.other : palette.data[0];
+    return colorFor(node, nodeType ?? "", opts.typeColors.nodes, fallback);
   }
   const value = node[colorField];
-  if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
-  return getCategoricalColor(value);
+  if (typeof value === "number") return getColorFromScale(value, opts.colorScale, opts.colorDomain);
+  return registries.for(`node:${colorField}`).colorFor(String(value), palette);
 }
 
 export function computeNodeSize(node: GraphNode, sizeField: string | null, sizeDomain: number[] | null, sizeRange: number[], degree?: number): number {
@@ -134,7 +188,7 @@ function extentOf(vals: number[]): number[] | null {
   return [min, max];
 }
 
-export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: GraphEdge[]): StylingOpts {
+export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: GraphEdge[], registries: Registries = new Registries()): StylingOpts {
   const colorField = model.get("color_field");
   const colorScale = model.get("color_scale") || "viridis";
   let colorDomain: number[] | null = model.get("color_domain");
@@ -182,6 +236,11 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
     });
   }
 
+  // The 8 data colours go to the largest categories; assignments made before stay (registry.ts)
+  assignNodeTypes(registries, nodes);
+  if (colorField) registries.for(`node:${colorField}`).assign(categoricalCounts(nodes, colorField));
+  if (edgeColorField) registries.for(`edge:${edgeColorField}`).assign(categoricalCounts(edges, edgeColorField));
+
   return {
     colorField, colorScale, colorDomain, sizeField, sizeDomain, sizeRange,
     edgeColorField, edgeColorScale, edgeColorDomain,
@@ -189,6 +248,9 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
     degreeMap,
     typeColors: (model.get("type_colors") || {}) as TypeColors,
     levelField: model.get("level_field") || "level",
+    palette: model.get("dark_mode") ? DARK : LIGHT,
+    registries,
+    anyTyped: nodes.some((node) => nodeTypeOf(node) !== undefined),
   };
 }
 
@@ -196,12 +258,12 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
 export function computeEdgeColor(edge: GraphEdge, opts: StylingOpts): string {
   // A per-item colour wins over the field mapping, as for nodes
   if (typeof edge.color === "string" && edge.color) return edge.color;
-  let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
+  let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, opts.palette.edge);
   if (opts.edgeColorField && edge[opts.edgeColorField] !== undefined) {
     const val = edge[opts.edgeColorField];
     color = typeof val === "number"
       ? getColorFromScale(val, opts.edgeColorScale, opts.edgeColorDomain)
-      : getCategoricalColor(val);
+      : opts.registries.for(`edge:${opts.edgeColorField}`).colorFor(String(val), opts.palette);
   }
   return color;
 }

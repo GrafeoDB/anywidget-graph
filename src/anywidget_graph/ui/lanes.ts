@@ -138,7 +138,13 @@ export function roomyFrame(box: Box, largest: number, width: number, height: num
 
 /** Label spacing on screen, in pixels: one label line apart in a stack, one label width apart across columns. */
 export const LABEL_ROW = 18;
-export const LABEL_COLUMN = 120;
+export const LABEL_COLUMN = 144;
+
+/** Canvas labels (2D, 3D, the export page) in the widgets' mono face: the --awg-font-mono token, which a canvas cannot read. */
+export const LABEL_FONT = '"JetBrains Mono", ui-monospace, monospace';
+
+/** A lane label is at most this wide (18 characters of LABEL_FONT at 12px); a longer name is shortened with an ellipsis. */
+export const LANE_LABEL_MAX = 132;
 
 /**
  * What an action lane's button shows: the host's `icon` (SVG markup, where currentColor takes the accent, or an image
@@ -244,6 +250,28 @@ export function clampInto<T extends { x: number; y: number; vx?: number; vy?: nu
     if ("vy" in node) node.vy = 0;
   }
   return node;
+}
+
+/**
+ * How a force lane bounds its nodes: "none" for a lane with `free: true` (no hard edge: the graph's structure and the
+ * centring pull decide its outline), "rect" otherwise (every step clamps a node into its band; a lane with rows always
+ * keeps them, a row being a band of its own). Opt-in, so lanes drawn before `free` existed look the same.
+ */
+export function laneBounds(lane: Lane): "none" | "rect" {
+  return lane.free === true && !lane.rows ? "none" : "rect";
+}
+
+/** The centroid of each group among the nodes (nodes without a group are left out), for the pull of a lane's `group`. */
+export function groupCentroids<T extends { x?: number; y?: number }>(nodes: T[], groupOf: (node: T) => string | undefined): Map<string, Point> {
+  const sums = new Map<string, { x: number; y: number; n: number }>();
+  for (const node of nodes) {
+    const g = groupOf(node);
+    if (g === undefined || g === null || node.x === undefined || node.y === undefined) continue;
+    const s = sums.get(g) ?? { x: 0, y: 0, n: 0 };
+    s.x += node.x; s.y += node.y; s.n += 1;
+    sums.set(g, s);
+  }
+  return new Map([...sums].map(([g, s]) => [g, { x: s.x / s.n, y: s.y / s.n }]));
 }
 
 /** The mean height of each node's cross-lane partners among the nodes already placed (lanes laid out before it). */

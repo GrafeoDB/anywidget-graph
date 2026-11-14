@@ -253,3 +253,24 @@ test("fitPositions centres the cloud in a cube of the given side", () => {
   const cz = pts.reduce((s, p) => s + p.z, 0) / 2;
   assert.ok(Math.abs(cx) < 1e-9 && Math.abs(cy) < 1e-9 && Math.abs(cz) < 1e-9, "centred on the origin");
 });
+
+test("the camera frames the cloud's real radius: every point in view, without the box-diagonal slack", async () => {
+  const { fitDistance } = await import("../../src/anywidget_graph/ui/force3d.ts");
+  // Points on a unit sphere around the origin
+  const points = [];
+  for (let i = 0; i < 200; i++) {
+    const z = 1 - (2 * (i + 0.5)) / 200, r = Math.sqrt(1 - z * z), a = i * 2.39996;
+    points.push({ x: r * Math.cos(a), y: r * Math.sin(a), z });
+  }
+  const center = { x: 0, y: 0, z: 0 };
+  const halfV = (60 * Math.PI) / 360;
+  // Landscape: the vertical field of view is the tighter one
+  const wide = fitDistance(points, center, 60, 1.6);
+  assert.ok(wide >= 1 / Math.sin(halfV), `all in view (${wide.toFixed(2)})`);
+  assert.ok(wide <= 1.15 / Math.sin(halfV), `no slack (${wide.toFixed(2)})`);
+  // Portrait: the horizontal field of view is tighter, so the camera steps back
+  const halfH = Math.atan(Math.tan(halfV) * 0.6);
+  const tall = fitDistance(points, center, 60, 0.6);
+  assert.ok(tall >= 1 / Math.sin(halfH), `all in view, portrait (${tall.toFixed(2)})`);
+  assert.ok(tall <= 1.15 / Math.sin(halfH));
+});

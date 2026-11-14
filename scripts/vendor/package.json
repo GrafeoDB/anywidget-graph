@@ -9,6 +9,7 @@
     "check:esm": "node build-esm.mjs --check"
   },
   "dependencies": {
+    "@sigma/node-border": "3.0.0",
     "d3-force": "3.0.0",
     "graphology": "0.25.4",
     "graphology-layout": "0.6.1",

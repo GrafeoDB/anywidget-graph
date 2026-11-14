@@ -7,7 +7,12 @@ import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 /**
  * Create the properties panel.
  */
-export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?: () => void }): Panel {
+export function createPropertiesPanel(
+  model: WidgetModel,
+  callbacks?: { onClose?: () => void },
+  // A node type's colour as the view draws it, so the label tags match the nodes
+  colorOf?: (label: string) => string,
+): Panel {
   const panel = document.createElement("div");
   panel.className = "awg-properties-panel";
 
@@ -45,7 +50,7 @@ export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?
     }
 
     if (selectedNode) {
-      renderNodeProperties(content, selectedNode);
+      renderNodeProperties(content, selectedNode, colorOf);
     }
 
     if (selectedEdge) {
@@ -92,10 +97,13 @@ function propertyItem(key: string, value: string | HTMLElement, valueClass = "aw
 /**
  * Render node properties.
  */
-export function renderNodeProperties(content: HTMLElement, node: GraphNode): void {
+export function renderNodeProperties(content: HTMLElement, node: GraphNode, colorOf?: (label: string) => string): void {
   const nodeHeader = document.createElement("div");
   nodeHeader.className = "awg-properties-header";
   nodeHeader.innerHTML = `${ICONS.node} <span class="awg-properties-type">Node</span>`;
+  // The header's dot and each label tag take the type's colour (--awg-tag), drawn like a node: ring and 38% fill
+  const firstLabel = node.labels?.[0] ?? node.label;
+  if (colorOf && firstLabel !== undefined) nodeHeader.style.setProperty("--awg-tag", colorOf(String(firstLabel)));
   content.appendChild(nodeHeader);
 
   content.appendChild(propertyItem("id", String(node.id || "N/A")));
@@ -103,7 +111,10 @@ export function renderNodeProperties(content: HTMLElement, node: GraphNode): voi
   if (node.labels && node.labels.length > 0) {
     const labels = document.createElement("span");
     labels.className = "awg-property-value awg-property-labels";
-    node.labels.forEach((l: string) => labels.appendChild(textSpan("awg-label-tag", String(l))));
+    node.labels.forEach((l: string) => {
+      const tag = labels.appendChild(textSpan("awg-label-tag", String(l)));
+      if (colorOf) tag.style.setProperty("--awg-tag", colorOf(String(l)));
+    });
     content.appendChild(propertyItem("labels", labels));
   }
 

@@ -338,7 +338,7 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
   view3dGroup.className = "awg-3d-settings";
 
   const viewSelect = document.createElement("select");
-  view3dGroup.appendChild(
+  const viewGroup = view3dGroup.appendChild(
     createFormGroup("View", () => {
       viewSelect.className = "awg-select";
       [
@@ -361,6 +361,8 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
       return viewSelect;
     })
   );
+  // show_view_toggle false: a host with a fixed view keeps the 2D/3D choice out of the settings too
+  if (model.get("show_view_toggle") === false) viewGroup.style.display = "none";
 
   // Bloom: how strongly nodes push apart in the 3D layout (force3d_repulsion)
   view3dGroup.appendChild(
