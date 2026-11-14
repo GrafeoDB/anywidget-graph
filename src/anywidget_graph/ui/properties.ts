@@ -60,6 +60,9 @@ export function createPropertiesPanel(
 
   model.on("change:selected_node", renderProperties);
   model.on("change:selected_edge", renderProperties);
+  // The label tags take the type's colour as drawn: each theme has its own data colours, and the host may set its own
+  model.on("change:dark_mode", renderProperties);
+  model.on("change:type_colors", renderProperties);
   renderProperties();
 
   panel.appendChild(content);

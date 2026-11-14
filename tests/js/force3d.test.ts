@@ -11,6 +11,7 @@ import {
   forEachNearPair,
   keepPositions,
   keepsPositions,
+  samePlaces,
 } from "../../src/anywidget_graph/ui/force3d.ts";
 
 function run(sim: ReturnType<typeof createForce3D>, maxTicks = 400) {
@@ -190,6 +191,16 @@ test("keepsPositions: an append, a restyle or a removal keeps what is drawn; new
   assert.equal(keepsPositions(drawn, ["a", "c"], false, "spring"), false, "new data from the host");
   assert.equal(keepsPositions(drawn, ["a", "b", "c"], true, "preset"), false, "preset");
   assert.equal(keepsPositions(new Map(), ["a"], true, "spring"), false, "first draw");
+});
+
+test("samePlaces: a restyle of a preset layout keeps the camera; new, removed or moved nodes are framed again", () => {
+  const drawn = new Map([["a", { x: 0, y: 0, z: 0 }], ["b", { x: 1, y: 2, z: 3 }]]);
+  const at = (key: string, x: number, y: number, z: number) => ({ key, pos: { x, y, z } });
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0), at("b", 1, 2, 3)]), true, "theme switch: same nodes, same places");
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0), at("b", 1, 2, 4)]), false, "the host moved a node");
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0)]), false, "a node removed");
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0), at("b", 1, 2, 3), at("c", 0, 0, 0)]), false, "a node added");
+  assert.equal(samePlaces(new Map(), [at("a", 0, 0, 0)]), false, "first draw");
 });
 
 test("keepPositions: drawn nodes stay, a new node goes next to its neighbour, apart from its siblings", () => {

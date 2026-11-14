@@ -241,10 +241,7 @@ export function seededRandom(seed: unknown): () => number {
 
 /** Keeps a simulated node inside its band (a lane stays its own graph): a node over an edge stops at it. */
 export function clampInto<T extends { x: number; y: number; vx?: number; vy?: number }>(node: T, band: Band): T {
-  if (node.x < band.x0 || node.x > band.x1) {
-    node.x = clamp(node.x, band.x0, band.x1);
-    if ("vx" in node) node.vx = 0;
-  }
+  clampIntoColumn(node, band);
   if (node.y < band.y0 || node.y > band.y1) {
     node.y = clamp(node.y, band.y0, band.y1);
     if ("vy" in node) node.vy = 0;
@@ -252,13 +249,23 @@ export function clampInto<T extends { x: number; y: number; vx?: number; vy?: nu
   return node;
 }
 
+/** Keeps a simulated node inside its band's column only (a free lane): it never crosses into the next lane. */
+export function clampIntoColumn<T extends { x: number; vx?: number }>(node: T, band: Band): T {
+  if (node.x < band.x0 || node.x > band.x1) {
+    node.x = clamp(node.x, band.x0, band.x1);
+    if ("vx" in node) node.vx = 0;
+  }
+  return node;
+}
+
 /**
- * How a force lane bounds its nodes: "none" for a lane with `free: true` (no hard edge: the graph's structure and the
- * centring pull decide its outline), "rect" otherwise (every step clamps a node into its band; a lane with rows always
- * keeps them, a row being a band of its own). Opt-in, so lanes drawn before `free` existed look the same.
+ * How a force lane bounds its nodes: "column" for a lane with `free: true` (its nodes stay in the lane's column, but
+ * no top or bottom edge: the graph's structure and the centring pull decide its outline), "rect" otherwise (every step
+ * clamps a node into its band; a lane with rows always keeps them, a row being a band of its own). Opt-in, so lanes
+ * drawn before `free` existed look the same.
  */
-export function laneBounds(lane: Lane): "none" | "rect" {
-  return lane.free === true && !lane.rows ? "none" : "rect";
+export function laneBounds(lane: Lane): "column" | "rect" {
+  return lane.free === true && !lane.rows ? "column" : "rect";
 }
 
 /** The centroid of each group among the nodes (nodes without a group are left out), for the pull of a lane's `group`. */
@@ -272,6 +279,25 @@ export function groupCentroids<T extends { x?: number; y?: number }>(nodes: T[],
     sums.set(g, s);
   }
   return new Map([...sums].map(([g, s]) => [g, { x: s.x / s.n, y: s.y / s.n }]));
+}
+
+/**
+ * The pull of a lane's `group` as a d3 force: each node with a group moves towards its group's centroid by `strength`
+ * of the distance per unit of alpha. A node without a group, or a pinned one (`fx` set), is left alone.
+ */
+export function groupForce<T extends { x?: number; y?: number; vx?: number; vy?: number; fx?: number | null }>(
+  nodes: T[], groupOf: (node: T) => string | undefined, strength: number,
+): (alpha: number) => void {
+  return (alpha) => {
+    const centroids = groupCentroids(nodes, groupOf);
+    for (const node of nodes) {
+      const g = groupOf(node);
+      const c = g === undefined ? undefined : centroids.get(g);
+      if (!c || node.fx !== undefined) continue;
+      node.vx = (node.vx ?? 0) + (c.x - (node.x ?? 0)) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (c.y - (node.y ?? 0)) * strength * alpha;
+    }
+  };
 }
 
 /** The mean height of each node's cross-lane partners among the nodes already placed (lanes laid out before it). */
@@ -648,10 +674,13 @@ export function shownOf(count: number, total?: number | null): string {
   return `${Number(count).toLocaleString("en-US")} / ${Number(total).toLocaleString("en-US")}`;
 }
 
+/** The schema panel's group for nodes without a type. */
+export const UNLABELED = "Unlabeled";
+
 /** A node's type as the schema panel groups it: its first label, else its label, else "Unlabeled". */
 export function nodeType(node: Record<string, unknown>): string {
   const labels = node.labels;
-  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || "Unlabeled");
+  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || UNLABELED);
 }
 
 /** An edge's type as the schema panel groups it: its type, else its label, else "unknown". */

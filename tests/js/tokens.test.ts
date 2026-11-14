@@ -19,16 +19,40 @@ function block(selector: string): string {
 }
 const value = (body: string, name: string) => body.match(new RegExp(`--${name}: ([^;]+);`))?.[1];
 
-test("the synced block holds the token values", () => {
+test("the synced block holds the token values for every chrome variable", () => {
+  const expected: Record<string, string> = {
+    bg: "background",
+    "bg-secondary": "surface",
+    "bg-tertiary": "muted",
+    border: "border",
+    "border-strong": "border-strong",
+    text: "foreground",
+    "text-secondary": "muted-foreground",
+    "text-muted": "muted-foreground",
+    accent: "primary",
+    "on-accent": "primary-foreground",
+    "graph-bg": "background",
+    "input-bg": "background",
+    "input-border": "border",
+    selected: "selected",
+    ring: "ring",
+    edge: "edge",
+    other: "input",
+    ok: "status-ok",
+    warn: "status-warn",
+    error: "status-error",
+    "font-body": "font-body",
+    "font-mono": "font-mono",
+    "radius-box": "radius-box",
+    "radius-control": "radius-control",
+    "shadow-float": "shadow-float",
+  };
   for (const [selector, mode] of [[".awg-wrapper", "light"], [".awg-wrapper.awg-dark", "dark"]] as const) {
     const body = block(selector);
     assert.ok(body, `${selector} in the synced block`);
-    assert.equal(value(body, "awg-bg"), tokens[mode].background);
-    assert.equal(value(body, "awg-text"), tokens[mode].foreground);
-    assert.equal(value(body, "awg-border"), tokens[mode].border);
-    assert.equal(value(body, "awg-accent"), tokens[mode].primary);
-    assert.equal(value(body, "awg-font-mono"), tokens[mode]["font-mono"]);
-    assert.equal(value(body, "awg-radius-box"), tokens[mode]["radius-box"]);
+    for (const [name, token] of Object.entries(expected)) assert.equal(value(body, `awg-${name}`), tokens[mode][token], `${selector} --awg-${name}`);
+    const t = tokens[mode];
+    assert.equal(value(body, "awg-accent-hover"), `color-mix(in srgb, ${t.primary} 80%, ${t.background})`, `${selector} --awg-accent-hover`);
   }
 });
 
@@ -95,4 +119,7 @@ test("a toggle that is on shows it: a ring of 3:1 or more against its surface, a
   for (const file of ["index.ts", "canvas3d.ts", "toolbar.ts"]) {
     assert.ok(readFileSync(new URL(file, UI), "utf8").includes('"aria-pressed"'), `${file} sets aria-pressed`);
   }
+  // The pressed rule needs .awg-mode-btn: the 2D and 3D selection mode buttons both carry it
+  assert.match(readFileSync(new URL("index.ts", UI), "utf8"), /ModeBtn\.className = "awg-zoom-btn awg-mode-btn/);
+  assert.match(readFileSync(new URL("canvas3d.ts", UI), "utf8"), /for \(const btn of \[clickBtn, boxBtn, lassoBtn\]\) btn\.classList\.add\("awg-mode-btn"\)/);
 });

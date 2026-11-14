@@ -8,7 +8,7 @@ Shared look release: the widget takes the look of the anywidgets family (graphit
 
 ### Added
 
-- **Free lanes**: a force lane with `free: True` has no hard band edge; the graph's structure and the pull to the middle shape its outline. A lane with `rows` keeps its bands.
+- **Free lanes**: a force lane with `free: True` has no hard top or bottom edge; the graph's structure and the pull to the middle shape its outline, and its nodes stay in the lane's column. A lane with `rows` keeps its bands.
 - **Grouped lanes**: a force lane with `group: "<field>"` pulls nodes with the same value of that field towards each other, so its clusters show in the layout.
 - **Empty and running states**: an empty widget shows "Nothing to show yet. Run a query, or pass nodes and edges from Python.", and a running query shows "Running query…" over the canvas.
 - **Keyboard focus**: buttons, menus and checkboxes show a focus ring, and the dark mode switch can be reached with the keyboard; toggles that are on say so to screen readers (`aria-pressed`).

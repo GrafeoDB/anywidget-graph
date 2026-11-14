@@ -68,13 +68,20 @@ ${block(`.${PREFIX}-wrapper.${PREFIX}-dark`, "dark")}
 
 const cssPath = path.join(ui, "styles.css");
 const css = readFileSync(cssPath, "utf8");
-if (!css.includes("design-tokens:start")) throw new Error("design-tokens markers not found in styles.css");
-writeFileSync(cssPath, css.replace(/\/\* design-tokens:start[\s\S]*?\/\* design-tokens:end \*\//, generated));
+// Both markers must be there: with only the start one, the replace would change nothing and still report success
+const synced = css.match(/\/\* design-tokens:start[\s\S]*?\/\* design-tokens:end \*\//);
+if (!synced) throw new Error("design-tokens:start and design-tokens:end markers not found in styles.css");
+writeFileSync(cssPath, css.replace(synced[0], () => generated));
 
 function palette(mode) {
   const t = tokens[mode];
-  const data = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => JSON.stringify(t[`data-${n}`]));
-  return `{\n  data: [${data.join(", ")}],\n  other: ${JSON.stringify(t.input)},\n  background: ${JSON.stringify(t.background)},\n  edge: ${JSON.stringify(t.edge)},\n}`;
+  // A missing token would write `undefined` or a hole into palette.ts and still report success
+  const need = (token) => {
+    if (!(token in t)) throw new Error(`design token "${token}" missing in ${mode}`);
+    return JSON.stringify(t[token]);
+  };
+  const data = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => need(`data-${n}`));
+  return `{\n  data: [${data.join(", ")}],\n  other: ${need("input")},\n  background: ${need("background")},\n  edge: ${need("edge")},\n}`;
 }
 writeFileSync(
   path.join(ui, "palette.ts"),

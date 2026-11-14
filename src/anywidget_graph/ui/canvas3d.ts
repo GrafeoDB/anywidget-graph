@@ -7,7 +7,7 @@
  */
 
 import { THREE, OrbitControls } from "./vendor-globals3d.ts";
-import { createForce3D, fitDistance, fitPositions, keepPositions, keepsPositions } from "./force3d.ts";
+import { createForce3D, fitDistance, fitPositions, keepPositions, keepsPositions, samePlaces } from "./force3d.ts";
 import { mixOver } from "./registry.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, pointInPolygon } from "./styling.ts";
 import type { Registries } from "./styling.ts";
@@ -330,7 +330,8 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     applyLevelStates();
     applyColors();
     updateTransforms();
-    if (!keep) fitToView();
+    // The same nodes in the same places, restyled (a theme switch, new colours), keep the camera, also in a preset layout
+    if (!keep && !samePlaces(previous, records)) fitToView();
   }
 
   /** What is drawn keeps its place (keepPositions in force3d.ts); a new node goes next to the nodes it links to. */
@@ -876,6 +877,8 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     const clickBtn = mkBtn(ICONS.cursor, "Click / multi-select mode");
     const boxBtn = mkBtn(ICONS.boxSelect, "Box select mode");
     const lassoBtn = mkBtn(ICONS.lasso, "Lasso select mode");
+    // The same classes as the 2D mode buttons, so the one that is on looks pressed
+    for (const btn of [clickBtn, boxBtn, lassoBtn]) btn.classList.add("awg-mode-btn");
 
     function setActiveMode(mode: string): void {
       currentMode = mode;

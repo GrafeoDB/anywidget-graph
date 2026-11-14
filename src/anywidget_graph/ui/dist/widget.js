@@ -1487,18 +1487,22 @@ function seededRandom(seed) {
   };
 }
 function clampInto(node, band) {
-  if (node.x < band.x0 || node.x > band.x1) {
-    node.x = clamp(node.x, band.x0, band.x1);
-    if ("vx" in node) node.vx = 0;
-  }
+  clampIntoColumn(node, band);
   if (node.y < band.y0 || node.y > band.y1) {
     node.y = clamp(node.y, band.y0, band.y1);
     if ("vy" in node) node.vy = 0;
   }
   return node;
 }
+function clampIntoColumn(node, band) {
+  if (node.x < band.x0 || node.x > band.x1) {
+    node.x = clamp(node.x, band.x0, band.x1);
+    if ("vx" in node) node.vx = 0;
+  }
+  return node;
+}
 function laneBounds(lane) {
-  return lane.free === true && !lane.rows ? "none" : "rect";
+  return lane.free === true && !lane.rows ? "column" : "rect";
 }
 function groupCentroids(nodes, groupOf) {
   const sums = /* @__PURE__ */ new Map();
@@ -1512,6 +1516,18 @@ function groupCentroids(nodes, groupOf) {
     sums.set(g, s);
   }
   return new Map([...sums].map(([g, s]) => [g, { x: s.x / s.n, y: s.y / s.n }]));
+}
+function groupForce(nodes, groupOf, strength) {
+  return (alpha) => {
+    const centroids = groupCentroids(nodes, groupOf);
+    for (const node of nodes) {
+      const g = groupOf(node);
+      const c = g === void 0 ? void 0 : centroids.get(g);
+      if (!c || node.fx !== void 0) continue;
+      node.vx = (node.vx ?? 0) + (c.x - (node.x ?? 0)) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (c.y - (node.y ?? 0)) * strength * alpha;
+    }
+  };
 }
 function partnerHeights(ids, cross, placed) {
   const wanted = new Set(ids);
@@ -1783,9 +1799,10 @@ function shownOf(count, total) {
   if (total === void 0 || total === null) return String(count);
   return `${Number(count).toLocaleString("en-US")} / ${Number(total).toLocaleString("en-US")}`;
 }
+var UNLABELED = "Unlabeled";
 function nodeType(node) {
   const labels = node.labels;
-  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || "Unlabeled");
+  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || UNLABELED);
 }
 function edgeType(edge) {
   return String(edge.type || edge.label || "unknown");
@@ -2380,8 +2397,12 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
   function renderFilters() {
     content.innerHTML = "";
     const { nodeTypes, edgeTypes } = extractTypesFromData(model);
-    assignNodeTypes(colors.registries, model.get("nodes") ?? []);
-    colors.registries.for("node-type").assign(new Map(nodeTypes.map(({ label, count }) => [label, count])));
+    const drawnNodes = model.get("nodes") ?? [];
+    assignNodeTypes(colors.registries, drawnNodes);
+    const untyped = drawnNodes.some((node) => nodeTypeOf(node) === void 0);
+    const isUntyped = (label) => untyped && label === UNLABELED;
+    const untypedColor = () => drawnNodes.some((node) => nodeTypeOf(node) !== void 0) ? colors.palette().other : colors.palette().data[0];
+    colors.registries.for("node-type").assign(new Map(nodeTypes.filter(({ label }) => !isUntyped(label)).map(({ label, count }) => [label, count])));
     const schemaNodeTypes = model.get("schema_node_types") ?? [];
     const schemaEdgeTypes = model.get("schema_edge_types") ?? [];
     const nodePropsMap = /* @__PURE__ */ new Map();
@@ -2463,7 +2484,7 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
           name: label,
           count,
           total,
-          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || colors.registries.for("node-type").colorFor(label, colors.palette()),
+          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || (isUntyped(label) ? untypedColor() : colors.registries.for("node-type").colorFor(label, colors.palette())),
           kind: "node",
           properties: props,
           isHidden: hiddenNodeTypes.has(label),
@@ -2698,6 +2719,8 @@ function createPropertiesPanel(model, callbacks, colorOf) {
   }
   model.on("change:selected_node", renderProperties);
   model.on("change:selected_edge", renderProperties);
+  model.on("change:dark_mode", renderProperties);
+  model.on("change:type_colors", renderProperties);
   renderProperties();
   panel.appendChild(content);
   return {
@@ -3292,6 +3315,13 @@ function keepsPositions(previous, keys, appended, layout) {
   if (layout === "preset" || previous.size === 0 || keys.length === 0) return false;
   return appended || keys.every((k) => previous.has(k));
 }
+function samePlaces(previous, placed) {
+  if (previous.size === 0 || previous.size !== placed.length) return false;
+  return placed.every(({ key, pos }) => {
+    const p = previous.get(key);
+    return p !== void 0 && p.x === pos.x && p.y === pos.y && p.z === pos.z;
+  });
+}
 function keepPositions(previous, keys, links, { fallbackStep, radius, random: random2 = Math.random }) {
   const out = /* @__PURE__ */ new Map();
   for (const k of keys) {
@@ -3620,7 +3650,7 @@ function createCanvas3D(model, container, callbacks = {}) {
     applyLevelStates();
     applyColors();
     updateTransforms();
-    if (!keep) fitToView();
+    if (!keep && !samePlaces(previous, records)) fitToView();
   }
   function placeKeepingPositions(previous) {
     layoutName = model.get("layout") || "spring";
@@ -4105,6 +4135,7 @@ function createCanvas3D(model, container, callbacks = {}) {
     const clickBtn = mkBtn(ICONS.cursor, "Click / multi-select mode");
     const boxBtn = mkBtn(ICONS.boxSelect, "Box select mode");
     const lassoBtn = mkBtn(ICONS.lasso, "Lasso select mode");
+    for (const btn of [clickBtn, boxBtn, lassoBtn]) btn.classList.add("awg-mode-btn");
     function setActiveMode(mode) {
       currentMode = mode;
       model.set("selection_mode", mode);
@@ -5158,7 +5189,7 @@ function render2D({ model: host, el }) {
     };
     return forceLane(lane.id, ids, band, {
       bandOf,
-      free: laneBounds(lane) === "none",
+      free: laneBounds(lane) === "column",
       groupOf: groupField(lane),
       shrink,
       start,
@@ -5251,22 +5282,13 @@ function render2D({ model: host, el }) {
     const midX = (band.x0 + band.x1) / 2;
     const laneTall = Math.min(4, Math.max(0.25, (band.y1 - band.y0) / width));
     const simulation = d3Force.forceSimulation(nodes).randomSource(seededRandom(laneId)).alpha(alpha).stop().force("charge", d3Force.forceManyBody().strength(-f.charge * spacing * spacing).distanceMax(spacing * f.reach)).force("collide", d3Force.forceCollide().radius((d) => d.radius).strength(0.9).iterations(2)).force("link", d3Force.forceLink(links).id((d) => d.id).distance(spacing * f.link).strength((link) => f.linkStrength / Math.min(degree.get(link.source.id) || 1, degree.get(link.target.id) || 1))).force("x", d3Force.forceX(midX).strength(free ? f.center : f.center * laneTall)).force("y", d3Force.forceY((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => d.partner !== void 0 ? f.partner : free ? f.center : f.center / (d.tall ?? 1)));
-    if (groupOf) {
-      const groupOfSim = (d) => groupOf(d.id);
-      simulation.force("group", (alpha2) => {
-        const centroids = groupCentroids(nodes, groupOfSim);
-        for (const node of nodes) {
-          const c = centroids.get(groupOfSim(node));
-          if (!c || node.fx !== void 0) continue;
-          node.vx = (node.vx ?? 0) + (c.x - (node.x ?? 0)) * f.group * alpha2;
-          node.vy = (node.vy ?? 0) + (c.y - (node.y ?? 0)) * f.group * alpha2;
-        }
-      });
-    }
+    if (groupOf) simulation.force("group", groupForce(nodes, (d) => groupOf(d.id), f.group));
     for (let i = 0; i < ticks; i++) {
       simulation.tick();
-      if (!free) {
-        for (const node of nodes) if (node.fx === void 0) clampInto(node, node.band);
+      for (const node of nodes) {
+        if (node.fx !== void 0) continue;
+        if (free) clampIntoColumn(node, node.band);
+        else clampInto(node, node.band);
       }
     }
     return new Map(nodes.filter((node) => node.fx === void 0).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]));
@@ -5954,7 +5976,7 @@ function render2D({ model: host, el }) {
       const ids = graph.filterNodes((node, attrs) => attrs.lane === laneId && !laneState.vanish.has(node));
       const settled = forceLane(laneId, ids, insetBand(laneState.bands[index]), {
         bandOf: (id) => nodeBand(laneState.lanes[index], index, drawn.nodes.get(id)),
-        free: laneBounds(laneState.lanes[index]) === "none",
+        free: laneBounds(laneState.lanes[index]) === "column",
         groupOf: groupField(laneState.lanes[index]),
         start: (id) => positions.get(id) ?? { x: 0, y: 0 },
         fixed: (id) => freshIds.has(id) ? null : { x: positions.get(id)?.x, y: positions.get(id)?.y },

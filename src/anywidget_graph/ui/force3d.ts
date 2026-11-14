@@ -334,6 +334,18 @@ export function keepsPositions(previous: Map<string, Vec3>, keys: string[], appe
 }
 
 /**
+ * The same nodes in the same places as `previous` (a restyle such as a theme switch, also in a preset layout): the
+ * camera stays where the user put it. New, removed or moved nodes are framed again.
+ */
+export function samePlaces(previous: Map<string, Vec3>, placed: { key: string; pos: Vec3 }[]): boolean {
+  if (previous.size === 0 || previous.size !== placed.length) return false;
+  return placed.every(({ key, pos }) => {
+    const p = previous.get(key);
+    return p !== undefined && p.x === pos.x && p.y === pos.y && p.z === pos.z;
+  });
+}
+
+/**
  * Positions for `keys`: a node in `previous` stays where it is; a new node goes next to the nodes it links to
  * (`links`, [source, target] pairs), at about the median length of the drawn edges (`fallbackStep` when none), each
  * in its own direction on a golden-angle spiral so nodes added around the same neighbour do not land on one another.

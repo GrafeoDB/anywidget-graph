@@ -177,6 +177,42 @@ test("filter swatches follow a theme switch", async () => {
   assert.equal(swatch(), DARK.data[0]);
 });
 
+test("the Unlabeled group takes no colour slot, and its swatch is the Other colour its nodes are drawn in", async () => {
+  const { Registries, computeNodeColor, getStylingOpts } = await import("../../src/anywidget_graph/ui/styling.ts");
+  const { LIGHT } = await import("../../src/anywidget_graph/ui/palette.ts");
+  const nodes = [{ id: "p1", labels: ["Person"] }, { id: "p2", labels: ["Person"] }, { id: "c1", labels: ["Company"] }, { id: "u1" }, { id: "u2" }, { id: "u3" }];
+  const values: Record<string, any> = { nodes, edges: [], schema_node_types: [], schema_edge_types: [], type_colors: {}, totals: {}, dark_mode: false };
+  const model = { get: (k: string) => values[k], set() {}, on() {}, save_changes() {} };
+  const registries = new Registries();
+  const panel = createSchemaPanel(model, () => {}, null, () => {}, () => {}, () => {}, { registries, palette: () => LIGHT });
+  const swatch = (name: string) => ((panel.element as unknown as FakeElement).descendants().find((el) => el.title === `Change color for ${name}`) as any).value;
+  assert.equal(swatch("Unlabeled"), LIGHT.other);
+  assert.equal(swatch("Person"), LIGHT.data[0]);
+  assert.equal(swatch("Company"), LIGHT.data[1]);
+  // The canvas draws an untyped node in the same colour, and the next new type takes the next slot
+  const opts = getStylingOpts(model as any, nodes as any, [], registries);
+  assert.equal(computeNodeColor(nodes[3] as any, opts), swatch("Unlabeled"));
+  registries.for("node-type").assign(new Map([["Movie", 1]]));
+  assert.equal(registries.for("node-type").colorFor("Movie", LIGHT), LIGHT.data[2]);
+});
+
+test("Properties label tags follow a theme switch", async () => {
+  const { createPropertiesPanel } = await import("../../src/anywidget_graph/ui/properties.ts");
+  const handlers = new Map<string, (() => void)[]>();
+  const values: Record<string, any> = { selected_node: { id: "p1", labels: ["Person"] }, selected_edge: null, dark_mode: false };
+  const model = {
+    get: (k: string) => values[k],
+    set: (k: string, v: any) => { values[k] = v; for (const h of handlers.get(`change:${k}`) ?? []) h(); },
+    on: (e: string, h: () => void) => handlers.set(e, [...(handlers.get(e) ?? []), h]),
+    save_changes() {},
+  };
+  const panel = createPropertiesPanel(model as any, undefined, () => (values.dark_mode ? "#dark00" : "#light0"));
+  const tag = () => (panel.element as unknown as FakeElement).descendants().find((el) => el.className === "awg-label-tag")!.style["--awg-tag"];
+  assert.equal(tag(), "#light0");
+  model.set("dark_mode", true);
+  assert.equal(tag(), "#dark00");
+});
+
 test("show_view_toggle false: the toolbar has no 2D/3D switch", async () => {
   const { createToolbar } = await import("../../src/anywidget_graph/ui/toolbar.ts");
   const make = (values: Record<string, any>) => {

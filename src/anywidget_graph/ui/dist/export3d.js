@@ -284,6 +284,13 @@
     if (layout === "preset" || previous.size === 0 || keys.length === 0) return false;
     return appended || keys.every((k) => previous.has(k));
   }
+  function samePlaces(previous, placed) {
+    if (previous.size === 0 || previous.size !== placed.length) return false;
+    return placed.every(({ key, pos }) => {
+      const p = previous.get(key);
+      return p !== void 0 && p.x === pos.x && p.y === pos.y && p.z === pos.z;
+    });
+  }
   function keepPositions(previous, keys, links, { fallbackStep, radius, random = Math.random }) {
     const out = /* @__PURE__ */ new Map();
     for (const k of keys) {
@@ -922,7 +929,7 @@
       applyLevelStates();
       applyColors();
       updateTransforms();
-      if (!keep) fitToView();
+      if (!keep && !samePlaces(previous, records)) fitToView();
     }
     function placeKeepingPositions(previous) {
       layoutName = model2.get("layout") || "spring";
@@ -1407,6 +1414,7 @@
       const clickBtn = mkBtn(ICONS.cursor, "Click / multi-select mode");
       const boxBtn = mkBtn(ICONS.boxSelect, "Box select mode");
       const lassoBtn = mkBtn(ICONS.lasso, "Lasso select mode");
+      for (const btn of [clickBtn, boxBtn, lassoBtn]) btn.classList.add("awg-mode-btn");
       function setActiveMode(mode) {
         currentMode = mode;
         model2.set("selection_mode", mode);

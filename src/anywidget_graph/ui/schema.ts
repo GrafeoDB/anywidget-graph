@@ -5,12 +5,12 @@
  */
 import { DARK, LIGHT } from "./palette.ts";
 import type { Palette } from "./registry.ts";
-import { Registries, assignNodeTypes } from "./styling.ts";
+import { Registries, assignNodeTypes, nodeTypeOf } from "./styling.ts";
 import { ICONS } from "./icons.ts";
 import { fetchSchema as neo4jFetchSchema } from "./neo4j.ts";
 import { fetchSchema as grafeoFetchSchema } from "./grafeo.ts";
 import { fetchSchema as grafeoEmbedFetchSchema } from "./grafeo-embed.ts";
-import { withTotals, shownOf, nodeType, edgeType } from "./lanes.ts";
+import { withTotals, shownOf, nodeType, edgeType, UNLABELED } from "./lanes.ts";
 import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 
 // Types a filter section shows before "Show more"
@@ -150,8 +150,14 @@ export function createSchemaPanel(
 
     const { nodeTypes, edgeTypes } = extractTypesFromData(model);
     // The drawn nodes take their colour slots first (as on the canvas); a type known only from the counts follows
-    assignNodeTypes(colors.registries, (model.get("nodes") ?? []) as GraphNode[]);
-    colors.registries.for("node-type").assign(new Map(nodeTypes.map(({ label, count }) => [label, count])));
+    const drawnNodes = (model.get("nodes") ?? []) as GraphNode[];
+    assignNodeTypes(colors.registries, drawnNodes);
+    // Nodes without a type are drawn as Other (the first colour when no node has a type), so their "Unlabeled" group
+    // takes no slot of its own and its swatch shows that colour
+    const untyped = drawnNodes.some((node) => nodeTypeOf(node) === undefined);
+    const isUntyped = (label: string) => untyped && label === UNLABELED;
+    const untypedColor = () => (drawnNodes.some((node) => nodeTypeOf(node) !== undefined) ? colors.palette().other : colors.palette().data[0]);
+    colors.registries.for("node-type").assign(new Map(nodeTypes.filter(({ label }) => !isUntyped(label)).map(({ label, count }) => [label, count])));
     const schemaNodeTypes = (model.get("schema_node_types") ?? []) as { label: string; properties?: string[] }[];
     const schemaEdgeTypes = (model.get("schema_edge_types") ?? []) as { type: string; properties?: string[] }[];
 
@@ -244,7 +250,7 @@ export function createSchemaPanel(
           name: label,
           count,
           total,
-          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || colors.registries.for("node-type").colorFor(label, colors.palette()),
+          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || (isUntyped(label) ? untypedColor() : colors.registries.for("node-type").colorFor(label, colors.palette())),
           kind: "node",
           properties: props,
           isHidden: hiddenNodeTypes.has(label),

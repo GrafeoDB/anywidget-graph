@@ -12,7 +12,7 @@ import { createSchemaPanel } from "./schema.ts";
 import { createSettingsPanel } from "./settings.ts";
 import { createPropertiesPanel } from "./properties.ts";
 import { createResultsDrawer } from "./results.ts";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, LABEL_FONT, LANE_LABEL_MAX, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, laneBounds, groupCentroids, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, LABEL_FONT, LANE_LABEL_MAX, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, clampIntoColumn, laneBounds, groupForce, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
 import * as grafeoEmbedBackend from "./grafeo-embed.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, nodeDisplay, pointInPolygon, registriesFor } from "./styling.ts";
 import { DARK, LIGHT } from "./palette.ts";
@@ -844,7 +844,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     };
     return forceLane(lane.id, ids, band, {
       bandOf,
-      free: laneBounds(lane) === "none",
+      free: laneBounds(lane) === "column",
       groupOf: groupField(lane),
       shrink,
       start,
@@ -968,22 +968,16 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       .force("x", d3Force.forceX(midX).strength(free ? f.center : f.center * laneTall))
       .force("y", d3Force.forceY<LaneSimNode>((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => (d.partner !== undefined ? f.partner : free ? f.center : f.center / (d.tall ?? 1))));
     // A lane with a `group` field pulls each group towards its own centroid, so its clusters show in the layout
-    if (groupOf) {
-      const groupOfSim = (d: LaneSimNode) => groupOf(d.id);
-      simulation.force("group", (alpha: number) => {
-        const centroids = groupCentroids(nodes, groupOfSim);
-        for (const node of nodes) {
-          const c = centroids.get(groupOfSim(node) as string);
-          if (!c || node.fx !== undefined) continue;
-          node.vx = (node.vx ?? 0) + (c.x - (node.x ?? 0)) * f.group * alpha;
-          node.vy = (node.vy ?? 0) + (c.y - (node.y ?? 0)) * f.group * alpha;
-        }
-      });
-    }
+    if (groupOf) simulation.force("group", groupForce(nodes, (d: LaneSimNode) => groupOf(d.id), f.group));
     for (let i = 0; i < ticks; i++) {
       simulation.tick();
-      // A free lane has no hard edge; any other force lane keeps each node in its band (its row, or the lane)
-      if (!free) for (const node of nodes) if (node.fx === undefined) clampInto(node as unknown as LayoutNode, node.band);
+      // A free lane keeps its nodes in its column only (no top or bottom edge); any other force lane keeps each node in
+      // its band (its row, or the lane)
+      for (const node of nodes) {
+        if (node.fx !== undefined) continue;
+        if (free) clampIntoColumn(node as unknown as LayoutNode, node.band);
+        else clampInto(node as unknown as LayoutNode, node.band);
+      }
     }
     return new Map<string, Point>(nodes.filter((node) => node.fx === undefined).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }] as [string, Point]));
   }
@@ -1781,7 +1775,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       const ids = graph.filterNodes((node: string, attrs: Record<string, any>) => attrs.lane === laneId && !laneState.vanish.has(node));
       const settled = forceLane(laneId, ids, insetBand(laneState.bands[index]), {
         bandOf: (id: string) => nodeBand(laneState.lanes[index], index, drawn.nodes.get(id)),
-        free: laneBounds(laneState.lanes[index]) === "none",
+        free: laneBounds(laneState.lanes[index]) === "column",
         groupOf: groupField(laneState.lanes[index]),
         start: (id: string): Point => positions.get(id) ?? { x: 0, y: 0 },
         fixed: (id: string): Record<string, unknown> | null => (freshIds.has(id) ? null : { x: positions.get(id)?.x, y: positions.get(id)?.y }),
