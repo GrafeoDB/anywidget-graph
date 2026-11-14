@@ -504,7 +504,7 @@ uv sync --all-extras --all-groups
 uv run pytest                      # Python tests, and the Node tests in tests/js
 ```
 
-The front end is written in TypeScript in `src/anywidget_graph/ui/`; the widget loads it bundled into `ui/dist/widget.js`. After editing them, rebuild the bundle (CI fails on a stale one):
+The front end is written in TypeScript in `src/anywidget_graph/ui/`; the widget loads it bundled into `ui/dist/widget.js`. After editing the sources, rebuild the bundle (CI fails on a stale one):
 
 ```bash
 cd scripts/vendor
