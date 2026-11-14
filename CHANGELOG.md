@@ -2,7 +2,7 @@
 
 All notable changes to anywidget-graph, an interactive graph widget for Python notebooks built on anywidget.
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-11-14
 
 Shared look release: the widget takes the look of the anywidgets family (graphite chrome, ink nodes, an eight-colour data palette) and, with no size given, fills its cell. No trait, method or CSS variable is removed; to keep a colour, set `type_colors`, a `color` on the item or the `--awg-*` variables, and pass `width=800, height=600` to keep the old frame.
 
