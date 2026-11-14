@@ -7,9 +7,11 @@
     "build": "npm run build:esm --prefix scripts/vendor",
     "check": "npm run check:esm --prefix scripts/vendor",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/js/*.test.ts"
+    "test": "node --test tests/js/*.test.ts",
+    "sync-tokens": "node scripts/sync-design-tokens.mjs"
   },
   "devDependencies": {
+    "@sigma/node-border": "3.0.0",
     "@types/d3-force": "3.0.10",
     "@types/node": "26.6.6",
     "@types/three": "0.186.0",

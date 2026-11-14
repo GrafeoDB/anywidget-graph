@@ -5,6 +5,8 @@
  * instead of render2D when the model says so, and re-mounts when `view` changes.
  */
 
+import { wrapperSize } from "./size.ts";
+import { mountCanvasNote } from "./states.ts";
 import { withDefaults, followHostTheme, detectDark, WIDGET_FEATURES } from "./defaults.ts";
 import type { WidgetModel } from "./types.ts";
 import { errorText } from "./types.ts";
@@ -15,6 +17,8 @@ import { createSettingsPanel } from "./settings.ts";
 import { createPropertiesPanel } from "./properties.ts";
 import { createResultsDrawer } from "./results.ts";
 import { createCanvas3D } from "./canvas3d.ts";
+import { DARK, LIGHT } from "./palette.ts";
+import { registriesFor } from "./styling.ts";
 import { executeQuery } from "./query.ts";
 import * as grafeoEmbedBackend from "./grafeo-embed.ts";
 
@@ -25,10 +29,14 @@ export function render3D({ model: host, el }: { model: WidgetModel; el: HTMLElem
 
   // fill: take the host element's size and follow it; otherwise the fixed width and height
   function applySize() {
-    const fill = model.get("fill");
-    wrapper.style.width = fill ? "100%" : model.get("width") + "px";
-    wrapper.style.height = fill ? "100%" : model.get("height") + "px";
-    wrapper.style.maxHeight = fill ? "" : model.get("height") + "px";
+    // fill: the host element's size; otherwise the shared rule (size.ts): the given width and height, or the
+    // cell's width at 16:10 between what the chrome needs and 80% of the screen
+    for (const name of ["width", "height", "aspectRatio", "minHeight", "maxHeight"] as const) wrapper.style[name] = "";
+    if (model.get("fill")) {
+      Object.assign(wrapper.style, { width: "100%", height: "100%" });
+    } else {
+      Object.assign(wrapper.style, wrapperSize(model.get("width") || 0, model.get("height") || 0));
+    }
   }
   applySize();
   model.on("change:fill", applySize);
@@ -75,8 +83,15 @@ export function render3D({ model: host, el }: { model: WidgetModel; el: HTMLElem
   const onColorChange = (colorMap: Map<string, string>) => canvas?.setTypeColorOverrides(colorMap);
   const onRefreshLayout = () => canvas?.applyLayout(model.get("layout") || "spring");
 
-  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, onRefreshLayout);
-  const properties = createPropertiesPanel(model);
+  const registries = registriesFor(host);
+  const palette = () => (model.get("dark_mode") ? DARK : LIGHT);
+  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, onRefreshLayout, {
+    registries,
+    palette,
+  });
+  // Label tags in Properties take the type's colour as drawn (the host's type_colors, else the palette slot)
+  const properties = createPropertiesPanel(model, undefined, (label) =>
+    (model.get("type_colors")?.nodes || {})[label] || registries.for("node-type").colorFor(label, palette()));
   const settings = model.get("show_settings") ? createSettingsPanel(model) : null;
   const panels = { schema, settings, properties };
 
@@ -92,6 +107,8 @@ export function render3D({ model: host, el }: { model: WidgetModel; el: HTMLElem
   const container = document.createElement("div");
   container.className = "awg-graph-container awg3-container";
   content.appendChild(container);
+  // An empty widget or a running query says so over the canvas (states.ts)
+  mountCanvasNote(container, model);
 
   content.appendChild(properties.element);
   if (settings) content.appendChild(settings.element);
@@ -108,6 +125,8 @@ export function render3D({ model: host, el }: { model: WidgetModel; el: HTMLElem
   try {
     canvas = createCanvas3D(model, container, {
       onHover: () => {},
+      // The same colour assignments as the 2D view of this widget
+      registries: registriesFor(host),
     });
   } catch (err) {
     // No WebGL (a headless browser, a blocked GPU): say so in the pane; the cleanup below still runs

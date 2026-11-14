@@ -1,6 +1,9 @@
-# anywidget-graph
-
-Interactive graph visualization for Python notebooks.
+<picture>
+  <source media="(max-width: 556px) and (prefers-color-scheme: dark), (min-width: 768px) and (max-width: 844px) and (prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/.github/readme/header-narrow-dark.svg">
+  <source media="(max-width: 556px), (min-width: 768px) and (max-width: 844px)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/.github/readme/header-narrow-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/.github/readme/header-dark.svg">
+  <img alt="anywidget-graph: Interactive graph visualization for Python notebooks." src="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/.github/readme/header-light.svg" width="100%">
+</picture>
 
 Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidget.dev/) runs.
 
@@ -221,6 +224,8 @@ graph.theme = {
 - Lane options: `width` is a lane's share of the standard width (default 1); `arrange: "column"` stacks the lane's nodes in the middle of its band (for a few roots, such as repositories, whose edges then fan out into the next lane); `action: True` makes a lane without nodes that shows a button, with the host's `icon` (SVG markup, where `currentColor` takes the accent colour, or an image URL), or `glyph` (a list of colours drawn as stacked bars), else a neutral "open" icon; `caption` is text under it. An edge whose end is an action lane's id (and no node) is drawn as a curve into its button, like the cross-lane curves. The camera frames all lanes, and the lanes stretch to the canvas's shape.
 - Lane layout options (all off by default; a lane without them is laid out as before):
   - `layout: "force"`: a force layout inside the lane: nodes repel and do not overlap, edges inside the lane are springs, and a node is pulled towards the height of its partners in the lanes to its left. Nodes never leave their lane. A crowded lane draws its nodes smaller so the layout has room. Appended nodes settle from where they land while the older nodes stay put. Deterministic: the same data gives the same picture.
+  - `free: True`: a force lane without a hard top or bottom edge: the graph's structure and the pull to the lane's middle shape its outline, and its nodes still stay in the lane's column. A lane with `rows` keeps its bands.
+  - `group: "<field>"`: in a force lane, nodes with the same value of that node field are pulled towards each other, so the lane's clusters show in the layout.
   - `rows: {"field": "layer", "order": ["business", "application", "technology"]}`: splits the lane into rows, top to bottom, by a node field; a node with another value (or none) goes to an extra row at the bottom. Row heights follow the node counts (with a minimum), each row shows its name and a faint separator, and nodes stay inside their row. Implies `layout: "force"`.
   - `labels: {"count": 12}`: at the default zoom, shows the labels of the lane's 12 largest nodes (by size, then degree), and no others (hover or select a node to see its label; zoomed in or out, sigma's label grid decides). A label may cover smaller nodes, on a soft backing so it stays readable, but never a node as large, a labelled node or another label; one that would cross the lane's right edge goes on the left of its node, and a long name is shortened with an ellipsis (hover shows it whole).
   - `relayout: 0.33`: when one batch removes or adds more than this share of the lane's nodes (a re-sample), the lane is laid out again as a whole and its nodes glide to their new places; smaller batches keep older nodes where they are.
@@ -232,6 +237,12 @@ graph.theme = {
 - `_features`: the widget sets the capabilities it supports when it renders, so a host can detect an older build.
 
 ## Styling
+
+### Look and colours
+
+The widget shares its look with anywidget-vector and anywidget-archimate: graphite chrome with hairline borders, and nodes drawn as a ring in their colour over a light fill of it. Node types, and the values of a categorical `color_field` or `edge_color_field`, take eight colours in a fixed order: the eight largest categories by count get them, the rest share a neutral "Other" grey. A category keeps its colour across appends and new query results that still hold one of the coloured categories, and the filter panel shows the colours drawn; a category that joins once all eight colours are taken is "Other" (give it a colour with `type_colors`). A result with none of the coloured categories (another query) gets the eight colours afresh.
+
+To set colours yourself: `type_colors` per node or edge type, a `color` on a node or edge (it wins over everything else), or the `--awg-*` CSS variables for the chrome. Light or dark follows the page unless you pass `dark_mode`.
 
 ### Property-based coloring
 
@@ -356,8 +367,8 @@ graph = Graph3D(
 graph = Graph(
     nodes=nodes,
     edges=edges,
-    width=800,  # Widget width (px)
-    height=600,  # Widget height (px)
+    width=0,  # Widget width (px); 0 fills the cell's width
+    height=0,  # Widget height (px); 0 is 16:10 of the width, 360px to 80% of the screen
     fill=False,  # Take the host's size and follow resizes (ignores width/height)
     background="#fafafa",  # Background color
     show_labels=True,  # Node labels
@@ -471,6 +482,8 @@ graph.save_html("graph.html")  # Write HTML to file
 ```
 
 The page carries its libraries, so it opens offline. A graph in the 3D view (`Graph3D`, or `view="3d"`) exports the Three.js scene with its layout, camera and styling; one in the 2D view exports the Sigma canvas.
+
+The export assigns type colours from the exported data, in its own order, so a type can take a different palette colour than it had in the live widget. To keep colours fixed across the widget and its exports, set them with `type_colors`.
 
 ## Environment Support
 

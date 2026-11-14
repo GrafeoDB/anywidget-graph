@@ -72,8 +72,8 @@ _EXPORT_3D_TRAITS = (
 
 # A CSS colour or length the page writes into its <style>: plain values only, so a value cannot end the element
 _CSS_VALUE = re.compile(r"^[#\w(),.%\s-]+$")
-# The widget's canvas colours (styles.css --awg-graph-bg) and its default `background`
-_CANVAS_LIGHT, _CANVAS_DARK, _DEFAULT_BACKGROUND = "#ffffff", "#181c1a", "#fafafa"
+# The widget's canvas colours (styles.css --awg-graph-bg, ui/palette.ts) and its default `background`
+_CANVAS_LIGHT, _CANVAS_DARK, _DEFAULT_BACKGROUND = "#ffffff", "#161a19", "#fafafa"
 
 
 def _query_result_note(row_count: int | None, nodes: list, edges: list) -> str:
@@ -197,8 +197,10 @@ class Graph(anywidget.AnyWidget):
     edges = traitlets.List(trait=traitlets.Dict()).tag(sync=True)
 
     # === Display Settings ===
-    width = traitlets.Int(default_value=800).tag(sync=True)
-    height = traitlets.Int(default_value=600).tag(sync=True)
+    # 0 (the default) is "not given": the widget fills the cell's width at 16:10, at least 360px and at most 80% of the
+    # screen high; a width or height in pixels fixes that side
+    width = traitlets.Int(default_value=0).tag(sync=True)
+    height = traitlets.Int(default_value=0).tag(sync=True)
     # Take the host element's size (100% wide and high) and follow its resizes; width/height are then ignored
     fill = traitlets.Bool(default_value=False).tag(sync=True)
     background = traitlets.Unicode(default_value="#fafafa").tag(sync=True)
@@ -262,6 +264,10 @@ class Graph(anywidget.AnyWidget):
     show_toolbar = traitlets.Bool(default_value=True).tag(sync=True)
     show_settings = traitlets.Bool(default_value=True).tag(sync=True)
     show_query_input = traitlets.Bool(default_value=True).tag(sync=True)
+    # The layout menu in the canvas controls and the 2D/3D switch (toolbar and settings); a host with a fixed view
+    # (lanes, one view) turns them off
+    show_layout_menu = traitlets.Bool(default_value=True).tag(sync=True)
+    show_view_toggle = traitlets.Bool(default_value=True).tag(sync=True)
 
     # === Visibility levels ===
     # Levels of detail, lowest first: [{"id": 0, "label": "All", "count": 5230}, ...]; `count` comes from the host.
@@ -347,8 +353,8 @@ class Graph(anywidget.AnyWidget):
         nodes: list[dict[str, Any]] | None = None,
         edges: list[dict[str, Any]] | None = None,
         *,
-        width: int = 800,
-        height: int = 600,
+        width: int = 0,
+        height: int = 0,
         background: str = "#fafafa",
         show_labels: bool = True,
         show_edge_labels: bool = False,
@@ -375,9 +381,10 @@ class Graph(anywidget.AnyWidget):
         edges : list[dict], optional
             List of edge dictionaries with 'source', 'target', and optional 'label'.
         width : int
-            Widget width in pixels.
+            Widget width in pixels; 0 (the default) fills the cell's width.
         height : int
-            Widget height in pixels.
+            Widget height in pixels; 0 (the default) is 16:10 of the width, at least 360px and at most 80% of the
+            screen.
         background : str
             Background color for the graph area.
         show_labels : bool
@@ -547,8 +554,8 @@ class Graph(anywidget.AnyWidget):
         """Handle query execution trigger from JavaScript."""
         if change["new"] == 0:
             return  # Skip initial value
-        if self._backend is not None:
-            self._execute_backend_query()
+        # The browser asks only when Python runs the query, so without a backend Run says why nothing happens
+        self._execute_backend_query()
 
     def _execute_backend_query(self) -> None:
         """Execute query against the configured backend."""

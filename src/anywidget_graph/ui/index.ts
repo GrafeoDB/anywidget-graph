@@ -2,8 +2,9 @@
  * Main entry point for the anywidget-graph UI.
  * Orchestrates all UI components and graph rendering.
  */
+import { wrapperSize } from "./size.ts";
 import { withDefaults, followHostTheme, detectDark, WIDGET_FEATURES } from "./defaults.ts";
-import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.ts";
+import { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2, d3Force } from "./vendor-globals.ts";
 
 import { ICONS } from "./icons.ts";
 import { createToolbar } from "./toolbar.ts";
@@ -11,13 +12,23 @@ import { createSchemaPanel } from "./schema.ts";
 import { createSettingsPanel } from "./settings.ts";
 import { createPropertiesPanel } from "./properties.ts";
 import { createResultsDrawer } from "./results.ts";
-import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
+import { laneOf, laneBands, lanesBBox, columnPositions, glyphHit, fitBox, LANE_HEIGHT, fitToBand, isCrossEdge, crossKey, placeAppended, hashUnit, curveControl, curveUntil, staggerSchedule, progress, pulseScale, themeVariables, withAlpha, labelColor, nextLaneAction, mergeItems, sameItems, extentBand, crossNeighbours, fitScale, LABEL_ROW, LABEL_COLUMN, LABEL_FONT, LANE_LABEL_MAX, laneIcon, applyBatchItems, edgeMatches, edgeKey, roomyFrame, insetBand, seededRandom, clampInto, clampIntoColumn, laneBounds, groupForce, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, fadeColor, dashPattern, contrastText, levelState } from "./lanes.ts";
 import * as grafeoEmbedBackend from "./grafeo-embed.ts";
-import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, pointInPolygon } from "./styling.ts";
+import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, nodeDisplay, pointInPolygon, registriesFor } from "./styling.ts";
+import { DARK, LIGHT } from "./palette.ts";
+
+// The node program: the ring (borderColor, 2px) over the fill (fillColor), both set per node by the reducer
+const BORDERED = createNodeBorderProgram({
+  borders: [
+    { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
+    { size: { fill: true }, color: { attribute: "fillColor" } },
+  ],
+});
 import { executeQuery } from "./query.ts";
 import { springLayout } from "./spring.ts";
 import type { SpringNode } from "./spring.ts";
 import { render3D } from "./index3d.ts";
+import { mountCanvasNote } from "./states.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
 import { errorText } from "./types.ts";
 import type { Band, Batch, Box, Lane, LaneIcon, LayoutNode, Point, RowBand } from "./lanes.ts";
@@ -91,7 +102,7 @@ function buildNodeAttrs(node: GraphNode, opts: StylingOpts): Record<string, unkn
     x: node.x ?? Math.random() * 100,
     y: node.y ?? Math.random() * 100,
     size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(String(node.id))),
-    color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes),
+    color: computeNodeColor(node, opts),
     // Per-item style fields a host sets on a node (each optional): drawn by the reducers and the overlay
     opacity: node.opacity,
     ring: node.ring || undefined,
@@ -133,17 +144,26 @@ function buildEdgeAttrs(edge: GraphEdge, opts: StylingOpts): Record<string, unkn
  */
 function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }): () => void {
   const model = withDefaults(host);
+  // The widget's colour assignments (kept across renders and the 2D/3D switch) and the current theme's palette
+  const registries = registriesFor(host);
+  const palette = () => (model.get("dark_mode") ? DARK : LIGHT);
   const wrapper = document.createElement("div");
   wrapper.className = "awg-wrapper";
   // fill: take the host element's size and follow it; otherwise the fixed width and height
   function applySize() {
-    const fill = model.get("fill");
-    wrapper.style.width = fill ? "100%" : model.get("width") + "px";
-    wrapper.style.height = fill ? "100%" : model.get("height") + "px";
-    wrapper.style.maxHeight = fill ? "" : model.get("height") + "px";
+    // fill: the host element's size; otherwise the shared rule (size.ts): the given width and height, or the
+    // cell's width at 16:10 between what the chrome needs and 80% of the screen
+    for (const name of ["width", "height", "aspectRatio", "minHeight", "maxHeight"] as const) wrapper.style[name] = "";
+    if (model.get("fill")) {
+      Object.assign(wrapper.style, { width: "100%", height: "100%" });
+    } else {
+      Object.assign(wrapper.style, wrapperSize(model.get("width") || 0, model.get("height") || 0));
+    }
   }
   applySize();
   model.on("change:fill", applySize);
+  model.on("change:width", applySize);
+  model.on("change:height", applySize);
 
   // Renderer reference (set after Sigma init, used by theme/filter callbacks)
   let rendererRef: InstanceType<typeof Sigma> | null = null;
@@ -153,8 +173,11 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // The canvas colour that dimmed nodes and edges are mixed towards: read again when the theme changes, not per node
   let canvasBackground = "";
+  // The ring of a selected node (the theme's --awg-ring), read with the background
+  let ringColor = "";
   function readCanvasBackground() {
     canvasBackground = getComputedStyle(wrapper).getPropertyValue("--awg-bg").trim();
+    ringColor = getComputedStyle(wrapper).getPropertyValue("--awg-ring").trim();
   }
 
   // Host theme: the host's colours win over the widget's light and dark defaults
@@ -173,6 +196,12 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     wrapper.classList.toggle("awg-dark", dark);
     readCanvasBackground();
     rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), dark) });
+    if (rendererRef) {
+      // Each theme has its own data colours, edge colour and canvas: everything drawn takes the new theme's
+      rendererRef.setSetting("defaultNodeColor", palette().data[0]);
+      rendererRef.setSetting("defaultEdgeColor", palette().edge);
+      restyle();
+    }
     rendererRef?.refresh();
   }
 
@@ -233,8 +262,10 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     rendererRef?.getCamera().animatedReset({ duration: 300 });
   }
 
-  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, refreshLayout);
-  const properties = createPropertiesPanel(model);
+  const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, refreshLayout, { registries, palette });
+  // Label tags in Properties take the type's colour as drawn (the host's type_colors, else the palette slot)
+  const properties = createPropertiesPanel(model, undefined, (label) =>
+    (model.get("type_colors")?.nodes || {})[label] || registries.for("node-type").colorFor(label, palette()));
   const settings = model.get("show_settings")
     ? createSettingsPanel(model)
     : null;
@@ -297,6 +328,8 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   const container = document.createElement("div");
   container.className = "awg-graph-container";
   content.appendChild(container);
+  // An empty widget or a running query says so over the canvas (states.ts)
+  mountCanvasNote(container, model);
 
   // Properties panel (right)
   content.appendChild(properties.element);
@@ -367,7 +400,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     laneState.cross = [];
     const nodes = [...drawn.nodes.values()];
     const edges = drawn.edges;
-    const opts = getStylingOpts(model, nodes, edges);
+    const opts = getStylingOpts(model, nodes, edges, registries);
 
     nodes.forEach((node) => {
       // Graphology throws on duplicate keys and on edges to unknown nodes,
@@ -399,7 +432,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   // The same items again (maybe with new properties): restyle them where they are, without a layout
   function restyle() {
     const nodes = [...drawn.nodes.values()];
-    const opts = getStylingOpts(model, nodes, drawn.edges);
+    const opts = getStylingOpts(model, nodes, drawn.edges, registries);
     for (const node of nodes) {
       if (!graph.hasNode(node.id)) continue;
       const { x, y, ...rest } = buildNodeAttrs(node, opts);
@@ -811,6 +844,8 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     };
     return forceLane(lane.id, ids, band, {
       bandOf,
+      free: laneBounds(lane) === "column",
+      groupOf: groupField(lane),
       shrink,
       start,
       fixed: (id: string): Record<string, unknown> | null => (pinned[id] ? graph.getNodeAttributes(id) : null),
@@ -819,11 +854,9 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     });
   }
 
-  // The lanes' framing. When the rightmost lane is an action lane (its button and caption at the right edge), it
-  // leaves room on the right for the zoom controls over the canvas; other views are framed as before.
+  // The lanes' framing leaves room on the right for the controls card over the canvas, so no node sits under it
   function laneFrame() {
     const box = lanesBBox(laneState.bands);
-    if (!laneState.lanes.at(-1)?.action) return box;
     const scale = fitScale(box, container.offsetWidth, container.offsetHeight, rendererRef?.getSetting("stagePadding") ?? 30);
     const controls = ((wrapper.querySelector(".awg-zoom-controls") as HTMLElement | null)?.offsetWidth || 100) + 20;
     return scale > 0 ? lanesBBox(laneState.bands, 120, controls / scale) : box;
@@ -837,8 +870,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // Lanes with `labels: {count}` show the labels of their largest nodes at the default zoom, where each label has room
   const labelMeasure = document.createElement("canvas").getContext("2d")!;
-  // A lane label is at most this wide; a longer name is shortened with an ellipsis (the full name shows on hover)
-  const LANE_LABEL_MAX = 110;
+  // A lane label is at most LANE_LABEL_MAX wide; a longer name is shortened with an ellipsis (the full name shows on hover)
   function pickLaneLabels(): void {
     laneState.labelled = new Map();
     laneState.labelText = new Map();
@@ -874,14 +906,24 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // Force strengths: charge and link length relative to the lane's natural spacing, the collision gap in pixels.
   // Tuned on a 233-node intermediate graph with a tight core and 66 linked elements (Deriva's linked view).
-  const LANE_FORCES = { charge: 0.008, reach: 6, collideGap: 3, link: 0.8, linkStrength: 0.6, center: 0.04, partner: 0.12 };
+  const LANE_FORCES = { charge: 0.008, reach: 6, collideGap: 3, link: 0.8, linkStrength: 0.6, center: 0.04, partner: 0.12, group: 0.08 };
 
   // A d3-force simulation of one lane's nodes: repulsion scaled to the lane's natural spacing (so the nodes spread over
   // it), collision by node size, springs for the edges inside the lane, a pull to the middle that follows the shape of
   // the node's band (its row, or the lane), and a pull to its partner height. Every step clamps each node into its
   // band. Seeded, so the same lane gives the same picture. `fixed(id)` gives a position for a node that must not move
   // (pinned, or the older nodes while appended ones settle). Returns the free nodes' positions.
-  function forceLane(laneId: string, ids: string[], band: Band, { start, fixed, partners, ticks, alpha = 1, shrink = 1, bandOf = () => band }: { start: (id: string) => Point; fixed: (id: string) => Record<string, unknown> | null; partners: Map<string, number>; ticks: number; alpha?: number; shrink?: number; bandOf?: (id: string) => Band }): Map<string, Point> {
+  // The node field a lane groups by (its `group`), read from the drawn node's data
+  function groupField(lane: Lane): ((id: string) => string | undefined) | undefined {
+    const field = typeof lane.group === "string" ? lane.group : undefined;
+    if (!field) return undefined;
+    return (id: string) => {
+      const value = (drawn.nodes.get(id) as Record<string, unknown> | undefined)?.[field];
+      return value === undefined || value === null ? undefined : String(value);
+    };
+  }
+
+  function forceLane(laneId: string, ids: string[], band: Band, { start, fixed, partners, ticks, alpha = 1, shrink = 1, bandOf = () => band, free = false, groupOf }: { start: (id: string) => Point; fixed: (id: string) => Record<string, unknown> | null; partners: Map<string, number>; ticks: number; alpha?: number; shrink?: number; bandOf?: (id: string) => Band; free?: boolean; groupOf?: (id: string) => string | undefined }): Map<string, Point> {
     const f = LANE_FORCES;
     if (!ids.length) return new Map<string, Point>();
     const pxToUnits = 1 / laneScale();
@@ -922,11 +964,20 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       .force("collide", d3Force.forceCollide<LaneSimNode>().radius((d) => d.radius).strength(0.9).iterations(2))
       .force("link", d3Force.forceLink<LaneSimNode, SimulationLinkDatum<LaneSimNode>>(links).id((d) => d.id).distance(spacing * f.link)
         .strength((link) => f.linkStrength / Math.min(degree.get((link.source as LaneSimNode).id) || 1, degree.get((link.target as LaneSimNode).id) || 1)))
-      .force("x", d3Force.forceX(midX).strength(f.center * laneTall))
-      .force("y", d3Force.forceY<LaneSimNode>((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => (d.partner !== undefined ? f.partner : f.center / (d.tall ?? 1))));
+      // A free lane pulls to its middle equally in both directions (no band shape to follow): a natural outline
+      .force("x", d3Force.forceX(midX).strength(free ? f.center : f.center * laneTall))
+      .force("y", d3Force.forceY<LaneSimNode>((d) => d.partner ?? (d.band.y0 + d.band.y1) / 2).strength((d) => (d.partner !== undefined ? f.partner : free ? f.center : f.center / (d.tall ?? 1))));
+    // A lane with a `group` field pulls each group towards its own centroid, so its clusters show in the layout
+    if (groupOf) simulation.force("group", groupForce(nodes, (d: LaneSimNode) => groupOf(d.id), f.group));
     for (let i = 0; i < ticks; i++) {
       simulation.tick();
-      for (const node of nodes) if (node.fx === undefined) clampInto(node as unknown as LayoutNode, node.band);
+      // A free lane keeps its nodes in its column only (no top or bottom edge); any other force lane keeps each node in
+      // its band (its row, or the lane)
+      for (const node of nodes) {
+        if (node.fx !== undefined) continue;
+        if (free) clampIntoColumn(node as unknown as LayoutNode, node.band);
+        else clampInto(node as unknown as LayoutNode, node.band);
+      }
     }
     return new Map<string, Point>(nodes.filter((node) => node.fx === undefined).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }] as [string, Point]));
   }
@@ -939,9 +990,13 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   const renderer = new Sigma(graph, container, {
     renderLabels: model.get("show_labels"),
     renderEdgeLabels: model.get("show_edge_labels"),
-    defaultNodeColor: "#6366f1",
-    defaultEdgeColor: "#94a3b8",
+    defaultNodeColor: palette().data[0],
+    defaultEdgeColor: palette().edge,
+    // Ink nodes: a 2px ring in the node's colour over an opaque fill of it (nodeDisplay)
+    nodeProgramClasses: { bordered: BORDERED },
+    defaultNodeType: "bordered",
     labelColor: { color: labelColor(model.get("theme"), model.get("dark_mode")) },
+    labelFont: LABEL_FONT,
     labelSize: 12,
     labelWeight: "500",
     // LOD: only show labels for nodes above this rendered-size threshold
@@ -1117,7 +1172,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       const index = perNode.get(source) || 0;
       perNode.set(source, index + 1);
       const circle = loopCircle(renderer.framedGraphToViewport(node), renderer.scaleSize(node.size), index);
-      const color = (shown?.color as string) || "#94a3b8";
+      const color = (shown?.color as string) || palette().edge;
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.min(4, Math.max(1, (shown?.size as number) || 1));
       ctx.beginPath();
@@ -1384,7 +1439,16 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   }
 
   // Node reducer for type filtering, search filtering, selection, and pinned indicator
+  // Every node reducer result gets its ring and fill from its final colour; a selected node rings in ink
   renderer.setSetting("nodeReducer", (node: string, data: Record<string, any>) => {
+    const res = reduceNode(node, data);
+    if (res.hidden || !res.color) return res;
+    const selected = (model.get("selected_nodes") || []).includes(node);
+    res.fillColor = nodeDisplay(res.color, canvasBackground || palette().background).fillColor;
+    res.borderColor = selected && ringColor ? ringColor : res.color;
+    return res;
+  });
+  function reduceNode(node: string, data: Record<string, any>): Record<string, any> {
     const selectedNodes: string[] = model.get("selected_nodes") || [];
     const res: Record<string, any> = { ...data };
 
@@ -1461,7 +1525,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     else if (laneState.quietLanes.has(data.lane) && zoom >= 1 - 1e-6 && node !== laneState.hoverNode && !selectedNodes.includes(node)) res.label = "";
 
     return res;
-  });
+  }
 
   // Sigma runs the reducers on a refresh, not on a zoom: crossing the default view's scale refreshes, so labelRoom labels
   // give way to the label grid when zoomed out and come back when zoomed in again
@@ -1566,6 +1630,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     for (const entry of levels) {
       const chip = document.createElement("button");
       chip.className = "awg-level-chip" + (entry.id === model.get("current_level") ? " awg-level-chip-active" : "");
+      chip.setAttribute("aria-pressed", String(entry.id === model.get("current_level")));
       chip.title = `Show ${entry.label ?? entry.id} and above`;
       const name = document.createElement("span");
       name.textContent = String(entry.label ?? entry.id);
@@ -1593,7 +1658,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     laneState.lastSeq = Number(batch.seq) || 0;
     const nodes = batch.nodes || [], edges = batch.edges || [];
     drawn = applyBatchItems(drawn, batch);
-    const opts = getStylingOpts(model, nodes, edges);
+    const opts = getStylingOpts(model, nodes, edges, registries);
     const animated = model.get("append_animation") !== "none";
     // Per lane: its nodes before this batch, and how many the batch removes (for a lane's `relayout`)
     const before = new Map(), dropped = new Map();
@@ -1710,6 +1775,8 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       const ids = graph.filterNodes((node: string, attrs: Record<string, any>) => attrs.lane === laneId && !laneState.vanish.has(node));
       const settled = forceLane(laneId, ids, insetBand(laneState.bands[index]), {
         bandOf: (id: string) => nodeBand(laneState.lanes[index], index, drawn.nodes.get(id)),
+        free: laneBounds(laneState.lanes[index]) === "column",
+        groupOf: groupField(laneState.lanes[index]),
         start: (id: string): Point => positions.get(id) ?? { x: 0, y: 0 },
         fixed: (id: string): Record<string, unknown> | null => (freshIds.has(id) ? null : { x: positions.get(id)?.x, y: positions.get(id)?.y }),
         partners: partnerHeights(fresh, laneState.cross, positions),
@@ -1856,10 +1923,16 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     renderer.getCamera().animatedReset({ duration: 200 });
   });
 
-  // Layout selector
+  // Layout menu: an icon button with the real select laid over it (invisible), so the keyboard and screen readers
+  // get a select and its list follows the theme
+  const layoutPick = document.createElement("label");
+  layoutPick.className = "awg-layout-pick";
+  layoutPick.innerHTML = ICONS.layout;
   const layoutSelect = document.createElement("select");
   layoutSelect.className = "awg-layout-select";
   layoutSelect.title = "Layout algorithm";
+  layoutSelect.setAttribute("aria-label", "Layout algorithm");
+  layoutPick.appendChild(layoutSelect);
   // The host's own positions (layout "preset") stay one choice away after trying another layout
   const presetChoice = model.get("layout") === "preset" ? [["preset", "Preset"]] : [];
   [...presetChoice, ["spring", "Default"], ["force", "Force"], ["cluster", "Cluster"], ["circular", "Circular"], ["random", "Random"]].forEach(([val, text]) => {
@@ -1896,9 +1969,10 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   function updateModeButtons() {
     const mode = model.get("selection_mode");
-    clickModeBtn.classList.toggle("awg-mode-active", mode === "click");
-    boxModeBtn.classList.toggle("awg-mode-active", mode === "box");
-    lassoModeBtn.classList.toggle("awg-mode-active", mode === "lasso");
+    for (const [btn, on] of [[clickModeBtn, mode === "click"], [boxModeBtn, mode === "box"], [lassoModeBtn, mode === "lasso"]] as const) {
+      btn.classList.toggle("awg-mode-active", on);
+      btn.setAttribute("aria-pressed", String(on));
+    }
   }
   updateModeButtons();
 
@@ -1920,11 +1994,13 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   modeGroup.appendChild(boxModeBtn);
   modeGroup.appendChild(lassoModeBtn);
 
-  zoomControls.appendChild(zoomFitBtn);
-  zoomControls.appendChild(zoomInBtn);
-  zoomControls.appendChild(zoomOutBtn);
-  zoomControls.appendChild(layoutSelect);
-  zoomControls.appendChild(modeGroup);
+  // One floating card, the same order as the 3D view: select modes | zoom in, zoom out, fit | layout
+  const zoomGroup = document.createElement("div");
+  zoomGroup.className = "awg-zoom-group";
+  zoomGroup.append(zoomInBtn, zoomOutBtn, zoomFitBtn);
+  zoomControls.append(modeGroup, zoomGroup);
+  // show_layout_menu false: a host with a fixed layout (lanes, its own arrangement) keeps the menu out
+  if (model.get("show_layout_menu") !== false) zoomControls.appendChild(layoutPick);
   container.appendChild(zoomControls);
 
   // Selection overlay (for box select)
@@ -1943,8 +2019,9 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   container.appendChild(lassoSvg);
 
   const lassoPathEl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  lassoPathEl.setAttribute("fill", "rgba(99, 102, 241, 0.1)");
-  lassoPathEl.setAttribute("stroke", "#6366f1");
+  // The selection outline in the theme's ring colour (a CSS variable, so it follows a theme switch)
+  lassoPathEl.style.fill = "color-mix(in srgb, var(--awg-ring) 10%, transparent)";
+  lassoPathEl.style.stroke = "var(--awg-ring)";
   lassoPathEl.setAttribute("stroke-width", "2");
   lassoPathEl.setAttribute("stroke-dasharray", "4 2");
   lassoSvg.appendChild(lassoPathEl);

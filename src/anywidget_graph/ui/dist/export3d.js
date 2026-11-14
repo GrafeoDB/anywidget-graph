@@ -284,6 +284,13 @@
     if (layout === "preset" || previous.size === 0 || keys.length === 0) return false;
     return appended || keys.every((k) => previous.has(k));
   }
+  function samePlaces(previous, placed) {
+    if (previous.size === 0 || previous.size !== placed.length) return false;
+    return placed.every(({ key, pos }) => {
+      const p = previous.get(key);
+      return p !== void 0 && p.x === pos.x && p.y === pos.y && p.z === pos.z;
+    });
+  }
   function keepPositions(previous, keys, links, { fallbackStep, radius, random = Math.random }) {
     const out = /* @__PURE__ */ new Map();
     for (const k of keys) {
@@ -343,8 +350,85 @@
     }
     return out;
   }
+  function fitDistance(points, center, fovDeg, aspect) {
+    let radius = 0;
+    for (const p of points) radius = Math.max(radius, Math.hypot(p.x - center.x, p.y - center.y, p.z - center.z));
+    const halfV = fovDeg * Math.PI / 360;
+    const half = aspect < 1 ? Math.atan(Math.tan(halfV) * aspect) : halfV;
+    return radius / Math.sin(half) * 1.08;
+  }
+
+  // registry.ts
+  var SLOTS = 8;
+  var CategoryRegistry = class {
+    slots = /* @__PURE__ */ new Map();
+    other = /* @__PURE__ */ new Set();
+    next = 0;
+    /** Give the largest new categories the free slots, in descending count (ties by name); the rest become Other. */
+    assign(counts) {
+      const fresh = [...counts.entries()].filter(([category]) => !this.slots.has(category) && !this.other.has(category)).sort(([a, ca], [b, cb]) => cb - ca || (a < b ? -1 : a > b ? 1 : 0));
+      for (const [category] of fresh) {
+        if (this.next < SLOTS) this.slots.set(category, this.next++);
+        else this.other.add(category);
+      }
+    }
+    /** The category's slot (0 to 7), or null for Other and for a category never assigned. */
+    slot(category) {
+      return this.slots.get(category) ?? null;
+    }
+    /** The category's colour in a theme: its slot's data colour, else Other. */
+    colorFor(category, palette) {
+      const slot = this.slot(category);
+      return slot === null ? palette.other : palette.data[slot];
+    }
+  };
+  function countBy(items, key) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const item of items) {
+      const k = key(item);
+      if (k !== void 0) counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return counts;
+  }
+  function parsed(color) {
+    const c = color.trim();
+    const hex = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(c)?.[1];
+    if (hex) {
+      const full = hex.length === 3 ? hex.split("").map((d) => d + d).join("") : hex.slice(0, 6);
+      return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+    }
+    const n = String.raw`(\d{1,3}(?:\.\d+)?)`;
+    const rgb = new RegExp(String.raw`^rgba?\(\s*${n}\s*,\s*${n}\s*,\s*${n}\s*(?:,\s*[\d.]+%?\s*)?\)$`, "i").exec(c) ?? new RegExp(String.raw`^rgba?\(\s*${n}\s+${n}\s+${n}\s*(?:\/\s*[\d.]+%?\s*)?\)$`, "i").exec(c);
+    return rgb ? rgb.slice(1, 4).map((v) => Math.round(Math.min(255, Number(v)))) : null;
+  }
+  var RESOLVED = /* @__PURE__ */ new Map();
+  function channels(color) {
+    const direct = parsed(color);
+    if (direct || typeof document === "undefined") return direct;
+    if (!RESOLVED.has(color)) {
+      const ctx = document.createElement("canvas").getContext("2d");
+      let rgb = null;
+      if (ctx) {
+        ctx.fillStyle = "#000000";
+        ctx.fillStyle = color;
+        const overBlack = String(ctx.fillStyle);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = color;
+        rgb = overBlack === String(ctx.fillStyle) ? parsed(overBlack) : null;
+      }
+      RESOLVED.set(color, rgb);
+    }
+    return RESOLVED.get(color) ?? null;
+  }
+  function mixOver(color, background, alpha) {
+    const c = channels(color);
+    const b = channels(background);
+    if (!c || !b) return color;
+    return "#" + c.map((v, i) => Math.round(alpha * v + (1 - alpha) * b[i]).toString(16).padStart(2, "0")).join("");
+  }
 
   // lanes.ts
+  var LABEL_FONT = '"JetBrains Mono", ui-monospace, monospace';
   function colorFor(item, type, typeColors, fallback) {
     return (typeof item.color === "string" ? item.color : void 0) || typeColors?.[type] || fallback;
   }
@@ -376,7 +460,56 @@
     return gap === 1 && style === "dim" ? "dim" : "hidden";
   }
 
+  // palette.ts
+  var LIGHT = {
+    data: ["#5c93d9", "#be6133", "#008f6d", "#8a6000", "#cd7498", "#3c802c", "#6a5cab", "#b7615b"],
+    other: "#8a918d",
+    background: "#ffffff",
+    edge: "#b9c3be"
+  };
+  var DARK = {
+    data: ["#4076b9", "#ac5428", "#008665", "#8f6900", "#b65b81", "#3c7d2d", "#7161b4", "#b6605a"],
+    other: "#676f6b",
+    background: "#161a19",
+    edge: "#46504b"
+  };
+
   // styling.ts
+  var Registries = class {
+    byDimension = /* @__PURE__ */ new Map();
+    for(dimension) {
+      let registry = this.byDimension.get(dimension);
+      if (!registry) this.byDimension.set(dimension, registry = new CategoryRegistry());
+      return registry;
+    }
+    /**
+     * The dimension's registry with `counts` assigned. Categories that carry over keep their colour; counts that share
+     * no coloured category with the registry are a new dataset (another query), so the dimension starts fresh and its
+     * largest categories get the 8 colours instead of all falling to Other.
+     */
+    assigned(dimension, counts) {
+      let registry = this.for(dimension);
+      if (counts.size > 0 && ![...counts.keys()].some((category) => registry.slot(category) !== null)) {
+        registry = new CategoryRegistry();
+        this.byDimension.set(dimension, registry);
+      }
+      registry.assign(counts);
+      return registry;
+    }
+  };
+  function nodeTypeOf(node) {
+    const type = node.labels && node.labels.length > 0 ? node.labels[0] : node.label;
+    return type ? String(type) : void 0;
+  }
+  function assignNodeTypes(registries, nodes) {
+    registries.assigned("node-type", countBy(nodes, nodeTypeOf));
+  }
+  function categoricalCounts(items, field) {
+    return countBy(items, (item) => {
+      const v = item[field];
+      return v === void 0 || v === null || typeof v === "number" ? void 0 : String(v);
+    });
+  }
   var COLOR_SCALES = {
     viridis: [[0.267, 4e-3, 0.329], [0.282, 0.141, 0.458], [0.253, 0.265, 0.53], [0.207, 0.372, 0.553], [0.164, 0.471, 0.558], [0.128, 0.567, 0.551], [0.134, 0.658, 0.517], [0.267, 0.749, 0.441], [0.478, 0.821, 0.318], [0.741, 0.873, 0.15], [0.993, 0.906, 0.144]],
     plasma: [[0.05, 0.03, 0.528], [0.295, 0.012, 0.615], [0.492, 0.012, 0.658], [0.654, 0.072, 0.639], [0.798, 0.195, 0.561], [0.897, 0.329, 0.445], [0.963, 0.48, 0.314], [0.993, 0.64, 0.186], [0.98, 0.807, 0.086], [0.94, 0.975, 0.131], [0.94, 0.975, 0.131]],
@@ -385,18 +518,6 @@
     cividis: [[0, 0.135, 0.305], [0.074, 0.192, 0.351], [0.145, 0.247, 0.382], [0.228, 0.302, 0.39], [0.31, 0.358, 0.393], [0.394, 0.414, 0.39], [0.482, 0.47, 0.379], [0.575, 0.53, 0.358], [0.672, 0.595, 0.325], [0.775, 0.666, 0.274], [0.88, 0.742, 0.199]],
     turbo: [[0.19, 0.072, 0.232], [0.231, 0.322, 0.745], [0.137, 0.572, 0.938], [0.069, 0.773, 0.8], [0.2, 0.91, 0.51], [0.507, 0.979, 0.254], [0.775, 0.953, 0.136], [0.953, 0.804, 0.098], [0.993, 0.561, 0.09], [0.914, 0.286, 0.063], [0.647, 0.082, 0.033]]
   };
-  var CATEGORICAL_COLORS = [
-    "#6366f1",
-    "#f59e0b",
-    "#10b981",
-    "#ef4444",
-    "#8b5cf6",
-    "#06b6d4",
-    "#f97316",
-    "#84cc16",
-    "#ec4899",
-    "#14b8a6"
-  ];
   var DISPLAY_NAME_FIELDS = ["name", "title", "label", "display", "id"];
   function getColorFromScale(value, scaleName, domain) {
     const scale = COLOR_SCALES[scaleName] || COLOR_SCALES.viridis;
@@ -415,12 +536,6 @@
     const b = Math.round((c1[2] + f * (c2[2] - c1[2])) * 255);
     return `rgb(${r},${g},${b})`;
   }
-  function getCategoricalColor(value) {
-    let hash = 0;
-    const str = String(value);
-    for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i) | 0;
-    return CATEGORICAL_COLORS[Math.abs(hash) % CATEGORICAL_COLORS.length];
-  }
   function pointInPolygon(x, y, polygon) {
     let inside = false;
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -432,15 +547,17 @@
     }
     return inside;
   }
-  function computeNodeColor(node, colorField, colorScale, colorDomain, typeColors) {
+  function computeNodeColor(node, opts) {
     if (node.color) return node.color;
+    const { colorField, palette, registries } = opts;
     if (!colorField || node[colorField] === void 0) {
-      const nodeType = node.labels && node.labels.length > 0 ? node.labels[0] : node.label || "";
-      return colorFor(node, nodeType, typeColors, nodeType ? getCategoricalColor(nodeType) : "#6366f1");
+      const nodeType = nodeTypeOf(node);
+      const fallback = nodeType ? registries.for("node-type").colorFor(nodeType, palette) : opts.anyTyped ? palette.other : palette.data[0];
+      return colorFor(node, nodeType ?? "", opts.typeColors.nodes, fallback);
     }
     const value = node[colorField];
-    if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
-    return getCategoricalColor(value);
+    if (typeof value === "number") return getColorFromScale(value, opts.colorScale, opts.colorDomain);
+    return registries.for(`node:${colorField}`).colorFor(String(value), palette);
   }
   function computeNodeSize(node, sizeField, sizeDomain, sizeRange, degree) {
     if (node.size !== void 0) return node.size;
@@ -472,7 +589,7 @@
     }
     return [min, max];
   }
-  function getStylingOpts(model2, nodes, edges) {
+  function getStylingOpts(model2, nodes, edges, registries = new Registries()) {
     const colorField = model2.get("color_field");
     const colorScale = model2.get("color_scale") || "viridis";
     let colorDomain = model2.get("color_domain");
@@ -509,6 +626,9 @@
         degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
       });
     }
+    assignNodeTypes(registries, nodes);
+    if (colorField) registries.assigned(`node:${colorField}`, categoricalCounts(nodes, colorField));
+    if (edgeColorField) registries.assigned(`edge:${edgeColorField}`, categoricalCounts(edges, edgeColorField));
     return {
       colorField,
       colorScale,
@@ -524,17 +644,55 @@
       edgeSizeRange,
       degreeMap,
       typeColors: model2.get("type_colors") || {},
-      levelField: model2.get("level_field") || "level"
+      levelField: model2.get("level_field") || "level",
+      palette: model2.get("dark_mode") ? DARK : LIGHT,
+      registries,
+      anyTyped: nodes.some((node) => nodeTypeOf(node) !== void 0)
     };
   }
   function computeEdgeColor(edge, opts) {
     if (typeof edge.color === "string" && edge.color) return edge.color;
-    let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, "#94a3b8");
+    let color = colorFor(edge, edge.type || edge.label || "unknown", opts.typeColors?.edges, opts.palette.edge);
     if (opts.edgeColorField && edge[opts.edgeColorField] !== void 0) {
       const val = edge[opts.edgeColorField];
-      color = typeof val === "number" ? getColorFromScale(val, opts.edgeColorScale, opts.edgeColorDomain) : getCategoricalColor(val);
+      color = typeof val === "number" ? getColorFromScale(val, opts.edgeColorScale, opts.edgeColorDomain) : opts.registries.for(`edge:${opts.edgeColorField}`).colorFor(String(val), opts.palette);
     }
     return color;
+  }
+
+  // ink.ts
+  var INK_FILL = 0.38;
+  var INK_SHADE = 0.35;
+  var RIM_FROM = 0.55;
+  var RIM_TO = 0.8;
+  var ANCHORS = ["#include <common>", "#include <color_fragment>", "#include <opaque_fragment>"];
+  function inkFragment(fragment) {
+    for (const anchor of ANCHORS) {
+      if (!fragment.includes(anchor)) throw new Error(`ink.ts: the shader has no ${anchor} to hook into`);
+    }
+    return fragment.replace(
+      "#include <common>",
+      "#include <common>\nuniform vec3 uInkBackground;\nuniform float uInkFill;\nuniform float uInkShade;\nvec3 inkMix(vec3 a, vec3 b, float t) { return pow(mix(pow(a, vec3(1.0 / 2.2)), pow(b, vec3(1.0 / 2.2)), t), vec3(2.2)); }"
+    ).replace(
+      "#include <color_fragment>",
+      "#include <color_fragment>\n	vec3 inkColor = diffuseColor.rgb;\n	vec3 inkFill = inkMix(uInkBackground, inkColor, uInkFill);\n	diffuseColor.rgb = inkFill;"
+    ).replace(
+      "#include <opaque_fragment>",
+      `#include <opaque_fragment>
+	gl_FragColor.rgb = mix(inkFill, gl_FragColor.rgb, uInkShade);
+	float inkRim = 1.0 - abs(dot(normalize(normal), normalize(vViewPosition)));
+	gl_FragColor.rgb = mix(gl_FragColor.rgb, inkColor, smoothstep(${RIM_FROM.toFixed(2)}, ${RIM_TO.toFixed(2)}, inkRim));`
+    );
+  }
+  function applyInk(target, background) {
+    const material = target;
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.uInkBackground = background;
+      shader.uniforms.uInkFill = { value: INK_FILL };
+      shader.uniforms.uInkShade = { value: INK_SHADE };
+      shader.fragmentShader = inkFragment(shader.fragmentShader);
+    };
+    material.customProgramCacheKey = () => "anywidgets-ink";
   }
 
   // icons.ts
@@ -544,6 +702,8 @@
     close: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>`,
     chevron: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>`,
     chevronRight: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>`,
+    // Layout menu: three linked nodes
+    layout: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 6h9M6.3 8.2l4.4 7.6M17.7 8.2l-4.4 7.6"/></svg>`,
     node: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>`,
     edge: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m-4-4l4 4-4 4"/></svg>`,
     property: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg>`,
@@ -563,12 +723,13 @@
 
   // canvas3d.ts
   var SCENE_SIZE = 2;
+  var MONO = LABEL_FONT;
   var LABEL_BUDGET = 400;
   var ARROW_BUDGET = 5e3;
   var INSTANCE_THRESHOLD = 100;
   var TICKS_PER_FRAME = 4;
-  var CANVAS_LIGHT = "#ffffff";
-  var CANVAS_DARK = "#181c1a";
+  var CANVAS_LIGHT = LIGHT.background;
+  var CANVAS_DARK = DARK.background;
   var DEFAULT_BACKGROUND = "#fafafa";
   function createCanvas3D(model2, container, callbacks = {}) {
     let scene, camera, renderer, controls;
@@ -604,6 +765,7 @@
     function pinnedSet() {
       return new Set(Object.keys(model2.get("pinned_nodes") || {}).map(String));
     }
+    const inkBackground = { value: new THREE.Color(LIGHT.background) };
     function effectiveBackground() {
       const custom = model2.get("theme")?.background;
       if (custom) return custom;
@@ -614,6 +776,7 @@
     function init() {
       scene = new THREE.Scene();
       scene.background = new THREE.Color(effectiveBackground());
+      inkBackground.value.set(effectiveBackground());
       const initW = container.clientWidth || model2.get("width") || 800;
       const initH = container.clientHeight || model2.get("height") || 600;
       camera = new THREE.PerspectiveCamera(60, initW / initH, 5e-3, 500);
@@ -692,11 +855,11 @@
         obj.traverse(disposeObject);
       }
     }
-    function nodeTypeOf(r) {
+    function nodeTypeOf2(r) {
       return String(r.data.labels?.[0] ?? r.data.label ?? "");
     }
     function isHidden(r) {
-      return r.level === "hidden" || hiddenNodeTypes.has(nodeTypeOf(r));
+      return r.level === "hidden" || hiddenNodeTypes.has(nodeTypeOf2(r));
     }
     function isEdgeHidden(e) {
       const s = byKey.get(e.source), t = byKey.get(e.target);
@@ -724,13 +887,13 @@
       disposeGroup(labelsGroup);
       const nodes = model2.get("nodes") ?? [];
       const edges = model2.get("edges") ?? [];
-      const optsNow = getStylingOpts(model2, nodes, edges);
+      const optsNow = getStylingOpts(model2, nodes, edges, callbacks.registries);
       const pinned = pinnedSet();
       records = nodes.map((data, i) => {
         const key = String(data.id ?? `node_${i}`);
         const label = autoLabel(data);
         const sizePx = computeNodeSize(data, optsNow.sizeField, optsNow.sizeDomain, optsNow.sizeRange, optsNow.degreeMap.get(String(data.id)));
-        const colorCss = computeNodeColor(data, optsNow.colorField, optsNow.colorScale, optsNow.colorDomain, optsNow.typeColors.nodes);
+        const colorCss = computeNodeColor(data, optsNow);
         return {
           id: data.id ?? key,
           key,
@@ -784,7 +947,7 @@
       applyLevelStates();
       applyColors();
       updateTransforms();
-      if (!keep) fitToView();
+      if (!keep && !samePlaces(previous, records)) fitToView();
     }
     function placeKeepingPositions(previous) {
       layoutName = model2.get("layout") || "spring";
@@ -799,6 +962,7 @@
       if (useInstancing) {
         const geometry = new THREE.SphereGeometry(1, 16, 12);
         const material = new THREE.MeshPhongMaterial({ vertexColors: true });
+        applyInk(material, inkBackground);
         const mesh = new THREE.InstancedMesh(geometry, material, records.length);
         const colors = new Float32Array(records.length * 3);
         geometry.setAttribute("color", new THREE.InstancedBufferAttribute(colors, 3));
@@ -812,6 +976,7 @@
         const geometry = new THREE.SphereGeometry(1, 20, 14);
         records.forEach((r, i) => {
           const material = new THREE.MeshPhongMaterial({ color: r.color });
+          applyInk(material, inkBackground);
           const mesh = new THREE.Mesh(geometry, material);
           mesh.userData = { isInstanced: false, key: r.key, index: i };
           r.mesh = mesh;
@@ -863,18 +1028,18 @@
       const textColor = labelColor(model2.get("theme") || {}, model2.get("dark_mode"));
       for (const r of records) {
         const canvas = document.createElement("canvas");
-        canvas.width = 256;
+        canvas.width = 384;
         canvas.height = 64;
         const ctx = canvas.getContext("2d");
-        ctx.font = "30px sans-serif";
+        ctx.font = `500 30px ${MONO}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = textColor;
-        ctx.fillText(r.label.length > 26 ? r.label.slice(0, 25) + "…" : r.label, 128, 32);
+        ctx.fillText(r.label.length > 20 ? r.label.slice(0, 19) + "…" : r.label, canvas.width / 2, 32);
         const texture = new THREE.CanvasTexture(canvas);
         const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
         sprite.renderOrder = 999;
-        sprite.scale.set(0.3, 0.075, 1);
+        sprite.scale.set(0.42, 0.07, 1);
         labelsGroup.add(sprite);
         r.labelSprite = sprite;
       }
@@ -1065,7 +1230,7 @@
       const colAttr = instanced?.geometry.getAttribute("color");
       for (const r of records) {
         let c = r.baseColor.clone();
-        const override = typeColorOverrides.get(nodeTypeOf(r));
+        const override = typeColorOverrides.get(nodeTypeOf2(r));
         if (override) c = new THREE.Color(override);
         if (r.level === "dim") c.multiplyScalar(0.25);
         if (searchTerm && !matchesSearch(r)) c.multiplyScalar(0.08);
@@ -1103,8 +1268,8 @@
       }
       if (box.isEmpty()) return;
       const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3()).length() || SCENE_SIZE;
-      const distance = size / (2 * Math.tan(Math.PI * camera.fov / 360)) * 1.15;
+      const shown = records.filter((r) => !isHidden(r)).map((r) => r.pos);
+      const distance = fitDistance(shown, center, camera.fov, camera.aspect) || SCENE_SIZE;
       const dir = camera.position.clone().sub(controls.target);
       if (dir.lengthSq() < 1e-6) dir.set(0.6, 0.5, 0.8);
       dir.normalize();
@@ -1261,19 +1426,21 @@
     }
     function setupZoomControls() {
       const zoomControls = document.createElement("div");
-      zoomControls.className = "awg3-zoom-controls";
+      zoomControls.className = "awg-zoom-controls";
       const modeGroup = document.createElement("div");
-      modeGroup.className = "awg3-mode-group";
+      modeGroup.className = "awg-mode-group";
       const clickBtn = mkBtn(ICONS.cursor, "Click / multi-select mode");
       const boxBtn = mkBtn(ICONS.boxSelect, "Box select mode");
       const lassoBtn = mkBtn(ICONS.lasso, "Lasso select mode");
+      for (const btn of [clickBtn, boxBtn, lassoBtn]) btn.classList.add("awg-mode-btn");
       function setActiveMode(mode) {
         currentMode = mode;
         model2.set("selection_mode", mode);
         model2.save_changes();
-        clickBtn.classList.toggle("awg3-mode-active", mode === "click" || mode === "multi");
-        boxBtn.classList.toggle("awg3-mode-active", mode === "box");
-        lassoBtn.classList.toggle("awg3-mode-active", mode === "lasso");
+        for (const [btn, on] of [[clickBtn, mode === "click" || mode === "multi"], [boxBtn, mode === "box"], [lassoBtn, mode === "lasso"]]) {
+          btn.classList.toggle("awg-mode-active", on);
+          btn.setAttribute("aria-pressed", String(on));
+        }
         controls.enabled = mode === "click" || mode === "multi";
         if (boxOverlay) boxOverlay.style.display = mode === "box" ? "block" : "none";
         if (lassoOverlayEl) lassoOverlayEl.style.display = mode === "lasso" ? "block" : "none";
@@ -1303,12 +1470,15 @@
       });
       const zoomFitBtn = mkBtn(ICONS.zoomFit, "Fit to view");
       zoomFitBtn.addEventListener("click", fitToView);
-      zoomControls.append(zoomInBtn, zoomOutBtn, zoomFitBtn);
+      const zoomGroup = document.createElement("div");
+      zoomGroup.className = "awg-zoom-group";
+      zoomGroup.append(zoomInBtn, zoomOutBtn, zoomFitBtn);
+      zoomControls.appendChild(zoomGroup);
       container.appendChild(zoomControls);
     }
     function mkBtn(icon, title) {
       const btn = document.createElement("button");
-      btn.className = "awg3-zoom-btn";
+      btn.className = "awg-zoom-btn";
       btn.innerHTML = icon;
       btn.title = title;
       return btn;
@@ -1380,8 +1550,8 @@
       lassoSvg.style.display = "none";
       container.appendChild(lassoSvg);
       lassoPathEl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-      lassoPathEl.setAttribute("fill", "rgba(99, 102, 241, 0.1)");
-      lassoPathEl.setAttribute("stroke", "#6366f1");
+      lassoPathEl.style.fill = "color-mix(in srgb, var(--awg-ring) 10%, transparent)";
+      lassoPathEl.style.stroke = "var(--awg-ring)";
       lassoPathEl.setAttribute("stroke-width", "2");
       lassoPathEl.setAttribute("stroke-dasharray", "4 2");
       lassoSvg.appendChild(lassoPathEl);
@@ -1457,29 +1627,43 @@
     }
     function setupAxesAndGrid() {
       disposeGroup(axesGroup);
+      const pal = model2.get("dark_mode") ? DARK : LIGHT;
+      const bg = effectiveBackground();
+      const base = /^#[0-9a-f]{6}$/i.test(bg) ? bg : pal.background;
       if (model2.get("show_axes")) {
-        axesGroup.add(new THREE.AxesHelper(SCENE_SIZE * 0.6));
+        const extent = SCENE_SIZE * 0.6;
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(extent, 0, 0),
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, extent, 0),
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, 0, extent)
+        ]);
+        axesGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: pal.edge })));
         const labels = model2.get("axis_labels") || { x: "X", y: "Y", z: "Z" };
-        addAxisLabel(labels.x, [SCENE_SIZE * 0.65, 0, 0], 16729156);
-        addAxisLabel(labels.y, [0, SCENE_SIZE * 0.65, 0], 4521796);
-        addAxisLabel(labels.z, [0, 0, SCENE_SIZE * 0.65], 4474111);
+        addAxisLabel(labels.x, [SCENE_SIZE * 0.66, 0, 0], pal.other);
+        addAxisLabel(labels.y, [0, SCENE_SIZE * 0.66, 0], pal.other);
+        addAxisLabel(labels.z, [0, 0, SCENE_SIZE * 0.66], pal.other);
       }
       if (model2.get("show_grid")) {
-        axesGroup.add(new THREE.GridHelper(SCENE_SIZE, model2.get("grid_divisions") || 10, 8947848, 5592405));
+        const grid = mixOver(pal.edge, base, 0.4);
+        axesGroup.add(new THREE.GridHelper(SCENE_SIZE, model2.get("grid_divisions") || 10, mixOver(pal.edge, base, 0.7), grid));
       }
     }
     function addAxisLabel(text, position, color) {
       const canvas = document.createElement("canvas");
-      canvas.width = 64;
+      canvas.width = 128;
       canvas.height = 32;
       const ctx = canvas.getContext("2d");
-      ctx.font = "bold 24px Arial";
-      ctx.fillStyle = "#" + color.toString(16).padStart(6, "0");
+      ctx.font = `500 22px ${MONO}`;
+      ctx.fillStyle = color;
       ctx.textAlign = "center";
-      ctx.fillText(String(text ?? ""), 32, 24);
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) }));
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(text ?? ""), 64, 16);
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
       sprite.position.set(position[0], position[1], position[2]);
-      sprite.scale.set(0.12, 0.06, 1);
+      sprite.scale.set(0.26, 0.065, 1);
       axesGroup.add(sprite);
     }
     function bindModelEvents() {
@@ -1497,14 +1681,19 @@
         buildLabels();
         updateTransforms();
       });
-      model2.on("change:background", () => {
+      const repaintBackground = () => {
         scene.background = new THREE.Color(effectiveBackground());
-      });
+        inkBackground.value.set(effectiveBackground());
+        setupAxesAndGrid();
+      };
+      model2.on("change:background", repaintBackground);
       model2.on("change:dark_mode", () => {
-        scene.background = new THREE.Color(effectiveBackground());
+        repaintBackground();
+        queueRebuild();
       });
       model2.on("change:theme", () => {
-        scene.background = new THREE.Color(effectiveBackground());
+        repaintBackground();
+        queueRebuild();
       });
       model2.on("change:show_axes", setupAxesAndGrid);
       model2.on("change:show_grid", setupAxesAndGrid);

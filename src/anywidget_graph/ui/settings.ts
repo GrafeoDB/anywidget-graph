@@ -1,6 +1,7 @@
 /**
  * Settings panel component.
  */
+import { panelControls, setPanelOpen } from "./panel.ts";
 import { ICONS } from "./icons.ts";
 import * as neo4jBackend from "./neo4j.ts";
 import * as grafeoBackend from "./grafeo.ts";
@@ -50,7 +51,7 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close settings";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   header.appendChild(closeBtn);
@@ -338,7 +339,7 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
   view3dGroup.className = "awg-3d-settings";
 
   const viewSelect = document.createElement("select");
-  view3dGroup.appendChild(
+  const viewGroup = view3dGroup.appendChild(
     createFormGroup("View", () => {
       viewSelect.className = "awg-select";
       [
@@ -361,6 +362,8 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
       return viewSelect;
     })
   );
+  // show_view_toggle false: a host with a fixed view keeps the 2D/3D choice out of the settings too
+  if (model.get("show_view_toggle") === false) viewGroup.style.display = "none";
 
   // Bloom: how strongly nodes push apart in the 3D layout (force3d_repulsion)
   view3dGroup.appendChild(
@@ -626,13 +629,7 @@ export function createSettingsPanel(model: WidgetModel, callbacks?: { onClose?: 
   // Initialize
   updateFormVisibility();
 
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open"),
-  };
+  return panelControls(panel);
 }
 
 /**
@@ -647,8 +644,22 @@ function createFormGroup(label: string, inputFn: () => Node): HTMLDivElement {
   labelEl.textContent = label;
   group.appendChild(labelEl);
 
-  group.appendChild(inputFn());
+  const control = inputFn() as HTMLElement;
+  group.appendChild(control);
+  // The label names its control (screen readers, and a click on it focuses the control); a toggle whose own label
+  // already has text (Dark mode) keeps that name
+  const field = isField(control) ? control : (control.querySelector?.("input, select, textarea") as HTMLElement | null);
+  if (field && !(control.tagName === "LABEL" && control.textContent?.trim())) {
+    field.id ||= `awg-field-${++fieldIds}`;
+    labelEl.htmlFor = field.id;
+  }
   return group;
+}
+
+let fieldIds = 0;
+
+function isField(el: HTMLElement): boolean {
+  return ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName);
 }
 
 /**

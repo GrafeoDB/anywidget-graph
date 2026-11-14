@@ -8,7 +8,7 @@ import {
   laneBands, lanesBBox, columnPositions, glyphHit, fitBox, labelColor, nextLaneAction, edgeKey, mergeItems,
   sameItems, extentBand, crossNeighbours, laneIcon, removeItems, edgeMatches, applyBatchItems,
   withTotals, shownOf, totalShown, nodeType, edgeType, insetBand,
-  seededRandom, clampInto, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
+  seededRandom, clampInto, clampIntoColumn, laneBounds, groupCentroids, groupForce, partnerHeights, laneSpacing, labelClear, laneSizeScale, rowOf, rowBands, bigBatch,
   colorFor, labelsThatFit, shortenLabel, neighbourhood, loopCircle, presetPositions, dimColor, roomyFrame,
   mixColor, fadeColor, dashPattern, contrastText, levelState,
 } from "../../src/anywidget_graph/ui/lanes.ts";
@@ -299,6 +299,47 @@ test("every step keeps a node inside its lane, so the lanes stay distinct graphs
   assert.deepEqual(inside, { x: 150, y: 20 });
   // A node pushed over the edge stops there (its velocity towards the edge is dropped)
   assert.deepEqual(outside, { x: 200, y: 0, vx: 0, vy: 0 });
+});
+
+test("a free force lane keeps only its column; rows and the default keep the band's rectangle", () => {
+  // free: the graph's own structure and the centring pull decide its outline (opt-in, so existing lanes are unchanged)
+  assert.equal(laneBounds({ id: "intermediate", layout: "force", free: true }), "column");
+  assert.equal(laneBounds({ id: "intermediate", layout: "force" }), "rect");
+  // rows are bands of their own: a node stays in its row even in a free lane
+  assert.equal(laneBounds({ id: "output", layout: "force", free: true, rows: { field: "layer", order: [] } }), "rect");
+});
+
+test("a free lane's node never crosses into the next lane, but may leave the band's top or bottom", () => {
+  const band = { x0: 100, x1: 200, y0: 0, y1: 50 };
+  const node = { x: 250, y: -30, vx: 3, vy: -2 };
+  clampIntoColumn(node, band);
+  assert.deepEqual(node, { x: 200, y: -30, vx: 0, vy: -2 });
+});
+
+test("a group's centroid is the mean position of its nodes; nodes without a group are left out", () => {
+  const nodes = [{ x: 0, y: 0, g: "a" }, { x: 10, y: 0, g: "a" }, { x: 5, y: 5, g: "b" }, { x: 99, y: 99 }];
+  const centroids = groupCentroids(nodes, (n) => (n as { g?: string }).g);
+  assert.deepEqual(Object.fromEntries(centroids), { a: { x: 5, y: 0 }, b: { x: 5, y: 5 } });
+});
+
+test("a lane's groups (its `group` field) pull towards their own centroid, so clusters show in the layout", () => {
+  type N = { x: number; y: number; vx?: number; vy?: number; fx?: number; g?: string };
+  // Two groups interleaved on a line, a node without a group and a pinned one
+  const nodes: N[] = [0, 1, 2, 3, 4, 5].map((i) => ({ x: i * 20, y: 0, g: i % 2 ? "b" : "a" }));
+  const loose: N = { x: 50, y: 50 };
+  const pinned: N = { x: 200, y: 0, fx: 200, g: "a" };
+  const all = [...nodes, loose, pinned];
+  const spread = (g: string) => { const xs = all.filter((n) => n.g === g && n !== pinned).map((n) => n.x); return Math.max(...xs) - Math.min(...xs); };
+  const before = { a: spread("a"), b: spread("b") };
+  const force = groupForce(all, (n) => n.g, 0.1);
+  for (let i = 0; i < 50; i++) {
+    force(1);
+    for (const n of all) { if (n.fx !== undefined) continue; n.x += n.vx ?? 0; n.y += n.vy ?? 0; n.vx = (n.vx ?? 0) * 0.6; n.vy = (n.vy ?? 0) * 0.6; }
+  }
+  assert.ok(spread("a") < before.a / 4, `group a spread ${spread("a")} (was ${before.a})`);
+  assert.ok(spread("b") < before.b / 4, `group b spread ${spread("b")} (was ${before.b})`);
+  assert.deepEqual([loose.x, loose.y], [50, 50], "a node without a group is not pulled");
+  assert.deepEqual([pinned.vx, pinned.vy], [undefined, undefined], "a pinned node is not pulled");
 });
 
 test("a node is pulled towards the mean height of its partners in lanes already laid out", () => {

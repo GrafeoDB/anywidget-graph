@@ -1,13 +1,19 @@
 /**
  * Properties panel component for displaying selected node/edge details.
  */
+import { panelControls, setPanelOpen } from "./panel.ts";
 import { ICONS } from "./icons.ts";
 import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 
 /**
  * Create the properties panel.
  */
-export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?: () => void }): Panel {
+export function createPropertiesPanel(
+  model: WidgetModel,
+  callbacks?: { onClose?: () => void },
+  // A node type's colour as the view draws it, so the label tags match the nodes
+  colorOf?: (label: string) => string,
+): Panel {
   const panel = document.createElement("div");
   panel.className = "awg-properties-panel";
 
@@ -20,7 +26,7 @@ export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close properties";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   header.appendChild(closeBtn);
@@ -45,7 +51,7 @@ export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?
     }
 
     if (selectedNode) {
-      renderNodeProperties(content, selectedNode);
+      renderNodeProperties(content, selectedNode, colorOf);
     }
 
     if (selectedEdge) {
@@ -55,17 +61,14 @@ export function createPropertiesPanel(model: WidgetModel, callbacks?: { onClose?
 
   model.on("change:selected_node", renderProperties);
   model.on("change:selected_edge", renderProperties);
+  // The label tags take the type's colour as drawn: each theme has its own data colours, and the host may set its own
+  model.on("change:dark_mode", renderProperties);
+  model.on("change:type_colors", renderProperties);
   renderProperties();
 
   panel.appendChild(content);
 
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open"),
-  };
+  return panelControls(panel);
 }
 
 /**
@@ -92,10 +95,13 @@ function propertyItem(key: string, value: string | HTMLElement, valueClass = "aw
 /**
  * Render node properties.
  */
-export function renderNodeProperties(content: HTMLElement, node: GraphNode): void {
+export function renderNodeProperties(content: HTMLElement, node: GraphNode, colorOf?: (label: string) => string): void {
   const nodeHeader = document.createElement("div");
   nodeHeader.className = "awg-properties-header";
   nodeHeader.innerHTML = `${ICONS.node} <span class="awg-properties-type">Node</span>`;
+  // The header's dot and each label tag take the type's colour (--awg-tag), drawn like a node: ring and 38% fill
+  const firstLabel = node.labels?.[0] ?? node.label;
+  if (colorOf && firstLabel !== undefined) nodeHeader.style.setProperty("--awg-tag", colorOf(String(firstLabel)));
   content.appendChild(nodeHeader);
 
   content.appendChild(propertyItem("id", String(node.id || "N/A")));
@@ -103,7 +109,10 @@ export function renderNodeProperties(content: HTMLElement, node: GraphNode): voi
   if (node.labels && node.labels.length > 0) {
     const labels = document.createElement("span");
     labels.className = "awg-property-value awg-property-labels";
-    node.labels.forEach((l: string) => labels.appendChild(textSpan("awg-label-tag", String(l))));
+    node.labels.forEach((l: string) => {
+      const tag = labels.appendChild(textSpan("awg-label-tag", String(l)));
+      if (colorOf) tag.style.setProperty("--awg-tag", colorOf(String(l)));
+    });
     content.appendChild(propertyItem("labels", labels));
   }
 

@@ -2,14 +2,137 @@
 "use strict";
 (() => {
   // vendor-globals.ts
-  var { Graph, Sigma, circular, random, forceAtlas2, d3Force } = anywidgetGraphVendor;
+  var { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2, d3Force } = anywidgetGraphVendor;
 
   // lanes.ts
+  var LABEL_FONT = '"JetBrains Mono", ui-monospace, monospace';
   function colorFor(item, type, typeColors, fallback) {
     return (typeof item.color === "string" ? item.color : void 0) || typeColors?.[type] || fallback;
   }
 
+  // palette.ts
+  var LIGHT = {
+    data: ["#5c93d9", "#be6133", "#008f6d", "#8a6000", "#cd7498", "#3c802c", "#6a5cab", "#b7615b"],
+    other: "#8a918d",
+    background: "#ffffff",
+    edge: "#b9c3be"
+  };
+  var DARK = {
+    data: ["#4076b9", "#ac5428", "#008665", "#8f6900", "#b65b81", "#3c7d2d", "#7161b4", "#b6605a"],
+    other: "#676f6b",
+    background: "#161a19",
+    edge: "#46504b"
+  };
+
+  // registry.ts
+  var SLOTS = 8;
+  var CategoryRegistry = class {
+    slots = /* @__PURE__ */ new Map();
+    other = /* @__PURE__ */ new Set();
+    next = 0;
+    /** Give the largest new categories the free slots, in descending count (ties by name); the rest become Other. */
+    assign(counts) {
+      const fresh = [...counts.entries()].filter(([category]) => !this.slots.has(category) && !this.other.has(category)).sort(([a, ca], [b, cb]) => cb - ca || (a < b ? -1 : a > b ? 1 : 0));
+      for (const [category] of fresh) {
+        if (this.next < SLOTS) this.slots.set(category, this.next++);
+        else this.other.add(category);
+      }
+    }
+    /** The category's slot (0 to 7), or null for Other and for a category never assigned. */
+    slot(category) {
+      return this.slots.get(category) ?? null;
+    }
+    /** The category's colour in a theme: its slot's data colour, else Other. */
+    colorFor(category, palette) {
+      const slot = this.slot(category);
+      return slot === null ? palette.other : palette.data[slot];
+    }
+  };
+  function countBy(items, key) {
+    const counts = /* @__PURE__ */ new Map();
+    for (const item of items) {
+      const k = key(item);
+      if (k !== void 0) counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return counts;
+  }
+  function parsed(color) {
+    const c = color.trim();
+    const hex = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(c)?.[1];
+    if (hex) {
+      const full = hex.length === 3 ? hex.split("").map((d) => d + d).join("") : hex.slice(0, 6);
+      return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+    }
+    const n = String.raw`(\d{1,3}(?:\.\d+)?)`;
+    const rgb = new RegExp(String.raw`^rgba?\(\s*${n}\s*,\s*${n}\s*,\s*${n}\s*(?:,\s*[\d.]+%?\s*)?\)$`, "i").exec(c) ?? new RegExp(String.raw`^rgba?\(\s*${n}\s+${n}\s+${n}\s*(?:\/\s*[\d.]+%?\s*)?\)$`, "i").exec(c);
+    return rgb ? rgb.slice(1, 4).map((v) => Math.round(Math.min(255, Number(v)))) : null;
+  }
+  var RESOLVED = /* @__PURE__ */ new Map();
+  function channels(color) {
+    const direct = parsed(color);
+    if (direct || typeof document === "undefined") return direct;
+    if (!RESOLVED.has(color)) {
+      const ctx = document.createElement("canvas").getContext("2d");
+      let rgb = null;
+      if (ctx) {
+        ctx.fillStyle = "#000000";
+        ctx.fillStyle = color;
+        const overBlack = String(ctx.fillStyle);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = color;
+        rgb = overBlack === String(ctx.fillStyle) ? parsed(overBlack) : null;
+      }
+      RESOLVED.set(color, rgb);
+    }
+    return RESOLVED.get(color) ?? null;
+  }
+  function mixOver(color, background, alpha) {
+    const c = channels(color);
+    const b = channels(background);
+    if (!c || !b) return color;
+    return "#" + c.map((v, i) => Math.round(alpha * v + (1 - alpha) * b[i]).toString(16).padStart(2, "0")).join("");
+  }
+
   // styling.ts
+  var Registries = class {
+    byDimension = /* @__PURE__ */ new Map();
+    for(dimension) {
+      let registry = this.byDimension.get(dimension);
+      if (!registry) this.byDimension.set(dimension, registry = new CategoryRegistry());
+      return registry;
+    }
+    /**
+     * The dimension's registry with `counts` assigned. Categories that carry over keep their colour; counts that share
+     * no coloured category with the registry are a new dataset (another query), so the dimension starts fresh and its
+     * largest categories get the 8 colours instead of all falling to Other.
+     */
+    assigned(dimension, counts) {
+      let registry = this.for(dimension);
+      if (counts.size > 0 && ![...counts.keys()].some((category) => registry.slot(category) !== null)) {
+        registry = new CategoryRegistry();
+        this.byDimension.set(dimension, registry);
+      }
+      registry.assign(counts);
+      return registry;
+    }
+  };
+  var NODE_FILL = 0.38;
+  function nodeDisplay(color, background) {
+    return { color, fillColor: mixOver(color, background, NODE_FILL) };
+  }
+  function nodeTypeOf(node) {
+    const type = node.labels && node.labels.length > 0 ? node.labels[0] : node.label;
+    return type ? String(type) : void 0;
+  }
+  function assignNodeTypes(registries, nodes2) {
+    registries.assigned("node-type", countBy(nodes2, nodeTypeOf));
+  }
+  function categoricalCounts(items, field) {
+    return countBy(items, (item) => {
+      const v = item[field];
+      return v === void 0 || v === null || typeof v === "number" ? void 0 : String(v);
+    });
+  }
   var COLOR_SCALES = {
     viridis: [[0.267, 4e-3, 0.329], [0.282, 0.141, 0.458], [0.253, 0.265, 0.53], [0.207, 0.372, 0.553], [0.164, 0.471, 0.558], [0.128, 0.567, 0.551], [0.134, 0.658, 0.517], [0.267, 0.749, 0.441], [0.478, 0.821, 0.318], [0.741, 0.873, 0.15], [0.993, 0.906, 0.144]],
     plasma: [[0.05, 0.03, 0.528], [0.295, 0.012, 0.615], [0.492, 0.012, 0.658], [0.654, 0.072, 0.639], [0.798, 0.195, 0.561], [0.897, 0.329, 0.445], [0.963, 0.48, 0.314], [0.993, 0.64, 0.186], [0.98, 0.807, 0.086], [0.94, 0.975, 0.131], [0.94, 0.975, 0.131]],
@@ -18,18 +141,6 @@
     cividis: [[0, 0.135, 0.305], [0.074, 0.192, 0.351], [0.145, 0.247, 0.382], [0.228, 0.302, 0.39], [0.31, 0.358, 0.393], [0.394, 0.414, 0.39], [0.482, 0.47, 0.379], [0.575, 0.53, 0.358], [0.672, 0.595, 0.325], [0.775, 0.666, 0.274], [0.88, 0.742, 0.199]],
     turbo: [[0.19, 0.072, 0.232], [0.231, 0.322, 0.745], [0.137, 0.572, 0.938], [0.069, 0.773, 0.8], [0.2, 0.91, 0.51], [0.507, 0.979, 0.254], [0.775, 0.953, 0.136], [0.953, 0.804, 0.098], [0.993, 0.561, 0.09], [0.914, 0.286, 0.063], [0.647, 0.082, 0.033]]
   };
-  var CATEGORICAL_COLORS = [
-    "#6366f1",
-    "#f59e0b",
-    "#10b981",
-    "#ef4444",
-    "#8b5cf6",
-    "#06b6d4",
-    "#f97316",
-    "#84cc16",
-    "#ec4899",
-    "#14b8a6"
-  ];
   var DISPLAY_NAME_FIELDS = ["name", "title", "label", "display", "id"];
   function getColorFromScale(value, scaleName, domain) {
     const scale = COLOR_SCALES[scaleName] || COLOR_SCALES.viridis;
@@ -48,21 +159,17 @@
     const b = Math.round((c1[2] + f * (c2[2] - c1[2])) * 255);
     return `rgb(${r},${g},${b})`;
   }
-  function getCategoricalColor(value) {
-    let hash = 0;
-    const str = String(value);
-    for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i) | 0;
-    return CATEGORICAL_COLORS[Math.abs(hash) % CATEGORICAL_COLORS.length];
-  }
-  function computeNodeColor(node, colorField, colorScale, colorDomain, typeColors) {
+  function computeNodeColor(node, opts2) {
     if (node.color) return node.color;
+    const { colorField, palette, registries } = opts2;
     if (!colorField || node[colorField] === void 0) {
-      const nodeType = node.labels && node.labels.length > 0 ? node.labels[0] : node.label || "";
-      return colorFor(node, nodeType, typeColors, nodeType ? getCategoricalColor(nodeType) : "#6366f1");
+      const nodeType = nodeTypeOf(node);
+      const fallback = nodeType ? registries.for("node-type").colorFor(nodeType, palette) : opts2.anyTyped ? palette.other : palette.data[0];
+      return colorFor(node, nodeType ?? "", opts2.typeColors.nodes, fallback);
     }
     const value = node[colorField];
-    if (typeof value === "number") return getColorFromScale(value, colorScale, colorDomain);
-    return getCategoricalColor(value);
+    if (typeof value === "number") return getColorFromScale(value, opts2.colorScale, opts2.colorDomain);
+    return registries.for(`node:${colorField}`).colorFor(String(value), palette);
   }
   function computeNodeSize(node, sizeField, sizeDomain, sizeRange, degree) {
     if (node.size !== void 0) return node.size;
@@ -94,7 +201,7 @@
     }
     return [min, max];
   }
-  function getStylingOpts(model2, nodes2, edges2) {
+  function getStylingOpts(model2, nodes2, edges2, registries = new Registries()) {
     const colorField = model2.get("color_field");
     const colorScale = model2.get("color_scale") || "viridis";
     let colorDomain = model2.get("color_domain");
@@ -131,6 +238,9 @@
         degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
       });
     }
+    assignNodeTypes(registries, nodes2);
+    if (colorField) registries.assigned(`node:${colorField}`, categoricalCounts(nodes2, colorField));
+    if (edgeColorField) registries.assigned(`edge:${edgeColorField}`, categoricalCounts(edges2, edgeColorField));
     return {
       colorField,
       colorScale,
@@ -146,15 +256,18 @@
       edgeSizeRange,
       degreeMap,
       typeColors: model2.get("type_colors") || {},
-      levelField: model2.get("level_field") || "level"
+      levelField: model2.get("level_field") || "level",
+      palette: model2.get("dark_mode") ? DARK : LIGHT,
+      registries,
+      anyTyped: nodes2.some((node) => nodeTypeOf(node) !== void 0)
     };
   }
   function computeEdgeColor(edge, opts2) {
     if (typeof edge.color === "string" && edge.color) return edge.color;
-    let color = colorFor(edge, edge.type || edge.label || "unknown", opts2.typeColors?.edges, "#94a3b8");
+    let color = colorFor(edge, edge.type || edge.label || "unknown", opts2.typeColors?.edges, opts2.palette.edge);
     if (opts2.edgeColorField && edge[opts2.edgeColorField] !== void 0) {
       const val = edge[opts2.edgeColorField];
-      color = typeof val === "number" ? getColorFromScale(val, opts2.edgeColorScale, opts2.edgeColorDomain) : getCategoricalColor(val);
+      color = typeof val === "number" ? getColorFromScale(val, opts2.edgeColorScale, opts2.edgeColorDomain) : opts2.registries.for(`edge:${opts2.edgeColorField}`).colorFor(String(val), opts2.palette);
     }
     return color;
   }
@@ -170,7 +283,7 @@
     }
     const linkDistance = n < 30 ? 80 : n < 100 ? 60 : 45;
     const chargeStrength = n < 30 ? -400 : n < 100 ? -300 : -200;
-    const simulation = d3Force.forceSimulation(nodes2).force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4)).force("charge", d3Force.forceManyBody().strength(chargeStrength)).force("center", d3Force.forceCenter(0, 0)).force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8)).stop();
+    const simulation = d3Force.forceSimulation(nodes2).force("link", d3Force.forceLink(d3Links).distance(linkDistance).strength(0.4)).force("charge", d3Force.forceManyBody().strength(chargeStrength).distanceMax(400)).force("center", d3Force.forceCenter(0, 0)).force("x", d3Force.forceX(0).strength(0.06)).force("y", d3Force.forceY(0).strength(0.06)).force("collide", d3Force.forceCollide().radius((d) => d.size * 2 + 4).strength(0.8)).stop();
     const ticks = Math.min(300, Math.max(100, n * 2));
     for (let i = 0; i < ticks; i++) simulation.tick();
     return new Map(nodes2.map((d) => [d.id, { x: d.x ?? 0, y: d.y ?? 0 }]));
@@ -190,6 +303,10 @@
   var nodes = DATA.nodes || [];
   var edges = DATA.edges || [];
   var opts = getStylingOpts(model, nodes, edges);
+  function ringed(color) {
+    const { fillColor } = nodeDisplay(color, OPTIONS.background || opts.palette.background);
+    return { color, borderColor: color, fillColor };
+  }
   var nodeByKey = /* @__PURE__ */ new Map();
   for (const n of nodes) if (!nodeByKey.has(String(n.id))) nodeByKey.set(String(n.id), n);
   nodes.forEach((node) => {
@@ -200,7 +317,8 @@
       x: node.x ?? Math.random() * 100,
       y: node.y ?? Math.random() * 100,
       size: computeNodeSize(node, opts.sizeField, opts.sizeDomain, opts.sizeRange, opts.degreeMap.get(key)),
-      color: computeNodeColor(node, opts.colorField, opts.colorScale, opts.colorDomain, opts.typeColors.nodes)
+      // Ink nodes as in the widget: the ring in the colour, the inside filled with it at 38% over the page
+      ...ringed(computeNodeColor(node, opts))
     });
   });
   edges.forEach((edge) => {
@@ -243,9 +361,19 @@
   var renderer = new Sigma(graph, container, {
     renderLabels: OPTIONS.show_labels,
     renderEdgeLabels: OPTIONS.show_edge_labels,
-    defaultNodeColor: "#6366f1",
-    defaultEdgeColor: "#94a3b8",
+    defaultNodeColor: opts.palette.data[0],
+    defaultEdgeColor: opts.palette.edge,
+    nodeProgramClasses: {
+      bordered: createNodeBorderProgram({
+        borders: [
+          { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
+          { size: { fill: true }, color: { attribute: "fillColor" } }
+        ]
+      })
+    },
+    defaultNodeType: "bordered",
     labelColor: { color: OPTIONS.label_color },
+    labelFont: LABEL_FONT,
     labelSize: 12,
     labelWeight: "500",
     defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line"

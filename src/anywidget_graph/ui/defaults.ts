@@ -54,7 +54,7 @@ export const TRAIT_DEFAULTS: Record<string, unknown> = {
   "grafeo_connection_mode": "embedded",
   "grafeo_server_url": "http://localhost:7474",
   "grid_divisions": 10,
-  "height": 600,
+  "height": 0,
   "highlight_neighbors": false,
   "hovered_edge": null,
   "hovered_node": null,
@@ -85,8 +85,10 @@ export const TRAIT_DEFAULTS: Record<string, unknown> = {
   "show_edge_labels": false,
   "show_grid": true,
   "show_labels": true,
+  "show_layout_menu": true,
   "show_query_input": true,
   "show_settings": true,
+  "show_view_toggle": true,
   "show_toolbar": true,
   "show_tooltip": true,
   "size_field": null,
@@ -102,7 +104,7 @@ export const TRAIT_DEFAULTS: Record<string, unknown> = {
   "totals": {},
   "type_colors": {},
   "view": "2d",
-  "width": 800
+  "width": 0
 };
 
 /**

@@ -3,26 +3,20 @@
  * Shows node/edge types from current graph data with toggle checkboxes.
  * Clicking a type name still fires the query (schema browse behavior).
  */
+import { panelControls, setPanelOpen } from "./panel.ts";
+import { DARK, LIGHT } from "./palette.ts";
+import type { Palette } from "./registry.ts";
+import { Registries, assignNodeTypes, nodeTypeOf } from "./styling.ts";
 import { ICONS } from "./icons.ts";
 import { fetchSchema as neo4jFetchSchema } from "./neo4j.ts";
 import { fetchSchema as grafeoFetchSchema } from "./grafeo.ts";
 import { fetchSchema as grafeoEmbedFetchSchema } from "./grafeo-embed.ts";
-import { withTotals, shownOf, nodeType, edgeType } from "./lanes.ts";
+import { withTotals, shownOf, nodeType, edgeType, UNLABELED } from "./lanes.ts";
 import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 
 // Types a filter section shows before "Show more"
 export const FILTER_PAGE = 50;
 
-const FILTER_COLORS = [
-  "#6366f1", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6",
-  "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#14b8a6",
-];
-
-function hashColor(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
-  return FILTER_COLORS[Math.abs(hash) % FILTER_COLORS.length];
-}
 
 /**
  * Extract node types and edge types from current graph data, with the host's totals ({nodes: {type: n},
@@ -73,6 +67,11 @@ export function createSchemaPanel(
   onFilterChange?: (hiddenNodes: Set<string>, hiddenEdges: Set<string>) => void,
   onColorChange?: (colors: Map<string, string>) => void,
   onRefreshLayout?: () => void,
+  // The widget's colour assignments and palette, so a swatch shows the colour the view draws
+  colors: { registries: Registries; palette: () => Palette } = {
+    registries: new Registries(),
+    palette: () => (model.get("dark_mode") ? DARK : LIGHT),
+  },
 ): Panel {
   const panel = document.createElement("div");
   panel.className = "awg-schema-panel";
@@ -110,7 +109,7 @@ export function createSchemaPanel(
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close panel";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   headerBtns.appendChild(closeBtn);
@@ -151,6 +150,15 @@ export function createSchemaPanel(
     content.innerHTML = "";
 
     const { nodeTypes, edgeTypes } = extractTypesFromData(model);
+    // The drawn nodes take their colour slots first (as on the canvas); a type known only from the counts follows
+    const drawnNodes = (model.get("nodes") ?? []) as GraphNode[];
+    assignNodeTypes(colors.registries, drawnNodes);
+    // Nodes without a type are drawn as Other (the first colour when no node has a type), so their "Unlabeled" group
+    // takes no slot of its own and its swatch shows that colour
+    const untyped = drawnNodes.some((node) => nodeTypeOf(node) === undefined);
+    const isUntyped = (label: string) => untyped && label === UNLABELED;
+    const untypedColor = () => (drawnNodes.some((node) => nodeTypeOf(node) !== undefined) ? colors.palette().other : colors.palette().data[0]);
+    colors.registries.for("node-type").assign(new Map(nodeTypes.filter(({ label }) => !isUntyped(label)).map(({ label, count }) => [label, count])));
     const schemaNodeTypes = (model.get("schema_node_types") ?? []) as { label: string; properties?: string[] }[];
     const schemaEdgeTypes = (model.get("schema_edge_types") ?? []) as { type: string; properties?: string[] }[];
 
@@ -243,7 +251,7 @@ export function createSchemaPanel(
           name: label,
           count,
           total,
-          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || hashColor(label),
+          color: typeColorMap.get(label) || (model.get("type_colors")?.nodes || {})[label] || (isUntyped(label) ? untypedColor() : colors.registries.for("node-type").colorFor(label, colors.palette())),
           kind: "node",
           properties: props,
           isHidden: hiddenNodeTypes.has(label),
@@ -309,7 +317,7 @@ export function createSchemaPanel(
           name: type,
           count,
           total,
-          color: typeColorMap.get(type) || (model.get("type_colors")?.edges || {})[type] || hashColor(type),
+          color: typeColorMap.get(type) || (model.get("type_colors")?.edges || {})[type] || colors.palette().edge,
           kind: "edge",
           properties: props,
           isHidden: hiddenEdgeTypes.has(type),
@@ -338,17 +346,13 @@ export function createSchemaPanel(
   model.on("change:schema_edge_types", renderFilters);
   model.on("change:totals", renderFilters);
   model.on("change:type_colors", renderFilters);
+  // Each theme has its own data colours: the swatches follow the switch, as the canvas does
+  model.on("change:dark_mode", renderFilters);
   renderFilters();
 
   panel.appendChild(content);
 
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open"),
-  };
+  return panelControls(panel);
 }
 
 /**
@@ -399,10 +403,12 @@ export function createFilterItem({ name, count, total, color, properties, isHidd
   colorInput.addEventListener("click", (e) => e.stopPropagation());
   itemHeader.appendChild(colorInput);
 
-  // Name (clickable to query)
-  const nameSpan = document.createElement("span");
+  // Name: a button (styled as text) that queries this type, so Tab and Enter reach it too
+  const nameSpan = document.createElement("button");
+  nameSpan.type = "button";
   nameSpan.className = "awg-schema-name";
   nameSpan.textContent = name;
+  nameSpan.title = `Query ${name}`;
   nameSpan.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
     onQuery();

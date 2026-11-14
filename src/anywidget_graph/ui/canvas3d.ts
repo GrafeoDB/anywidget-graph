@@ -7,9 +7,13 @@
  */
 
 import { THREE, OrbitControls } from "./vendor-globals3d.ts";
-import { createForce3D, fitPositions, keepPositions, keepsPositions } from "./force3d.ts";
+import { createForce3D, fitDistance, fitPositions, keepPositions, keepsPositions, samePlaces } from "./force3d.ts";
+import { mixOver } from "./registry.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, pointInPolygon } from "./styling.ts";
-import { labelColor, levelState } from "./lanes.ts";
+import type { Registries } from "./styling.ts";
+import { DARK, LIGHT } from "./palette.ts";
+import { applyInk } from "./ink.ts";
+import { LABEL_FONT, labelColor, levelState } from "./lanes.ts";
 import { ICONS } from "./icons.ts";
 import type * as THREE_NS from "three";
 import type { OrbitControls as OrbitControlsNS } from "three/addons/controls/OrbitControls.js";
@@ -54,17 +58,19 @@ interface EdgeRecord {
 }
 
 /** Callbacks createCanvas3D takes (the 3D view passes hover). */
-export interface Canvas3DCallbacks { onHover?: (info: unknown) => void }
+export interface Canvas3DCallbacks { onHover?: (info: unknown) => void; registries?: Registries }
 
 const SCENE_SIZE = 2; // the layout is shown in a cube of about this side
+// Labels in the widgets' mono face (lanes.ts LABEL_FONT)
+const MONO = LABEL_FONT;
 const LABEL_BUDGET = 400; // label sprites are built only for graphs up to this many nodes
 const ARROW_BUDGET = 5000; // cone arrowheads only up to this many edges (beyond that, plain lines)
 const INSTANCE_THRESHOLD = 100; // below this many nodes, individual meshes (simpler raycasting)
 const TICKS_PER_FRAME = 4;
 
 // The widget's canvas colours, as in widget.py: the light/dark canvas, unless `background` or the host theme says otherwise
-const CANVAS_LIGHT = "#ffffff";
-const CANVAS_DARK = "#181c1a";
+const CANVAS_LIGHT = LIGHT.background;
+const CANVAS_DARK = DARK.background;
 const DEFAULT_BACKGROUND = "#fafafa";
 
 export function createCanvas3D(model: WidgetModel, container: HTMLElement, callbacks: Canvas3DCallbacks = {}) {
@@ -105,6 +111,9 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     return new Set(Object.keys(model.get("pinned_nodes") || {}).map(String));
   }
 
+  // The background the ink nodes fill towards (ink.ts): one uniform for every node material, updated with the theme
+  const inkBackground = { value: new THREE.Color(LIGHT.background) };
+
   function effectiveBackground() {
     // A host theme's canvas colour wins, then a `background` the host set, else the light/dark canvas colour
     const custom = model.get("theme")?.background;
@@ -121,6 +130,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
   function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(effectiveBackground());
+    inkBackground.value.set(effectiveBackground());
 
     const initW = container.clientWidth || model.get("width") || 800;
     const initH = container.clientHeight || model.get("height") || 600;
@@ -257,14 +267,14 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
 
     const nodes = (model.get("nodes") ?? []) as GraphNode[];
     const edges = (model.get("edges") ?? []) as GraphEdge[];
-    const optsNow: StylingOpts = getStylingOpts(model, nodes, edges);
+    const optsNow: StylingOpts = getStylingOpts(model, nodes, edges, callbacks.registries);
     const pinned = pinnedSet();
 
     records = nodes.map((data, i) => {
       const key = String(data.id ?? `node_${i}`);
       const label = autoLabel(data);
       const sizePx = computeNodeSize(data, optsNow.sizeField, optsNow.sizeDomain, optsNow.sizeRange, optsNow.degreeMap.get(String(data.id)));
-      const colorCss = computeNodeColor(data, optsNow.colorField, optsNow.colorScale, optsNow.colorDomain, optsNow.typeColors.nodes);
+      const colorCss = computeNodeColor(data, optsNow);
       return {
         id: data.id ?? key,
         key,
@@ -320,7 +330,8 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     applyLevelStates();
     applyColors();
     updateTransforms();
-    if (!keep) fitToView();
+    // The same nodes in the same places, restyled (a theme switch, new colours), keep the camera, also in a preset layout
+    if (!keep && !samePlaces(previous, records)) fitToView();
   }
 
   /** What is drawn keeps its place (keepPositions in force3d.ts); a new node goes next to the nodes it links to. */
@@ -340,6 +351,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     if (useInstancing) {
       const geometry = new THREE.SphereGeometry(1, 16, 12);
       const material = new THREE.MeshPhongMaterial({ vertexColors: true });
+      applyInk(material, inkBackground);
       const mesh = new THREE.InstancedMesh(geometry, material, records.length);
       const colors = new Float32Array(records.length * 3);
       geometry.setAttribute("color", new THREE.InstancedBufferAttribute(colors, 3));
@@ -350,6 +362,7 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       const geometry = new THREE.SphereGeometry(1, 20, 14);
       records.forEach((r, i) => {
         const material = new THREE.MeshPhongMaterial({ color: r.color });
+        applyInk(material, inkBackground);
         const mesh = new THREE.Mesh(geometry, material);
         mesh.userData = { isInstanced: false, key: r.key, index: i };
         r.mesh = mesh;
@@ -403,18 +416,18 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     const textColor = labelColor(model.get("theme") || {}, model.get("dark_mode"));
     for (const r of records) {
       const canvas = document.createElement("canvas");
-      canvas.width = 256;
+      canvas.width = 384;
       canvas.height = 64;
       const ctx = canvas.getContext("2d")!;
-      ctx.font = "30px sans-serif";
+      ctx.font = `500 30px ${MONO}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = textColor;
-      ctx.fillText(r.label.length > 26 ? r.label.slice(0, 25) + "…" : r.label, 128, 32);
+      ctx.fillText(r.label.length > 20 ? r.label.slice(0, 19) + "…" : r.label, canvas.width / 2, 32);
       const texture = new THREE.CanvasTexture(canvas);
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
       sprite.renderOrder = 999;
-      sprite.scale.set(0.3, 0.075, 1);
+      sprite.scale.set(0.42, 0.07, 1);
       labelsGroup.add(sprite);
       r.labelSprite = sprite;
     }
@@ -680,8 +693,9 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     }
     if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3()).length() || SCENE_SIZE;
-    const distance = (size / (2 * Math.tan((Math.PI * camera.fov) / 360))) * 1.15;
+    // The cloud's real radius, not the box's diagonal (force3d.ts fitDistance), so the graph fills the view
+    const shown = records.filter((r) => !isHidden(r)).map((r) => r.pos);
+    const distance = fitDistance(shown, center, camera.fov, camera.aspect) || SCENE_SIZE;
     const dir = camera.position.clone().sub(controls.target);
     if (dir.lengthSq() < 1e-6) dir.set(0.6, 0.5, 0.8);
     dir.normalize();
@@ -856,21 +870,24 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
 
   function setupZoomControls() {
     const zoomControls = document.createElement("div");
-    zoomControls.className = "awg3-zoom-controls";
+    zoomControls.className = "awg-zoom-controls";
 
     const modeGroup = document.createElement("div");
-    modeGroup.className = "awg3-mode-group";
+    modeGroup.className = "awg-mode-group";
     const clickBtn = mkBtn(ICONS.cursor, "Click / multi-select mode");
     const boxBtn = mkBtn(ICONS.boxSelect, "Box select mode");
     const lassoBtn = mkBtn(ICONS.lasso, "Lasso select mode");
+    // The same classes as the 2D mode buttons, so the one that is on looks pressed
+    for (const btn of [clickBtn, boxBtn, lassoBtn]) btn.classList.add("awg-mode-btn");
 
     function setActiveMode(mode: string): void {
       currentMode = mode;
       model.set("selection_mode", mode);
       model.save_changes();
-      clickBtn.classList.toggle("awg3-mode-active", mode === "click" || mode === "multi");
-      boxBtn.classList.toggle("awg3-mode-active", mode === "box");
-      lassoBtn.classList.toggle("awg3-mode-active", mode === "lasso");
+      for (const [btn, on] of [[clickBtn, mode === "click" || mode === "multi"], [boxBtn, mode === "box"], [lassoBtn, mode === "lasso"]] as const) {
+        btn.classList.toggle("awg-mode-active", on);
+        btn.setAttribute("aria-pressed", String(on));
+      }
       controls.enabled = mode === "click" || mode === "multi";
       if (boxOverlay) boxOverlay.style.display = mode === "box" ? "block" : "none";
       if (lassoOverlayEl) lassoOverlayEl.style.display = mode === "lasso" ? "block" : "none";
@@ -901,13 +918,17 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     });
     const zoomFitBtn = mkBtn(ICONS.zoomFit, "Fit to view");
     zoomFitBtn.addEventListener("click", fitToView);
-    zoomControls.append(zoomInBtn, zoomOutBtn, zoomFitBtn);
+    // The same card and order as the 2D view: select modes | zoom in, zoom out, fit
+    const zoomGroup = document.createElement("div");
+    zoomGroup.className = "awg-zoom-group";
+    zoomGroup.append(zoomInBtn, zoomOutBtn, zoomFitBtn);
+    zoomControls.appendChild(zoomGroup);
     container.appendChild(zoomControls);
   }
 
   function mkBtn(icon: string, title: string): HTMLButtonElement {
     const btn = document.createElement("button");
-    btn.className = "awg3-zoom-btn";
+    btn.className = "awg-zoom-btn";
     btn.innerHTML = icon;
     btn.title = title;
     return btn;
@@ -985,8 +1006,9 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
     lassoSvg.style.display = "none";
     container.appendChild(lassoSvg);
     lassoPathEl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    lassoPathEl.setAttribute("fill", "rgba(99, 102, 241, 0.1)");
-    lassoPathEl.setAttribute("stroke", "#6366f1");
+    // The selection outline in the theme's ring colour (a CSS variable, so it follows a theme switch)
+    lassoPathEl.style.fill = "color-mix(in srgb, var(--awg-ring) 10%, transparent)";
+    lassoPathEl.style.stroke = "var(--awg-ring)";
     lassoPathEl.setAttribute("stroke-width", "2");
     lassoPathEl.setAttribute("stroke-dasharray", "4 2");
     lassoSvg.appendChild(lassoPathEl);
@@ -1071,30 +1093,42 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
   function setupAxesAndGrid() {
     disposeGroup(axesGroup);
 
+    // Lab chrome: the grid a faint hairline, the axes in the edge colour with muted mono labels (no RGB axes)
+    const pal = model.get("dark_mode") ? DARK : LIGHT;
+    const bg = effectiveBackground();
+    const base = /^#[0-9a-f]{6}$/i.test(bg) ? bg : pal.background;
     if (model.get("show_axes")) {
-      axesGroup.add(new THREE.AxesHelper(SCENE_SIZE * 0.6));
+      const extent = SCENE_SIZE * 0.6;
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(extent, 0, 0),
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, extent, 0),
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, extent),
+      ]);
+      axesGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: pal.edge })));
       const labels = model.get("axis_labels") || { x: "X", y: "Y", z: "Z" };
-      addAxisLabel(labels.x, [SCENE_SIZE * 0.65, 0, 0], 0xff4444);
-      addAxisLabel(labels.y, [0, SCENE_SIZE * 0.65, 0], 0x44ff44);
-      addAxisLabel(labels.z, [0, 0, SCENE_SIZE * 0.65], 0x4444ff);
+      addAxisLabel(labels.x, [SCENE_SIZE * 0.66, 0, 0], pal.other);
+      addAxisLabel(labels.y, [0, SCENE_SIZE * 0.66, 0], pal.other);
+      addAxisLabel(labels.z, [0, 0, SCENE_SIZE * 0.66], pal.other);
     }
     if (model.get("show_grid")) {
-      axesGroup.add(new THREE.GridHelper(SCENE_SIZE, model.get("grid_divisions") || 10, 0x888888, 0x555555));
+      const grid = mixOver(pal.edge, base, 0.4);
+      axesGroup.add(new THREE.GridHelper(SCENE_SIZE, model.get("grid_divisions") || 10, mixOver(pal.edge, base, 0.7), grid));
     }
   }
 
-  function addAxisLabel(text: string, position: [number, number, number], color: number): void {
+  function addAxisLabel(text: string, position: [number, number, number], color: string): void {
     const canvas = document.createElement("canvas");
-    canvas.width = 64;
+    canvas.width = 128;
     canvas.height = 32;
     const ctx = canvas.getContext("2d")!;
-    ctx.font = "bold 24px Arial";
-    ctx.fillStyle = "#" + color.toString(16).padStart(6, "0");
+    ctx.font = `500 22px ${MONO}`;
+    ctx.fillStyle = color;
     ctx.textAlign = "center";
-    ctx.fillText(String(text ?? ""), 32, 24);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) }));
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(text ?? ""), 64, 16);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
     sprite.position.set(position[0], position[1], position[2]);
-    sprite.scale.set(0.12, 0.06, 1);
+    sprite.scale.set(0.26, 0.065, 1);
     axesGroup.add(sprite);
   }
 
@@ -1111,9 +1145,16 @@ export function createCanvas3D(model: WidgetModel, container: HTMLElement, callb
       model.on(`change:${name}`, rebuild);
     }
     model.on("change:show_labels", () => { disposeGroup(labelsGroup); buildLabels(); updateTransforms(); });
-    model.on("change:background", () => { scene.background = new THREE.Color(effectiveBackground()); });
-    model.on("change:dark_mode", () => { scene.background = new THREE.Color(effectiveBackground()); });
-    model.on("change:theme", () => { scene.background = new THREE.Color(effectiveBackground()); });
+    // The canvas and the ink nodes' fill follow the background (one uniform for every node material)
+    const repaintBackground = () => {
+      scene.background = new THREE.Color(effectiveBackground());
+      inkBackground.value.set(effectiveBackground());
+      setupAxesAndGrid();
+    };
+    model.on("change:background", repaintBackground);
+    // A theme switch also redraws the nodes and labels (each theme has its own data colours); positions stay
+    model.on("change:dark_mode", () => { repaintBackground(); queueRebuild(); });
+    model.on("change:theme", () => { repaintBackground(); queueRebuild(); });
     model.on("change:show_axes", setupAxesAndGrid);
     model.on("change:show_grid", setupAxesAndGrid);
     model.on("change:grid_divisions", setupAxesAndGrid);

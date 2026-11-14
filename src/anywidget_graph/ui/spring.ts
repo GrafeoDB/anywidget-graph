@@ -25,8 +25,12 @@ export function springLayout(nodes: SpringNode[], links: [string, string][]): Ma
 
   const simulation = d3Force.forceSimulation<SpringNode>(nodes)
     .force("link", d3Force.forceLink<SpringNode, SimulationLinkDatum<SpringNode>>(d3Links).distance(linkDistance).strength(0.4))
-    .force("charge", d3Force.forceManyBody().strength(chargeStrength))
+    // Repulsion reaches only so far, and a gentle pull to the middle keeps nodes without edges near the graph
+    // instead of in the far corners, so "fit" frames the graph, not empty space
+    .force("charge", d3Force.forceManyBody().strength(chargeStrength).distanceMax(400))
     .force("center", d3Force.forceCenter(0, 0))
+    .force("x", d3Force.forceX(0).strength(0.06))
+    .force("y", d3Force.forceY(0).strength(0.06))
     .force("collide", d3Force.forceCollide().radius((d) => ((d as SpringNode).size * 2 + 4)).strength(0.8))
     .stop();
 

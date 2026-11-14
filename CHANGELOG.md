@@ -2,6 +2,46 @@
 
 All notable changes to anywidget-graph, an interactive graph widget for Python notebooks built on anywidget.
 
+## [1.0.0] - 2026-11-14
+
+Shared look release: the widget takes the look of the anywidgets family (graphite chrome, ink nodes, an eight-colour data palette) and, with no size given, fills its cell. No trait, method or CSS variable is removed; to keep a colour, set `type_colors`, a `color` on the item or the `--awg-*` variables, and pass `width=800, height=600` to keep the old frame.
+
+### Added
+
+- **Free lanes**: a force lane with `free: True` has no hard top or bottom edge; the graph's structure and the pull to the middle shape its outline, and its nodes stay in the lane's column. A lane with `rows` keeps its bands.
+- **Grouped lanes**: a force lane with `group: "<field>"` pulls nodes with the same value of that field towards each other, so its clusters show in the layout.
+- **Empty and running states**: an empty widget shows "Nothing to show yet. Run a query, or pass nodes and edges from Python.", and a running query shows "Running query…" over the canvas.
+- **Keyboard focus**: buttons, menus and checkboxes show a focus ring, and the dark mode switch can be reached with the keyboard; toggles that are on say so to screen readers (`aria-pressed`).
+- **Fixed views**: `show_layout_menu=False` leaves the layout menu out of the canvas controls and `show_view_toggle=False` the 2D/3D switch (toolbar and settings), for a host whose view is fixed.
+
+### Changed
+
+- **Default look**: the chrome is green-tinted graphite with hairline borders, a 3px frame and 5px controls, and labels and values use JetBrains Mono (falling back to `ui-monospace`). New variables join the existing ones: `--awg-border-strong`, `--awg-on-accent`, `--awg-other`, `--awg-ok`, `--awg-warn`, `--awg-error` and `--awg-shadow-float`; the dark canvas is `#161a19` (was `#181c1a`).
+- **Data palette**: node types, `color_field` and `edge_color_field` values take eight colours in a fixed order, given to the eight largest categories by count; the rest are "Other". A category keeps its colour across appends and new results that still hold a coloured category; a result with none of them (another query) gets the eight colours afresh. The filter panel's swatches show the colours drawn.
+- **Ink nodes**: a 2D node is a 2px ring in its colour over a fill of that colour at 38% (opaque, so edges never show through); in 3D a sphere's body takes the 38% fill and its silhouette the full colour.
+- **Size**: `width` and `height` default to 0, which fills the cell's width at 16:10, at least 360px and at most 80% of the screen high (was 800 by 600). Pass both in pixels, or `fill=True`, for the size as before; a width alone takes a 16:10 height, a height alone fills the cell's width.
+- **2D layout**: the default layout keeps loosely linked nodes next to the rest instead of in the far corners, so the view frames the graph rather than empty space; a hub's neighbours stay on their ring.
+- **Canvas controls**: zoom, fit, the layout menu and the selection modes are one floating card at the bottom right, in the same order in 2D and 3D, and the view leaves room for it, in lanes too (about 50px narrower). Under 480px wide the card leaves out zoom in and out (pinch or the mouse wheel still zooms).
+- **3D view**: the camera opens framed on the graph (about twice as close as before), the grid is a faint hairline and the axes grey with mono letters; switching the theme recolours the nodes and labels.
+- **Labels**: node labels use the mono face in 2D, 3D and the export page; a lane label shows up to 18 characters before an ellipsis.
+- **Toggles look pressed**: a selection mode, the 3D view or a level chip that is on looks pressed instead of filled, so only Run is a filled button.
+- **Narrow widgets**: under 640px wide the filter box shrinks to its icon and opens when used.
+- **Properties and results**: a node's label tags show its type's colour, data values use the mono face with tabular figures, and the results table shows a list such as labels as `Person, Admin` instead of JSON.
+
+### Fixed
+
+- **Browser controls follow the widget's theme**: scrollbars, checkboxes, sliders and menus are drawn in the widget's light or dark theme instead of the page's.
+- **Run button**: shows its spinner also when the widget opens while a query runs.
+- **Tab skips closed panels**: a closed filter, properties or settings panel no longer takes keyboard focus, so Tab goes from the toolbar straight to the canvas controls (it passed about 40 hidden controls).
+- **Settings controls have names**: the backend, mode, language and view menus, the 3D bloom slider, the 3D spread field and the 3D axes and grid switches are named by their labels for screen readers.
+- **Type names in the filter panel work from the keyboard**: a type's name is a button (titled "Query Person"), so Tab and Enter run its query as a click does.
+- **Run without a database says so**: with no backend, Run shows "No database backend configured" instead of doing nothing.
+- **3D HTML exports fit the page**: the frame no longer makes the page 2px too wide, so no horizontal scrollbar.
+
+### Dependencies
+
+- **@sigma/node-border 3.0.0** (bundled): draws the node rings.
+
 ## [0.5.3] - 2026-11-12
 
 3D release: a graph can be drawn as a Three.js scene with a force layout in three dimensions, and the Grafeo backend moves to grafeo 0.6.2 in Python and in the browser. An environment with the `grafeo` extra upgrades grafeo to 0.6.2 or later, below 0.7; stay on 0.5.2 to keep an older 0.6.x.
@@ -109,7 +149,7 @@ Grafeo 0.6 release: the Grafeo backends move to grafeo 0.6 (embedded, grafeo-ser
 - **Paths and literals carry their entities**: grafeo 0.6 returns paths with their nodes and edges, and nodes and edges inside list and map literals (`[n, 1]`, `{k: n}`) and from `startNode(r)` / `endNode(r)`; all of these draw without extra lookups. Paths with bare ids (grafeo 0.5) are still resolved
 - **Dependencies**: sigma 3.0.3 in the bundled graph libraries (was 3.0.0), neo4j-driver 5.28.3 (was 5.28.0), the lockfile refreshed (`uv lock --upgrade`), and CI on actions/checkout v7, astral-sh/setup-uv v10.3.0, actions/setup-node v7, actions/upload-artifact v7 and actions/download-artifact v8
 - **SQL/PGQ in the language list**: the settings panel offers SQL/PGQ for Grafeo (embedded, server and WASM all run it)
-- **Packaging**: a locally built sdist leaves out `.claude/` (agent notes and settings that only a global gitignore kept out of git)
+- **Packaging**: a locally built sdist holds only the project's own files
 - **Docs**: the Neo4j (browser-side) section says where the credentials end up (the browser, and a notebook saved with widget state) and how to keep them in the kernel
 
 ### Tests

@@ -11,6 +11,7 @@ import {
   forEachNearPair,
   keepPositions,
   keepsPositions,
+  samePlaces,
 } from "../../src/anywidget_graph/ui/force3d.ts";
 
 function run(sim: ReturnType<typeof createForce3D>, maxTicks = 400) {
@@ -192,6 +193,16 @@ test("keepsPositions: an append, a restyle or a removal keeps what is drawn; new
   assert.equal(keepsPositions(new Map(), ["a"], true, "spring"), false, "first draw");
 });
 
+test("samePlaces: a restyle of a preset layout keeps the camera; new, removed or moved nodes are framed again", () => {
+  const drawn = new Map([["a", { x: 0, y: 0, z: 0 }], ["b", { x: 1, y: 2, z: 3 }]]);
+  const at = (key: string, x: number, y: number, z: number) => ({ key, pos: { x, y, z } });
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0), at("b", 1, 2, 3)]), true, "theme switch: same nodes, same places");
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0), at("b", 1, 2, 4)]), false, "the host moved a node");
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0)]), false, "a node removed");
+  assert.equal(samePlaces(drawn, [at("a", 0, 0, 0), at("b", 1, 2, 3), at("c", 0, 0, 0)]), false, "a node added");
+  assert.equal(samePlaces(new Map(), [at("a", 0, 0, 0)]), false, "first draw");
+});
+
 test("keepPositions: drawn nodes stay, a new node goes next to its neighbour, apart from its siblings", () => {
   const drawn = new Map([
     ["a", { x: 0, y: 0, z: 0 }],
@@ -252,4 +263,25 @@ test("fitPositions centres the cloud in a cube of the given side", () => {
   const cy = pts.reduce((s, p) => s + p.y, 0) / 2;
   const cz = pts.reduce((s, p) => s + p.z, 0) / 2;
   assert.ok(Math.abs(cx) < 1e-9 && Math.abs(cy) < 1e-9 && Math.abs(cz) < 1e-9, "centred on the origin");
+});
+
+test("the camera frames the cloud's real radius: every point in view, without the box-diagonal slack", async () => {
+  const { fitDistance } = await import("../../src/anywidget_graph/ui/force3d.ts");
+  // Points on a unit sphere around the origin
+  const points = [];
+  for (let i = 0; i < 200; i++) {
+    const z = 1 - (2 * (i + 0.5)) / 200, r = Math.sqrt(1 - z * z), a = i * 2.39996;
+    points.push({ x: r * Math.cos(a), y: r * Math.sin(a), z });
+  }
+  const center = { x: 0, y: 0, z: 0 };
+  const halfV = (60 * Math.PI) / 360;
+  // Landscape: the vertical field of view is the tighter one
+  const wide = fitDistance(points, center, 60, 1.6);
+  assert.ok(wide >= 1 / Math.sin(halfV), `all in view (${wide.toFixed(2)})`);
+  assert.ok(wide <= 1.15 / Math.sin(halfV), `no slack (${wide.toFixed(2)})`);
+  // Portrait: the horizontal field of view is tighter, so the camera steps back
+  const halfH = Math.atan(Math.tan(halfV) * 0.6);
+  const tall = fitDistance(points, center, 60, 0.6);
+  assert.ok(tall >= 1 / Math.sin(halfH), `all in view, portrait (${tall.toFixed(2)})`);
+  assert.ok(tall <= 1.15 / Math.sin(halfH));
 });

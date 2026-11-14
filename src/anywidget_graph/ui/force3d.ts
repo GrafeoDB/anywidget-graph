@@ -334,6 +334,18 @@ export function keepsPositions(previous: Map<string, Vec3>, keys: string[], appe
 }
 
 /**
+ * The same nodes in the same places as `previous` (a restyle such as a theme switch, also in a preset layout): the
+ * camera stays where the user put it. New, removed or moved nodes are framed again.
+ */
+export function samePlaces(previous: Map<string, Vec3>, placed: { key: string; pos: Vec3 }[]): boolean {
+  if (previous.size === 0 || previous.size !== placed.length) return false;
+  return placed.every(({ key, pos }) => {
+    const p = previous.get(key);
+    return p !== undefined && p.x === pos.x && p.y === pos.y && p.z === pos.z;
+  });
+}
+
+/**
  * Positions for `keys`: a node in `previous` stays where it is; a new node goes next to the nodes it links to
  * (`links`, [source, target] pairs), at about the median length of the drawn edges (`fallbackStep` when none), each
  * in its own direction on a golden-angle spiral so nodes added around the same neighbour do not land on one another.
@@ -403,4 +415,17 @@ export function keepPositions(
     pending = next;
   }
   return out;
+}
+
+/**
+ * How far from `center` a camera with a vertical field of view of `fovDeg` (and the canvas's `aspect`, width over
+ * height) stands to see every point: the cloud's real radius over the sine of the tighter half-angle, plus a small
+ * margin for the node spheres. Framing the bounding box's diagonal instead put a round cloud about twice too far.
+ */
+export function fitDistance(points: Iterable<Vec3>, center: Vec3, fovDeg: number, aspect: number): number {
+  let radius = 0;
+  for (const p of points) radius = Math.max(radius, Math.hypot(p.x - center.x, p.y - center.y, p.z - center.z));
+  const halfV = (fovDeg * Math.PI) / 360;
+  const half = aspect < 1 ? Math.atan(Math.tan(halfV) * aspect) : halfV;
+  return (radius / Math.sin(half)) * 1.08;
 }
