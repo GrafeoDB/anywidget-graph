@@ -7,7 +7,10 @@
 
 Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidget.dev/) runs.
 
-![anywidget-graph demo](assets/demo.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-dark.png">
+  <img src="assets/demo-light.png" alt="anywidget-graph showing a small code base as a graph, with the filter panel open">
+</picture>
 
 ## Features
 
@@ -218,11 +221,11 @@ graph.theme = {
 }
 ```
 
-- `lanes`: lanes left to right; a node's `lane` picks one (a node without a known lane goes to the first). Edges between lanes (or marked `cross`) are drawn as soft curves above both lanes and light up when either end is hovered or selected; a search also shows a match's partners in the other lanes. Without `lanes` the widget behaves as before.
+- `lanes`: lanes left to right; a node's `lane` picks one (a node without a known lane goes to the first). Edges between lanes (or marked `cross`) are drawn as soft curves above both lanes and light up when either end is hovered or selected; a search also shows a match's partners in the other lanes. Without `lanes`, the whole canvas holds one graph.
 - `append(nodes, edges)`: adds items without a re-layout; existing nodes keep their positions, a new node is placed at the height of its neighbours in other lanes, where nodes of the same neighbours stack as rows one label line apart with their labels shown (or next to its neighbours in its lane; without lanes, next to its neighbours inside the area already drawn). The items are also merged into `nodes` and `edges`, so `to_json()`, `to_html()` and a widget shown again include them (a host that sets `append_batch` itself gets the merged lists written back by the widget). Changing `lanes` or a style keeps appended items; setting `nodes` or `edges` to other data replaces everything drawn. New items fade in and edges draw from source to target, `append_stagger_ms` (default 60) apart; a large batch is kept under 1.5 s. `append_animation="none"` turns the animation off.
 - `remove(nodes, edges)`: takes nodes (with every edge touching them) and edges out without a re-layout; they fade out and leave `nodes` and `edges`. An edge is `{"source", "target"}` (every edge between those ends) or with a `"label"` (that edge only). A host that sets `append_batch` itself puts them under `remove`: `{"seq": n, "nodes": [...], "edges": [...], "remove": {"nodes": [ids], "edges": [...]}}`; removals come first, so one batch can re-sample (an item removed and sent again stays where it is).
 - Lane options: `width` is a lane's share of the standard width (default 1); `arrange: "column"` stacks the lane's nodes in the middle of its band (for a few roots, such as repositories, whose edges then fan out into the next lane); `action: True` makes a lane without nodes that shows a button, with the host's `icon` (SVG markup, where `currentColor` takes the accent colour, or an image URL), or `glyph` (a list of colours drawn as stacked bars), else a neutral "open" icon; `caption` is text under it. An edge whose end is an action lane's id (and no node) is drawn as a curve into its button, like the cross-lane curves. The camera frames all lanes, and the lanes stretch to the canvas's shape.
-- Lane layout options (all off by default; a lane without them is laid out as before):
+- Lane layout options (all off by default; a lane without them gets ForceAtlas2, scaled into its band):
   - `layout: "force"`: a force layout inside the lane: nodes repel and do not overlap, edges inside the lane are springs, and a node is pulled towards the height of its partners in the lanes to its left. Nodes never leave their lane. A crowded lane draws its nodes smaller so the layout has room. Appended nodes settle from where they land while the older nodes stay put. Deterministic: the same data gives the same picture.
   - `free: True`: a force lane without a hard top or bottom edge: the graph's structure and the pull to the lane's middle shape its outline, and its nodes still stay in the lane's column. A lane with `rows` keeps its bands.
   - `group: "<field>"`: in a force lane, nodes with the same value of that node field are pulled towards each other, so the lane's clusters show in the layout.
@@ -420,9 +423,7 @@ Query languages: GQL, Cypher, Gremlin, GraphQL and SPARQL. Nodes and edges are t
 
 Property values reach the widget as JSON: a GQL number with a point (`1.50`), which grafeo 0.6 returns as an exact decimal, becomes a number (so `size_field` and `color_field` can use it), and dates and times become their ISO text.
 
-#### Upgrading embedded databases from grafeo 0.5
-
-grafeo 0.6 stores every database as a single file in a new format. The first time 0.6 opens a 0.5.x database for writing (`grafeo.GrafeoDB(path)`), it migrates it and keeps the old file next to it as `<path>.pre-0.6` (a 0.5.x WAL directory becomes a file at the same path, the directory is kept as `<path>.pre-0.6/`). 0.5.x cannot open the migrated database, so stop every 0.5.x process that uses it first, and keep the `.pre-0.6` copy as the way back. Opening a directory that is not a 0.5.x database (an empty one included) now fails: pass a file path such as `data/graph.grafeo`. See grafeo's [Upgrading to 0.6](https://grafeo.dev/upgrading/0.6/) for the query changes (for example a `WHERE` right after `INSERT` or `DELETE` is now an error, GQL sorts nulls last, and integer overflow or division by zero fails the query).
+Databases written by grafeo 0.5 are migrated on first open (0.5 can't open them afterwards; the old file is kept as `<path>.pre-0.6`); see grafeo's [Upgrading to 0.6](https://docs.grafeo.dev/get-started/upgrading/0.6/).
 
 Try it without any setup:
 
@@ -503,7 +504,7 @@ uv sync --all-extras --all-groups
 uv run pytest                      # Python tests, and the Node tests in tests/js
 ```
 
-The front end is written as ES modules in `src/anywidget_graph/ui/`; the widget loads them bundled into `ui/dist/widget.js`. After editing them, rebuild the bundle (CI fails on a stale one):
+The front end is written in TypeScript in `src/anywidget_graph/ui/`; the widget loads it bundled into `ui/dist/widget.js`. After editing the sources, rebuild the bundle (CI fails on a stale one):
 
 ```bash
 cd scripts/vendor
@@ -524,7 +525,7 @@ uv run --with playwright pytest tests/e2e
 - [anywidget-vector](https://github.com/GrafeoDB/anywidget-vector), the sibling widget this 3D view follows: 3D vector clouds with Three.js
 - [Grafeo](https://github.com/GrafeoDB/grafeo), embeddable graph database
 - [grafeo-web](https://github.com/GrafeoDB/grafeo-web), Grafeo in the browser
-- [Playground](https://grafeo.ai), interactive browser playground for Grafeo
+- [Playground](https://playground.grafeo.dev/), interactive browser playground for Grafeo
 
 ## License
 
