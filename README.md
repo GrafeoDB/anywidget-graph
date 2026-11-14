@@ -237,7 +237,7 @@ graph.theme = {
 
 ### Look and colours
 
-The widget shares its look with anywidget-vector and anywidget-archimate: graphite chrome with hairline borders, and nodes drawn as a ring in their colour over a light fill of it. Node types, and the values of a categorical `color_field` or `edge_color_field`, take eight colours in a fixed order: the eight largest categories by count get them, the rest share a neutral "Other" grey. A category keeps its colour while the widget lives, also across appends and new query results, and the filter panel shows the colours drawn. A slot is never handed to another category, so once eight categories have their colours, any later one is "Other" for the widget's life; give it a colour with `type_colors`.
+The widget shares its look with anywidget-vector and anywidget-archimate: graphite chrome with hairline borders, and nodes drawn as a ring in their colour over a light fill of it. Node types, and the values of a categorical `color_field` or `edge_color_field`, take eight colours in a fixed order: the eight largest categories by count get them, the rest share a neutral "Other" grey. A category keeps its colour across appends and new query results that still hold one of the coloured categories, and the filter panel shows the colours drawn; a category that joins once all eight colours are taken is "Other" (give it a colour with `type_colors`). A result with none of the coloured categories (another query) gets the eight colours afresh.
 
 To set colours yourself: `type_colors` per node or edge type, a `color` on a node or edge (it wins over everything else), or the `--awg-*` CSS variables for the chrome. Light or dark follows the page unless you pass `dark_mode`.
 

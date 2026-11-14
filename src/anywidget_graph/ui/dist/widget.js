@@ -2143,6 +2143,20 @@ var Registries = class {
     if (!registry) this.byDimension.set(dimension, registry = new CategoryRegistry());
     return registry;
   }
+  /**
+   * The dimension's registry with `counts` assigned. Categories that carry over keep their colour; counts that share
+   * no coloured category with the registry are a new dataset (another query), so the dimension starts fresh and its
+   * largest categories get the 8 colours instead of all falling to Other.
+   */
+  assigned(dimension, counts) {
+    let registry = this.for(dimension);
+    if (counts.size > 0 && ![...counts.keys()].some((category) => registry.slot(category) !== null)) {
+      registry = new CategoryRegistry();
+      this.byDimension.set(dimension, registry);
+    }
+    registry.assign(counts);
+    return registry;
+  }
 };
 var WIDGET_REGISTRIES = /* @__PURE__ */ new WeakMap();
 function registriesFor(model) {
@@ -2159,7 +2173,7 @@ function nodeTypeOf(node) {
   return type ? String(type) : void 0;
 }
 function assignNodeTypes(registries, nodes) {
-  registries.for("node-type").assign(countBy(nodes, nodeTypeOf));
+  registries.assigned("node-type", countBy(nodes, nodeTypeOf));
 }
 function categoricalCounts(items, field) {
   return countBy(items, (item) => {
@@ -2284,8 +2298,8 @@ function getStylingOpts(model, nodes, edges, registries = new Registries()) {
     });
   }
   assignNodeTypes(registries, nodes);
-  if (colorField) registries.for(`node:${colorField}`).assign(categoricalCounts(nodes, colorField));
-  if (edgeColorField) registries.for(`edge:${edgeColorField}`).assign(categoricalCounts(edges, edgeColorField));
+  if (colorField) registries.assigned(`node:${colorField}`, categoricalCounts(nodes, colorField));
+  if (edgeColorField) registries.assigned(`edge:${edgeColorField}`, categoricalCounts(edges, edgeColorField));
   return {
     colorField,
     colorScale,

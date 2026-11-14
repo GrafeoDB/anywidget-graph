@@ -106,6 +106,31 @@ test("colours stick for the widget: a later batch does not repaint", () => {
   assert.equal(computeNodeColor(later[2], opts), LIGHT.data[1]);
 });
 
+test("a new result that shares a coloured type keeps the colours; one that shares none gets the eight afresh", () => {
+  const registries = new Registries();
+  const first = "ABCDEFGH".split("").flatMap((t, i) => typed(t, 20 - i));
+  getStylingOpts(modelOf({ dark_mode: false }), first, [], registries);
+  // Shares H (slot 8): H keeps its colour and the new type is Other, all eight slots being taken
+  const overlap = [...typed("H", 5), ...typed("Movie", 9)];
+  const kept = getStylingOpts(modelOf({ dark_mode: false }), overlap, [], registries);
+  assert.equal(computeNodeColor(overlap[0], kept), LIGHT.data[7]);
+  assert.equal(computeNodeColor(overlap[5], kept), LIGHT.other);
+  // Another query with none of the coloured types: its largest types get the first colours, not all Other
+  const other = [...typed("Actor", 3), ...typed("Film", 9)];
+  const fresh = getStylingOpts(modelOf({ dark_mode: false }), other, [], registries);
+  assert.equal(computeNodeColor(other[3], fresh), LIGHT.data[0], "Film, the largest");
+  assert.equal(computeNodeColor(other[0], fresh), LIGHT.data[1]);
+});
+
+test("a categorical colour field starts afresh the same way", () => {
+  const registries = new Registries();
+  const red = [{ id: "a", team: "red" }, { id: "b", team: "blue" }];
+  getStylingOpts(modelOf({ dark_mode: false, color_field: "team" }), red, [], registries);
+  const next = [{ id: "c", team: "green" }];
+  const opts = getStylingOpts(modelOf({ dark_mode: false, color_field: "team" }), next, [], registries);
+  assert.equal(computeNodeColor(next[0], opts), LIGHT.data[0]);
+});
+
 test("one widget keeps its registries across renders; the export assigns like a fresh widget", () => {
   const host = modelOf({ dark_mode: false });
   assert.equal(registriesFor(host), registriesFor(host));

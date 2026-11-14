@@ -101,6 +101,20 @@
       if (!registry) this.byDimension.set(dimension, registry = new CategoryRegistry());
       return registry;
     }
+    /**
+     * The dimension's registry with `counts` assigned. Categories that carry over keep their colour; counts that share
+     * no coloured category with the registry are a new dataset (another query), so the dimension starts fresh and its
+     * largest categories get the 8 colours instead of all falling to Other.
+     */
+    assigned(dimension, counts) {
+      let registry = this.for(dimension);
+      if (counts.size > 0 && ![...counts.keys()].some((category) => registry.slot(category) !== null)) {
+        registry = new CategoryRegistry();
+        this.byDimension.set(dimension, registry);
+      }
+      registry.assign(counts);
+      return registry;
+    }
   };
   var NODE_FILL = 0.38;
   function nodeDisplay(color, background) {
@@ -111,7 +125,7 @@
     return type ? String(type) : void 0;
   }
   function assignNodeTypes(registries, nodes2) {
-    registries.for("node-type").assign(countBy(nodes2, nodeTypeOf));
+    registries.assigned("node-type", countBy(nodes2, nodeTypeOf));
   }
   function categoricalCounts(items, field) {
     return countBy(items, (item) => {
@@ -225,8 +239,8 @@
       });
     }
     assignNodeTypes(registries, nodes2);
-    if (colorField) registries.for(`node:${colorField}`).assign(categoricalCounts(nodes2, colorField));
-    if (edgeColorField) registries.for(`edge:${edgeColorField}`).assign(categoricalCounts(edges2, edgeColorField));
+    if (colorField) registries.assigned(`node:${colorField}`, categoricalCounts(nodes2, colorField));
+    if (edgeColorField) registries.assigned(`edge:${edgeColorField}`, categoricalCounts(edges2, edgeColorField));
     return {
       colorField,
       colorScale,

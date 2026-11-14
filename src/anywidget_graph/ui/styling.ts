@@ -22,6 +22,21 @@ export class Registries {
     if (!registry) this.byDimension.set(dimension, (registry = new CategoryRegistry()));
     return registry;
   }
+
+  /**
+   * The dimension's registry with `counts` assigned. Categories that carry over keep their colour; counts that share
+   * no coloured category with the registry are a new dataset (another query), so the dimension starts fresh and its
+   * largest categories get the 8 colours instead of all falling to Other.
+   */
+  assigned(dimension: string, counts: Map<string, number>): CategoryRegistry {
+    let registry = this.for(dimension);
+    if (counts.size > 0 && ![...counts.keys()].some((category) => registry.slot(category) !== null)) {
+      registry = new CategoryRegistry();
+      this.byDimension.set(dimension, registry);
+    }
+    registry.assign(counts);
+    return registry;
+  }
 }
 
 const WIDGET_REGISTRIES = new WeakMap<object, Registries>();
@@ -48,11 +63,12 @@ export function nodeTypeOf(node: GraphNode): string | undefined {
 }
 
 /**
- * Give the node types of `nodes` their colour slots (the largest 8 by count; earlier assignments stay). The canvas
- * and the filter panel both call this before reading a type's colour, so whichever is built first, they agree.
+ * Give the node types of `nodes` their colour slots (the largest 8 by count; earlier assignments stay, unless none
+ * of the types has a colour yet: a new dataset starts fresh). The canvas and the filter panel both call this before
+ * reading a type's colour, so whichever is built first, they agree.
  */
 export function assignNodeTypes(registries: Registries, nodes: GraphNode[]): void {
-  registries.for("node-type").assign(countBy(nodes, nodeTypeOf));
+  registries.assigned("node-type", countBy(nodes, nodeTypeOf));
 }
 
 /** The categorical (non-number) values of a field, counted. */
@@ -238,8 +254,8 @@ export function getStylingOpts(model: WidgetModel, nodes: GraphNode[], edges: Gr
 
   // The 8 data colours go to the largest categories; assignments made before stay (registry.ts)
   assignNodeTypes(registries, nodes);
-  if (colorField) registries.for(`node:${colorField}`).assign(categoricalCounts(nodes, colorField));
-  if (edgeColorField) registries.for(`edge:${edgeColorField}`).assign(categoricalCounts(edges, edgeColorField));
+  if (colorField) registries.assigned(`node:${colorField}`, categoricalCounts(nodes, colorField));
+  if (edgeColorField) registries.assigned(`edge:${edgeColorField}`, categoricalCounts(edges, edgeColorField));
 
   return {
     colorField, colorScale, colorDomain, sizeField, sizeDomain, sizeRange,
