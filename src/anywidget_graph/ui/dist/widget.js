@@ -247,6 +247,23 @@ var ICONS = {
   cube: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 12l9-5M12 12L3 7M12 12v10"/></svg>`
 };
 
+// panel.ts
+function setPanelOpen(panel, open) {
+  panel.classList.toggle("awg-panel-open", open);
+  panel.inert = !open;
+}
+function panelControls(panel) {
+  setPanelOpen(panel, false);
+  const isOpen = () => panel.classList.contains("awg-panel-open");
+  return {
+    element: panel,
+    open: () => setPanelOpen(panel, true),
+    close: () => setPanelOpen(panel, false),
+    toggle: () => setPanelOpen(panel, !isOpen()),
+    isOpen
+  };
+}
+
 // types.ts
 function globalSymbol(key) {
   return globalThis[key];
@@ -845,7 +862,7 @@ function createSettingsPanel(model, callbacks) {
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close settings";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   header.appendChild(closeBtn);
@@ -1331,13 +1348,7 @@ function createSettingsPanel(model, callbacks) {
   updateError();
   panel.appendChild(errorDiv);
   updateFormVisibility();
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open")
-  };
+  return panelControls(panel);
 }
 function createFormGroup(label, inputFn) {
   const group = document.createElement("div");
@@ -1346,8 +1357,18 @@ function createFormGroup(label, inputFn) {
   labelEl.className = "awg-label";
   labelEl.textContent = label;
   group.appendChild(labelEl);
-  group.appendChild(inputFn());
+  const control = inputFn();
+  group.appendChild(control);
+  const field = isField(control) ? control : control.querySelector?.("input, select, textarea");
+  if (field && !(control.tagName === "LABEL" && control.textContent?.trim())) {
+    field.id ||= `awg-field-${++fieldIds}`;
+    labelEl.htmlFor = field.id;
+  }
   return group;
+}
+var fieldIds = 0;
+function isField(el) {
+  return ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName);
 }
 function updateStatusDot(dot, status) {
   dot.className = "awg-status-dot awg-status-" + status;
@@ -2384,7 +2405,7 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close panel";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   headerBtns.appendChild(closeBtn);
@@ -2591,13 +2612,7 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
   model.on("change:dark_mode", renderFilters);
   renderFilters();
   panel.appendChild(content);
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open")
-  };
+  return panelControls(panel);
 }
 function createFilterItem({ name, count, total, color, properties, isHidden, onToggle, onColorChange, onQuery }) {
   const item = document.createElement("div");
@@ -2627,9 +2642,11 @@ function createFilterItem({ name, count, total, color, properties, isHidden, onT
   });
   colorInput.addEventListener("click", (e) => e.stopPropagation());
   itemHeader.appendChild(colorInput);
-  const nameSpan = document.createElement("span");
+  const nameSpan = document.createElement("button");
+  nameSpan.type = "button";
   nameSpan.className = "awg-schema-name";
   nameSpan.textContent = name;
+  nameSpan.title = `Query ${name}`;
   nameSpan.addEventListener("click", (e) => {
     e.stopPropagation();
     onQuery();
@@ -2710,7 +2727,7 @@ function createPropertiesPanel(model, callbacks, colorOf) {
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close properties";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   header.appendChild(closeBtn);
@@ -2741,13 +2758,7 @@ function createPropertiesPanel(model, callbacks, colorOf) {
   model.on("change:type_colors", renderProperties);
   renderProperties();
   panel.appendChild(content);
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open")
-  };
+  return panelControls(panel);
 }
 function textSpan(className, text) {
   const span = document.createElement("span");

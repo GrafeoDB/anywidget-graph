@@ -32,6 +32,11 @@ Shared look release: the widget takes the look of the anywidgets family (graphit
 
 - **Browser controls follow the widget's theme**: scrollbars, checkboxes, sliders and menus are drawn in the widget's light or dark theme instead of the page's.
 - **Run button**: shows its spinner also when the widget opens while a query runs.
+- **Tab skips closed panels**: a closed filter, properties or settings panel no longer takes keyboard focus, so Tab goes from the toolbar straight to the canvas controls (it passed about 40 hidden controls).
+- **Settings controls have names**: the backend, mode, language and view menus, the 3D bloom slider, the 3D spread field and the 3D axes and grid switches are named by their labels for screen readers.
+- **Type names in the filter panel work from the keyboard**: a type's name is a button (titled "Query Person"), so Tab and Enter run its query as a click does.
+- **Run without a database says so**: with no backend, Run shows "No database backend configured" instead of doing nothing.
+- **3D HTML exports fit the page**: the frame no longer makes the page 2px too wide, so no horizontal scrollbar.
 
 ### Dependencies
 

@@ -57,6 +57,11 @@ class FakeElement {
   descendants(): FakeElement[] {
     return this.children.flatMap((c) => (c instanceof FakeElement ? [c, ...c.descendants()] : []));
   }
+  /** Tag selectors only ("input, select"), enough for the panels */
+  querySelector(selector: string): FakeElement | null {
+    const tags = selector.split(",").map((s) => s.trim().toUpperCase());
+    return this.descendants().find((el) => tags.includes(el.tagName)) ?? null;
+  }
 }
 
 globalThis.document = {
@@ -222,4 +227,49 @@ test("show_view_toggle false: the toolbar has no 2D/3D switch", async () => {
   const titles = (el: FakeElement) => el.descendants().map((d) => d.title);
   assert.ok(titles(make({ show_view_toggle: true, nodes: [], edges: [] })).some((t) => /3D/.test(t)));
   assert.ok(!titles(make({ show_view_toggle: false, nodes: [], edges: [] })).some((t) => /3D|2D/.test(t)));
+});
+
+test("a closed side panel is inert, so Tab and screen readers skip its controls", async () => {
+  const { panelControls } = await import("../../src/anywidget_graph/ui/panel.ts");
+  const el = new FakeElement("div") as any;
+  const classes = new Set<string>();
+  el.classList = { toggle: (c: string, on: boolean) => (on ? classes.add(c) : classes.delete(c)), contains: (c: string) => classes.has(c) };
+  const panel = panelControls(el);
+  assert.equal(el.inert, true, "starts closed");
+  panel.open();
+  assert.deepEqual([el.inert, panel.isOpen()], [false, true]);
+  panel.toggle();
+  assert.deepEqual([el.inert, panel.isOpen()], [true, false]);
+  // The panels' own close buttons close them the same way
+  const { createPropertiesPanel } = await import("../../src/anywidget_graph/ui/properties.ts");
+  const props = createPropertiesPanel({ get: () => null, set() {}, on() {}, save_changes() {} } as any);
+  props.open();
+  assert.equal((props.element as any).inert, false);
+  (props.element as unknown as FakeElement).descendants().find((d) => d.title === "Close properties")!.click();
+  assert.equal((props.element as any).inert, true);
+});
+
+test("every settings control has an accessible name", async () => {
+  const { createSettingsPanel } = await import("../../src/anywidget_graph/ui/settings.ts");
+  const panel = createSettingsPanel({ get: () => undefined, set() {}, on() {}, save_changes() {} } as any).element as unknown as FakeElement;
+  const all = panel.descendants();
+  const labelled = new Set(all.filter((el) => el.tagName === "LABEL" && (el as any).htmlFor).map((el) => (el as any).htmlFor));
+  // A toggle's own label with text (Dark mode) names its checkbox
+  const wrapped = new Set(all.filter((el) => el.tagName === "LABEL" && el.textContent.trim()).flatMap((el) => el.descendants()));
+  const fields = all.filter((el) => ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName));
+  assert.ok(fields.length >= 10);
+  for (const field of fields) {
+    const named = (field as any).id && labelled.has((field as any).id);
+    assert.ok(named || wrapped.has(field), `${field.tagName} ${(field as any).type ?? ""} ${(field as any).placeholder ?? ""} has a name`);
+  }
+});
+
+test("a filter row's type name is a button that runs the type query", () => {
+  let queried = 0;
+  const item = createFilterItem({ name: "Person", count: 3, kind: "node", color: "#000000", isHidden: false, onToggle() {}, onQuery: () => { queried++; } }) as unknown as FakeElement;
+  const name = item.descendants().find((el) => el.className === "awg-schema-name")!;
+  assert.equal(name.tagName, "BUTTON");
+  assert.equal(name.title, "Query Person");
+  name.click();
+  assert.equal(queried, 1);
 });

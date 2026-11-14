@@ -554,8 +554,8 @@ class Graph(anywidget.AnyWidget):
         """Handle query execution trigger from JavaScript."""
         if change["new"] == 0:
             return  # Skip initial value
-        if self._backend is not None:
-            self._execute_backend_query()
+        # The browser asks only when Python runs the query, so without a backend Run says why nothing happens
+        self._execute_backend_query()
 
     def _execute_backend_query(self) -> None:
         """Execute query against the configured backend."""

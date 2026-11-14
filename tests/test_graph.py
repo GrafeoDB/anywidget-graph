@@ -1155,3 +1155,18 @@ def test_layout_menu_and_view_toggle_show_by_default():
     fixed = Graph(show_layout_menu=False, show_view_toggle=False)
     assert fixed.show_layout_menu is False
     assert fixed.show_view_toggle is False
+
+
+def test_run_without_a_backend_says_so():
+    # The browser asks Python to run a query only for Python-side backends; without one, Run explains why
+    graph = Graph(nodes=[{"id": "a"}], query="MATCH (n) RETURN n")
+    graph._execute_query += 1
+    assert graph.query_error == "No database backend configured"
+    assert graph.nodes == [{"id": "a"}]
+    assert graph.query_running is False
+
+
+def test_a_3d_export_keeps_its_frame_inside_the_page_width():
+    # width 100% plus the 1px frame scrolled the page sideways; border-box keeps the frame inside
+    html = Graph3D(nodes=[{"id": "a"}]).to_html()
+    assert "#wrapper { box-sizing: border-box; width: 100%; height: 600px; }" in html

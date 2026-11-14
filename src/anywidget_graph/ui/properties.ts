@@ -1,6 +1,7 @@
 /**
  * Properties panel component for displaying selected node/edge details.
  */
+import { panelControls, setPanelOpen } from "./panel.ts";
 import { ICONS } from "./icons.ts";
 import type { GraphEdge, GraphNode, Panel, WidgetModel } from "./types.ts";
 
@@ -25,7 +26,7 @@ export function createPropertiesPanel(
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close properties";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   header.appendChild(closeBtn);
@@ -67,13 +68,7 @@ export function createPropertiesPanel(
 
   panel.appendChild(content);
 
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open"),
-  };
+  return panelControls(panel);
 }
 
 /**

@@ -5,7 +5,8 @@
 <title>{title}</title>
 <style>
 body {{ margin: 0; background: {background}; font-family: sans-serif; }}
-#wrapper {{ width: {width}; height: {height}; }}
+/* The frame (1px border) sits inside the given size, so a 100% wide scene never scrolls sideways */
+#wrapper {{ box-sizing: border-box; width: {width}; height: {height}; }}
 #container {{ position: relative; width: 100%; height: 100%; }}
 </style>
 <style>

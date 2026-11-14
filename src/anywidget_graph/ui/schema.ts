@@ -3,6 +3,7 @@
  * Shows node/edge types from current graph data with toggle checkboxes.
  * Clicking a type name still fires the query (schema browse behavior).
  */
+import { panelControls, setPanelOpen } from "./panel.ts";
 import { DARK, LIGHT } from "./palette.ts";
 import type { Palette } from "./registry.ts";
 import { Registries, assignNodeTypes, nodeTypeOf } from "./styling.ts";
@@ -108,7 +109,7 @@ export function createSchemaPanel(
   closeBtn.innerHTML = ICONS.close;
   closeBtn.title = "Close panel";
   closeBtn.addEventListener("click", () => {
-    panel.classList.remove("awg-panel-open");
+    setPanelOpen(panel, false);
     callbacks?.onClose?.();
   });
   headerBtns.appendChild(closeBtn);
@@ -351,13 +352,7 @@ export function createSchemaPanel(
 
   panel.appendChild(content);
 
-  return {
-    element: panel,
-    open: () => panel.classList.add("awg-panel-open"),
-    close: () => panel.classList.remove("awg-panel-open"),
-    toggle: () => panel.classList.toggle("awg-panel-open"),
-    isOpen: () => panel.classList.contains("awg-panel-open"),
-  };
+  return panelControls(panel);
 }
 
 /**
@@ -408,10 +403,12 @@ export function createFilterItem({ name, count, total, color, properties, isHidd
   colorInput.addEventListener("click", (e) => e.stopPropagation());
   itemHeader.appendChild(colorInput);
 
-  // Name (clickable to query)
-  const nameSpan = document.createElement("span");
+  // Name: a button (styled as text) that queries this type, so Tab and Enter reach it too
+  const nameSpan = document.createElement("button");
+  nameSpan.type = "button";
   nameSpan.className = "awg-schema-name";
   nameSpan.textContent = name;
+  nameSpan.title = `Query ${name}`;
   nameSpan.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
     onQuery();
