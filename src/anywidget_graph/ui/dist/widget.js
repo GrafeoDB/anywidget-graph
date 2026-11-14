@@ -2105,7 +2105,8 @@ function parsed(color) {
     const full = hex.length === 3 ? hex.split("").map((d) => d + d).join("") : hex.slice(0, 6);
     return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
   }
-  const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(c);
+  const n = String.raw`(\d{1,3}(?:\.\d+)?)`;
+  const rgb = new RegExp(String.raw`^rgba?\(\s*${n}\s*,\s*${n}\s*,\s*${n}\s*(?:,\s*[\d.]+%?\s*)?\)$`, "i").exec(c) ?? new RegExp(String.raw`^rgba?\(\s*${n}\s+${n}\s+${n}\s*(?:\/\s*[\d.]+%?\s*)?\)$`, "i").exec(c);
   return rgb ? rgb.slice(1, 4).map((v) => Math.round(Math.min(255, Number(v)))) : null;
 }
 var RESOLVED = /* @__PURE__ */ new Map();
@@ -2118,7 +2119,10 @@ function channels(color) {
     if (ctx) {
       ctx.fillStyle = "#000000";
       ctx.fillStyle = color;
-      rgb = parsed(String(ctx.fillStyle));
+      const overBlack = String(ctx.fillStyle);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = color;
+      rgb = overBlack === String(ctx.fillStyle) ? parsed(overBlack) : null;
     }
     RESOLVED.set(color, rgb);
   }

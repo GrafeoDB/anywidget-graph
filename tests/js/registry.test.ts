@@ -74,3 +74,26 @@ test("mixOver reads every colour form a host may pass, and never yields NaN", ()
   assert.equal(mixOver("red", "#ffffff", 0.38).includes("NaN"), false);
   assert.equal(mixOver("hsl(10 50% 50%)", "#ffffff", 0.38).includes("NaN"), false);
 });
+
+test("mixOver reads rgb() in its comma or its space form, never a mix, and leaves a malformed one as it is", () => {
+  assert.equal(mixOver("rgb(33 145 141)", "#ffffff", 0.38), "#abd5d4");
+  assert.equal(mixOver("rgb(255 0 0 / 0.5)", "#000000", 0.5), "#800000");
+  assert.equal(mixOver("RGB(33,145,141)", "#ffffff", 0.38), "#abd5d4");
+  for (const malformed of ["rgb(1,,2,3)", "rgb(1, 2 3)", "rgb(1 2 3, 0.5)", "rgb(1, 2, 3 / 0.5)", "rgb(,1,2,3)", "rgb(1, 2, 3"]) {
+    assert.equal(mixOver(malformed, "#ffffff", 0.38), malformed, malformed);
+  }
+});
+
+test("in a browser, a colour the canvas cannot read comes back as it is instead of as black", () => {
+  // A stand-in canvas that, like a browser's, ignores a colour it cannot read and keeps the one before
+  const known: Record<string, string> = { "#000000": "#000000", "#ffffff": "#ffffff", teal: "#008080" };
+  const ctx = { value: "#000000", get fillStyle() { return this.value; }, set fillStyle(v: string) { if (v in known) this.value = known[v]; } };
+  const g = globalThis as { document?: unknown };
+  g.document = { createElement: () => ({ getContext: () => ctx }) };
+  try {
+    assert.equal(mixOver("teal", "#ffffff", 0.38), mixOver("#008080", "#ffffff", 0.38));
+    assert.equal(mixOver("no-such-colour", "#ffffff", 0.38), "no-such-colour");
+  } finally {
+    delete g.document;
+  }
+});

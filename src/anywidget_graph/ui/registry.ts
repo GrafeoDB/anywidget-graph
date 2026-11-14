@@ -63,7 +63,10 @@ function parsed(color: string): RGB | null {
     const full = hex.length === 3 ? hex.split("").map((d) => d + d).join("") : hex.slice(0, 6);
     return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) as RGB;
   }
-  const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(c);
+  // The comma form rgb(r, g, b[, a]) or the space form rgb(r g b[ / a]), not a mix of the two
+  const n = String.raw`(\d{1,3}(?:\.\d+)?)`;
+  const rgb = new RegExp(String.raw`^rgba?\(\s*${n}\s*,\s*${n}\s*,\s*${n}\s*(?:,\s*[\d.]+%?\s*)?\)$`, "i").exec(c)
+    ?? new RegExp(String.raw`^rgba?\(\s*${n}\s+${n}\s+${n}\s*(?:\/\s*[\d.]+%?\s*)?\)$`, "i").exec(c);
   return rgb ? (rgb.slice(1, 4).map((v) => Math.round(Math.min(255, Number(v)))) as RGB) : null;
 }
 
@@ -77,9 +80,14 @@ function channels(color: string): RGB | null {
     const ctx = document.createElement("canvas").getContext("2d");
     let rgb: RGB | null = null;
     if (ctx) {
+      // The canvas ignores a colour it cannot read and keeps the one before: read it over two different colours,
+      // and only a colour that replaced both is real
       ctx.fillStyle = "#000000";
       ctx.fillStyle = color;
-      rgb = parsed(String(ctx.fillStyle));
+      const overBlack = String(ctx.fillStyle);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = color;
+      rgb = overBlack === String(ctx.fillStyle) ? parsed(overBlack) : null;
     }
     RESOLVED.set(color, rgb);
   }
