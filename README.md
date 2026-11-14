@@ -8,8 +8,8 @@
 Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidget.dev/) runs.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-dark.png">
-  <img src="assets/demo-light.png" alt="anywidget-graph showing a small code base as a graph, with the filter panel open">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-dark.png">
+  <img src="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-light.png" alt="anywidget-graph showing a small code base as a graph, with the filter panel open">
 </picture>
 
 ## Features
@@ -326,8 +326,8 @@ A citation network of scientific papers (topic-coloured clusters, hub papers siz
 roster), laid out and rendered in three dimensions:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-3d-dark.png">
-  <img src="assets/demo-3d-light.png" alt="3D view of a papers citation network">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-3d-dark.png">
+  <img src="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-3d-light.png" alt="3D view of a citation network of papers, coloured by topic, with hub papers sized by citations">
 </picture>
 
 ```python
