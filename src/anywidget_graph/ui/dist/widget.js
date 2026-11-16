@@ -49,6 +49,7 @@ var TRAIT_DEFAULTS = {
   "edge_arrows": false,
   "edge_color_field": null,
   "edge_color_scale": "viridis",
+  "edge_label_overlap": "allow",
   "edge_size_field": null,
   "edge_size_range": [
     1,
@@ -90,6 +91,7 @@ var TRAIT_DEFAULTS = {
   "selected_nodes": [],
   "selection_mode": "click",
   "show_axes": true,
+  "show_count": true,
   "show_edge_labels": false,
   "show_grid": true,
   "show_labels": true,
@@ -219,7 +221,825 @@ function capQueryResult(graph, max) {
 }
 
 // vendor-globals.ts
-var { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2, d3Force } = anywidgetGraphVendor;
+var {
+  Graph,
+  Sigma,
+  layerBorder,
+  sdfCircle,
+  pathLine,
+  extremityArrow,
+  layerPlain,
+  circular,
+  random,
+  forceAtlas2,
+  d3Force
+} = anywidgetGraphVendor;
+
+// types.ts
+function drawnNode(node) {
+  return typeof node.id === "string" ? node : { ...node, id: String(node.id) };
+}
+function drawnEdge(edge) {
+  const idText = edge.id === void 0 || edge.id === null || typeof edge.id === "string";
+  if (typeof edge.source === "string" && typeof edge.target === "string" && idText) return edge;
+  const copy = { ...edge, source: String(edge.source), target: String(edge.target) };
+  if (edge.id !== void 0 && edge.id !== null) copy.id = String(edge.id);
+  return copy;
+}
+function idTexts(ids) {
+  return Array.isArray(ids) ? ids.filter((id) => id !== null && id !== void 0).map(String) : [];
+}
+function globalSymbol(key) {
+  return globalThis[key];
+}
+function setGlobalSymbol(key, value) {
+  globalThis[key] = value;
+}
+function deleteGlobalSymbol(key) {
+  delete globalThis[key];
+}
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// lanes.ts
+var LANE_WIDTH = 1e3;
+var LANE_HEIGHT = 1e3;
+var LANE_GAP = 400;
+function laneOf(node, lanes) {
+  const ids = lanes.map((lane) => lane.id);
+  const laneId = typeof node.lane === "string" ? node.lane : "";
+  return ids.includes(laneId) ? laneId : ids[0];
+}
+function laneBands(lanes, { width = LANE_WIDTH, height = LANE_HEIGHT, gap = LANE_GAP } = {}) {
+  const bands = [];
+  let x0 = 0;
+  for (const lane of lanes) {
+    const share = typeof lane.width === "number" && lane.width > 0 ? lane.width : 1;
+    bands.push({ x0, x1: x0 + width * share, y0: 0, y1: height });
+    x0 += width * share + gap;
+  }
+  return bands;
+}
+function insetBand(band, share = 0.06) {
+  const dx = (band.x1 - band.x0) * share, dy = (band.y1 - band.y0) * share;
+  return { x0: band.x0 + dx, x1: band.x1 - dx, y0: band.y0 + dy, y1: band.y1 - dy };
+}
+function lanesBBox(bands, margin = 120, right = 0) {
+  return {
+    x: [Math.min(...bands.map((band) => band.x0)) - margin, Math.max(...bands.map((band) => band.x1)) + margin + right],
+    y: [Math.min(...bands.map((band) => band.y0)) - margin, Math.max(...bands.map((band) => band.y1)) + margin]
+  };
+}
+function columnPositions(ids, band) {
+  const height = band.y1 - band.y0;
+  const spacing = ids.length > 1 ? Math.min(height / ids.length, height * 0.12) : 0;
+  const cx = (band.x0 + band.x1) / 2, cy = (band.y0 + band.y1) / 2;
+  const placed = {};
+  ids.forEach((id, i) => {
+    placed[id] = { x: cx, y: cy + (i - (ids.length - 1) / 2) * spacing };
+  });
+  return placed;
+}
+function fitBox(box, width, height, padding = 0) {
+  const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
+  const scale = fitScale(box, width, height, padding);
+  const offsetX = (width - spanX * scale) / 2, offsetY = (height - spanY * scale) / 2;
+  return (point) => ({ x: offsetX + (point.x - box.x[0]) * scale, y: offsetY + (box.y[1] - point.y) * scale });
+}
+function fitScale(box, width, height, padding = 0) {
+  const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
+  const side = Math.min(width, height);
+  const shrink = side > 0 ? Math.max(0, side - 2 * padding) / side : 0;
+  return Math.min(width / spanX, height / spanY) * shrink;
+}
+function roomyFrame(box, largest, width, height, padding, right, top = 0) {
+  let frame = box;
+  for (let pass = 0; pass < 2; pass++) {
+    const scale = fitScale(frame, width, height, padding);
+    if (!(scale > 0)) return box;
+    const edge = largest / scale;
+    frame = { x: [box.x[0] - edge, box.x[1] + edge + right / scale], y: [box.y[0] - edge, box.y[1] + edge + top / scale] };
+  }
+  return frame;
+}
+var LABEL_ROW = 18;
+var LABEL_COLUMN = 144;
+var LABEL_FONT = '"JetBrains Mono", ui-monospace, monospace';
+var LANE_LABEL_MAX = 132;
+function laneIcon(lane, accent) {
+  const icon = typeof lane.icon === "string" ? lane.icon.trim() : "";
+  if (icon.startsWith("<svg")) {
+    return { kind: "image", src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(icon.replaceAll("currentColor", accent))}` };
+  }
+  if (icon) return { kind: "image", src: icon };
+  if (Array.isArray(lane.glyph) && lane.glyph.length) return { kind: "bars", colors: lane.glyph };
+  return { kind: "open" };
+}
+function glyphHit(point, center, half = 24) {
+  return Math.abs(point.x - center.x) <= half && Math.abs(point.y - center.y) <= half;
+}
+function fitToBand(positions, band) {
+  const ids = Object.keys(positions);
+  if (!ids.length) return {};
+  const xs = ids.map((id) => positions[id].x);
+  const ys = ids.map((id) => positions[id].y);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const spanX = Math.max(...xs) - minX || 1, spanY = Math.max(...ys) - minY || 1;
+  const width = band.x1 - band.x0, height = band.y1 - band.y0;
+  const placed = {};
+  for (const id of ids) {
+    placed[id] = ids.length === 1 ? { x: band.x0 + width / 2, y: band.y0 + height / 2 } : { x: band.x0 + (positions[id].x - minX) / spanX * width, y: band.y0 + (positions[id].y - minY) / spanY * height };
+  }
+  return placed;
+}
+function isCrossEdge(edge, laneById) {
+  if (edge.cross) return true;
+  const a = laneById.get(edge.source), b = laneById.get(edge.target);
+  return a !== void 0 && b !== void 0 && a !== b;
+}
+function crossNeighbours(ids, cross) {
+  const partners = /* @__PURE__ */ new Set();
+  for (const edge of cross) {
+    if (ids.has(edge.source)) partners.add(edge.target);
+    if (ids.has(edge.target)) partners.add(edge.source);
+  }
+  return partners;
+}
+function crossKey(edge) {
+  return `${edge.source}|${edge.target}`;
+}
+function hashUnit(text) {
+  return hash32(text) / 4294967296;
+}
+function hash32(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822507);
+  h ^= h >>> 13;
+  h = Math.imul(h, 3266489909);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+function seededRandom(seed) {
+  let state = hash32(String(seed));
+  return () => {
+    state = state + 1831565813 >>> 0;
+    let t = state;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function clampInto(node, band) {
+  clampIntoColumn(node, band);
+  if (node.y < band.y0 || node.y > band.y1) {
+    node.y = clamp(node.y, band.y0, band.y1);
+    if ("vy" in node) node.vy = 0;
+  }
+  return node;
+}
+function clampIntoColumn(node, band) {
+  if (node.x < band.x0 || node.x > band.x1) {
+    node.x = clamp(node.x, band.x0, band.x1);
+    if ("vx" in node) node.vx = 0;
+  }
+  return node;
+}
+function laneBounds(lane) {
+  return lane.free === true && !lane.rows ? "column" : "rect";
+}
+function groupCentroids(nodes, groupOf) {
+  const sums = /* @__PURE__ */ new Map();
+  for (const node of nodes) {
+    const g = groupOf(node);
+    if (g === void 0 || g === null || node.x === void 0 || node.y === void 0) continue;
+    const s = sums.get(g) ?? { x: 0, y: 0, n: 0 };
+    s.x += node.x;
+    s.y += node.y;
+    s.n += 1;
+    sums.set(g, s);
+  }
+  return new Map([...sums].map(([g, s]) => [g, { x: s.x / s.n, y: s.y / s.n }]));
+}
+function groupForce(nodes, groupOf, strength) {
+  return (alpha) => {
+    const centroids = groupCentroids(nodes, groupOf);
+    for (const node of nodes) {
+      const g = groupOf(node);
+      const c = g === void 0 ? void 0 : centroids.get(g);
+      if (!c || node.fx !== void 0) continue;
+      node.vx = (node.vx ?? 0) + (c.x - (node.x ?? 0)) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (c.y - (node.y ?? 0)) * strength * alpha;
+    }
+  };
+}
+function partnerHeights(ids, cross, placed) {
+  const wanted = new Set(ids);
+  const sums = /* @__PURE__ */ new Map();
+  for (const edge of cross) {
+    for (const [own, other] of [[edge.source, edge.target], [edge.target, edge.source]]) {
+      if (!wanted.has(own) || !placed.has(other)) continue;
+      const [sum, count] = sums.get(own) ?? [0, 0];
+      sums.set(own, [sum + placed.get(other).y, count + 1]);
+    }
+  }
+  return new Map(ids.filter((id) => sums.has(id)).map((id) => [id, sums.get(id)[0] / sums.get(id)[1]]));
+}
+function laneSpacing(count, band) {
+  const area = (band.x1 - band.x0) * (band.y1 - band.y0);
+  return Math.sqrt(area / Math.max(1, count));
+}
+function laneSizeScale(sizes, band, pxPerUnit, share = 0.35) {
+  const discs = sizes.reduce((sum, size) => sum + Math.PI * size * size, 0);
+  const area = (band.x1 - band.x0) * (band.y1 - band.y0) * pxPerUnit * pxPerUnit;
+  return discs > 0 ? Math.min(1, Math.sqrt(share * area / discs)) : 1;
+}
+function rowOf(node, rows) {
+  const index = rows.order.indexOf(node[rows.field]);
+  return index >= 0 ? index : rows.order.length;
+}
+function rowBands(band, order, counts, minShare = 0.12, inset = 0.1, nameRoom = 0) {
+  const used = counts[order.length] > 0 ? order.length + 1 : order.length;
+  const least = Math.min(minShare, 1 / used);
+  const shares = new Array(used).fill(1 / used);
+  const fixed = /* @__PURE__ */ new Set();
+  for (let changed = true; changed; ) {
+    changed = false;
+    const rest = 1 - fixed.size * least;
+    const free = [...shares.keys()].filter((i) => !fixed.has(i));
+    const counted = free.reduce((sum2, i) => sum2 + (counts[i] || 0), 0);
+    for (const i of free) shares[i] = counted ? rest * (counts[i] || 0) / counted : rest / free.length;
+    for (const i of free) {
+      if (shares[i] < least - 1e-12) {
+        shares[i] = least;
+        fixed.add(i);
+        changed = true;
+      }
+    }
+  }
+  const sum = shares.reduce((a, b) => a + b, 0);
+  const height = band.y1 - band.y0;
+  let y1 = band.y1;
+  return shares.map((share, i) => {
+    const y0 = i === used - 1 ? band.y0 : y1 - height * share / sum;
+    const pad = (y1 - y0) * inset;
+    const top = Math.min(Math.max(pad, nameRoom), (y1 - y0) * 0.6);
+    const row = { label: i < order.length ? String(order[i]) : "", y0, y1, band: { x0: band.x0, x1: band.x1, y0: y0 + pad, y1: y1 - top } };
+    y1 = y0;
+    return row;
+  });
+}
+function bigBatch(before, removed, added, share = 1 / 3) {
+  if (!removed && !added) return false;
+  return before === 0 || removed > before * share || added > before * share;
+}
+function colorFor(item, type, typeColors, fallback) {
+  return (typeof item.color === "string" ? item.color : void 0) || typeColors?.[type] || fallback;
+}
+function labelsThatFit(nodes, count, { height, gap = 0, margin = 0, band, taken = [] }) {
+  const ranked = [...nodes].sort((a, b) => (b.size || 0) - (a.size || 0) || (b.degree || 0) - (a.degree || 0));
+  const boxOf = (node, side) => {
+    const y0 = node.y - height / 2, y1 = node.y + height / 2;
+    if (side === "right") {
+      const x0 = node.x + (node.size || 0) + gap;
+      return { x0, x1: x0 + (node.width ?? 0), y0, y1 };
+    }
+    const x1 = node.x - (node.size || 0) - gap;
+    return { x0: x1 - (node.width ?? 0), x1, y0, y1 };
+  };
+  const overlap = (a, b) => a.x0 < b.x1 + margin && b.x0 < a.x1 + margin && a.y0 < b.y1 + margin && b.y0 < a.y1 + margin;
+  const coversDisc = (box, other) => {
+    const dx = Math.max(box.x0 - other.x, 0, other.x - box.x1), dy = Math.max(box.y0 - other.y, 0, other.y - box.y1);
+    return Math.hypot(dx, dy) < (other.size || 0) * 0.5;
+  };
+  const chosenIds = /* @__PURE__ */ new Set();
+  const chosen = [];
+  for (const node of ranked) {
+    if (chosen.length >= count) break;
+    let side = "right";
+    let box = boxOf(node, "right");
+    if (band && box.x1 > band.x1) {
+      side = "left";
+      box = boxOf(node, "left");
+      if (box.x0 < band.x0) continue;
+    }
+    if (taken.some((space) => overlap(box, space))) continue;
+    if (chosen.some((other) => overlap(box, other.box) || coversDisc(other.box, node))) continue;
+    const blocked = (other) => other.id !== node.id && ((other.size || 0) >= (node.size || 0) || chosenIds.has(other.id)) && coversDisc(box, other);
+    if (nodes.some(blocked)) continue;
+    chosen.push({ id: node.id, side, box });
+    chosenIds.add(node.id);
+  }
+  return chosen.map(({ id, side }) => ({ id, side }));
+}
+function shortenLabel(text, maxWidth, measure) {
+  if (!text || measure(text) <= maxWidth) return text;
+  let cut = text;
+  while (cut && measure(cut + "…") > maxWidth) cut = cut.slice(0, -1);
+  return cut.trimEnd() + "…";
+}
+function labelClear(spot, occupied, unit) {
+  return occupied.every((o) => Math.abs(o.x - spot.x) >= unit.x * 0.999 || Math.abs(o.y - spot.y) >= unit.y * 0.999);
+}
+function clamp(value, low, high) {
+  return Math.min(high, Math.max(low, value));
+}
+function placeAppended(nodeId, { cross = [], lane = [], occupied = [], unit }, band) {
+  const width = band.x1 - band.x0, height = band.y1 - band.y0;
+  let spot;
+  if (cross.length) {
+    const y = cross.reduce((sum, p) => sum + p.y, 0) / cross.length;
+    spot = { x: band.x0 + width / 2, y: clamp(y, band.y0, band.y1) };
+  } else if (lane.length) {
+    const cx = lane.reduce((sum, p) => sum + p.x, 0) / lane.length;
+    const cy = lane.reduce((sum, p) => sum + p.y, 0) / lane.length;
+    const angle = 2 * Math.PI * hashUnit(nodeId + "a");
+    spot = { x: clamp(cx + Math.cos(angle) * width * 0.04, band.x0, band.x1), y: clamp(cy + Math.sin(angle) * height * 0.04, band.y0, band.y1) };
+  } else {
+    spot = { x: band.x0 + width * hashUnit(nodeId + "x"), y: band.y0 + height * hashUnit(nodeId + "y") };
+  }
+  return freeSpot(spot, occupied, band, unit || { x: width * 0.04, y: height * 0.04 });
+}
+function freeSpot(spot, occupied, band, unit) {
+  const cell = (p) => [Math.floor(p.x / unit.x), Math.floor(p.y / unit.y)];
+  const buckets = /* @__PURE__ */ new Map();
+  for (const o of occupied) {
+    const key = cell(o).join(",");
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(o);
+  }
+  const clear = (p) => {
+    const [cx, cy] = cell(p);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (const o of buckets.get(`${cx + dx},${cy + dy}`) || []) {
+          if (Math.abs(o.x - p.x) < unit.x * 0.999 && Math.abs(o.y - p.y) < unit.y * 0.999) return false;
+        }
+      }
+    }
+    return true;
+  };
+  if (clear(spot)) return spot;
+  const rows = Math.ceil((band.y1 - band.y0) / unit.y), columns = Math.ceil((band.x1 - band.x0) / unit.x);
+  for (let cost = 1; cost <= rows + 3 * columns; cost++) {
+    for (let col = Math.floor(cost / 3); col >= 0; col--) {
+      const row = cost - 3 * col;
+      for (const j of col ? [col, -col] : [0]) {
+        for (const i of row ? [row, -row] : [0]) {
+          const p = { x: spot.x + j * unit.x, y: spot.y + i * unit.y };
+          if (p.x < band.x0 || p.x > band.x1 || p.y < band.y0 || p.y > band.y1) continue;
+          if (clear(p)) return p;
+        }
+      }
+    }
+  }
+  return { ...spot, crowded: true };
+}
+function curveControl(a, b, bend = 0.18) {
+  return { x: (a.x + b.x) / 2 - (b.y - a.y) * bend, y: (a.y + b.y) / 2 + (b.x - a.x) * bend };
+}
+function curvePoint(a, c, b, t) {
+  const u = 1 - t;
+  return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
+}
+function curveUntil(a, c, b, t) {
+  return { control: { x: a.x + (c.x - a.x) * t, y: a.y + (c.y - a.y) * t }, end: curvePoint(a, c, b, t) };
+}
+function staggerSchedule(n, stagger, maxTotal = 1500) {
+  if (n <= 0) return [];
+  const step = n > 1 ? Math.min(stagger, maxTotal / (n - 1)) : 0;
+  return Array.from({ length: n }, (_, i) => Math.round(i * step));
+}
+function progress(start, now, duration) {
+  const t = Math.min(1, Math.max(0, (now - start) / duration));
+  return 1 - Math.pow(1 - t, 3);
+}
+function pulseScale(t, period = 1400, amplitude = 0.35) {
+  return 1 + amplitude * (0.5 - 0.5 * Math.cos(2 * Math.PI * t / period));
+}
+var THEME_VARIABLES = {
+  background: ["--awg-bg", "--awg-graph-bg", "--awg-input-bg"],
+  panel: ["--awg-bg-secondary", "--awg-bg-tertiary"],
+  text: ["--awg-text"],
+  muted: ["--awg-text-secondary", "--awg-text-muted"],
+  border: ["--awg-border", "--awg-input-border"],
+  accent: ["--awg-accent", "--awg-accent-hover"]
+};
+function themeVariables(theme) {
+  const variables = {};
+  for (const [key, names] of Object.entries(THEME_VARIABLES)) {
+    const value = theme?.[key];
+    for (const name of names) variables[name] = typeof value === "string" ? value : "";
+  }
+  return variables;
+}
+function labelColor(theme, dark) {
+  return theme?.text || (dark ? "#e0e0e0" : "#333");
+}
+function nextLaneAction(lane, current) {
+  return { lane, seq: (Number(current?.seq) || 0) + 1 };
+}
+function edgeKey(edge) {
+  return `${edge.source}|${edge.target}|${edge.label || ""}`;
+}
+function mergeItems(items, nodes = [], edges = []) {
+  const merged = { nodes: new Map(items?.nodes ?? []), edges: [...items?.edges ?? []] };
+  for (const node of nodes.map(drawnNode)) {
+    const old = merged.nodes.get(node.id);
+    merged.nodes.set(node.id, old ? { ...old, ...node } : node);
+  }
+  if (!items) {
+    merged.edges.push(...edges.map(drawnEdge));
+    return merged;
+  }
+  const keys = new Set(merged.edges.map(edgeKey));
+  for (const edge of edges.map(drawnEdge)) {
+    if (keys.has(edgeKey(edge))) continue;
+    keys.add(edgeKey(edge));
+    merged.edges.push(edge);
+  }
+  return merged;
+}
+function edgeMatches(edge, spec) {
+  if (edge.source !== spec.source || edge.target !== spec.target) return false;
+  return spec.label === void 0 || spec.label === null || (edge.label || "") === spec.label;
+}
+function removeItems(items, remove = {}) {
+  const ids = new Set(idTexts(remove.nodes));
+  const specs = (remove.edges || []).map(drawnEdge);
+  const gone = (edge) => ids.has(edge.source) || ids.has(edge.target) || specs.some((spec) => edgeMatches(edge, spec));
+  return { nodes: new Map([...items.nodes].filter(([id]) => !ids.has(id))), edges: items.edges.filter((edge) => !gone(edge)) };
+}
+function applyBatchItems(items, batch) {
+  return mergeItems(removeItems(items, batch.remove), batch.nodes || [], batch.edges || []);
+}
+function sameItems(items, nodes, edges) {
+  const ids = new Set(nodes.map((node) => String(node.id)));
+  if (ids.size !== items.nodes.size || [...ids].some((id) => !items.nodes.has(id))) return false;
+  if (edges.length !== items.edges.length) return false;
+  const counts = /* @__PURE__ */ new Map();
+  for (const edge of items.edges) counts.set(edgeKey(edge), (counts.get(edgeKey(edge)) || 0) + 1);
+  for (const edge of edges) {
+    const left = counts.get(edgeKey(edge));
+    if (!left) return false;
+    counts.set(edgeKey(edge), left - 1);
+  }
+  return true;
+}
+function extentBand(points) {
+  if (!points.length) return null;
+  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const size = Math.max(x1 - x0, y1 - y0) || LANE_WIDTH;
+  if (x1 - x0 < size / 1e6) [x0, x1] = [(x0 + x1 - size) / 2, (x0 + x1 + size) / 2];
+  if (y1 - y0 < size / 1e6) [y0, y1] = [(y0 + y1 - size) / 2, (y0 + y1 + size) / 2];
+  return { x0, x1, y0, y1 };
+}
+function withTotals(counts, totals) {
+  const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([name, count]) => totals && name in totals ? { name, count, total: totals[name] } : { name, count });
+  if (totals) {
+    for (const [name, total] of Object.entries(totals)) if (!counts.has(name)) rows.push({ name, count: 0, total });
+  }
+  return rows;
+}
+function shownOf(count, total) {
+  if (total === void 0 || total === null) return String(count);
+  return `${Number(count).toLocaleString("en-US")} / ${Number(total).toLocaleString("en-US")}`;
+}
+var UNLABELED = "Unlabeled";
+function nodeType(node) {
+  const labels = node.labels;
+  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || UNLABELED);
+}
+function edgeType(edge) {
+  return String(edge.type || edge.label || "unknown");
+}
+function totalShown(items, typeOf, group) {
+  const totals = Object.entries(group || {}).filter(([, n]) => Number.isFinite(Number(n)));
+  if (!totals.length) return void 0;
+  const listed = new Set(totals.map(([type]) => type));
+  return totals.reduce((sum, [, n]) => sum + Number(n), 0) + items.filter((item) => !listed.has(typeOf(item))).length;
+}
+function withAlpha(hex, alpha) {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+  if (!match) return hex;
+  const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+function neighbourhood(edges, id) {
+  if (id === null || id === void 0) return /* @__PURE__ */ new Set();
+  const own = String(id);
+  const near = /* @__PURE__ */ new Set([own]);
+  for (const edge of edges) {
+    if (String(edge.source) === own) near.add(String(edge.target));
+    if (String(edge.target) === own) near.add(String(edge.source));
+  }
+  return near;
+}
+function loopCircle(center, radius, index) {
+  const r = Math.max(7, radius * 0.7) + index * 5;
+  const reach = (radius + r * 0.4) * Math.SQRT1_2;
+  return { x: center.x + reach, y: center.y - reach, r };
+}
+function presetPositions(nodes) {
+  const positions = /* @__PURE__ */ new Map();
+  for (const node of nodes) {
+    if (typeof node.x === "number" && typeof node.y === "number" && Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      positions.set(String(node.id), { x: node.x, y: node.y });
+    }
+  }
+  return positions;
+}
+function rgbOf(color) {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(color || "");
+  if (hex) return hex.slice(1, 4).map((part) => parseInt(part, 16));
+  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color || "");
+  return rgb ? rgb.slice(1, 4).map(Number) : null;
+}
+var DIM_MIX = 0.65;
+function dimColor(color, background) {
+  return mixColor(color, background, DIM_MIX);
+}
+function mixColor(color, background, amount) {
+  const [from, to] = [rgbOf(color), rgbOf(background)];
+  if (!from || !to) return color;
+  return `#${from.map((v, i) => Math.round(v + (to[i] - v) * amount).toString(16).padStart(2, "0")).join("")}`;
+}
+function fadeColor(color, background, opacity) {
+  if (typeof opacity !== "number" || !(opacity < 1)) return color;
+  return mixColor(color, background, 1 - Math.max(0, opacity));
+}
+function dashPattern(dash) {
+  if (dash === true) return [5, 4];
+  const parts = Array.isArray(dash) ? dash : typeof dash === "string" ? dash.trim().split(/[\s,]+/) : [];
+  const pattern = parts.map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+  return pattern.length && pattern.some((n) => n > 0) ? pattern : null;
+}
+function contrastText(color) {
+  const rgb = rgbOf(color);
+  if (!rgb) return "#ffffff";
+  const [r, g, b] = rgb;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b >= 150 ? "#111111" : "#ffffff";
+}
+function levelState(level, current, levels = [], style = "dim") {
+  if (level === void 0 || level === null || !levels.length) return "shown";
+  const ids = levels.map((entry) => entry.id);
+  const rank = (value) => ids.includes(value) ? ids.indexOf(value) : Number(value);
+  const gap = rank(current) - rank(level);
+  if (!(gap > 0)) return "shown";
+  return gap === 1 && style === "dim" ? "dim" : "hidden";
+}
+
+// edge-labels.ts
+var EDGE_LABEL_SPOTS = [0.5, 0.35, 0.65, 0.2, 0.8];
+function uprightAngle(dx, dy) {
+  let angle = Math.atan2(dy, dx);
+  if (angle > Math.PI / 2) angle -= Math.PI;
+  else if (angle <= -Math.PI / 2) angle += Math.PI;
+  return angle;
+}
+function boxCorners(box) {
+  const cos = Math.cos(box.angle), sin = Math.sin(box.angle);
+  const hw = box.width / 2, hh = box.height / 2;
+  return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([u, v]) => ({ x: box.x + u * cos - v * sin, y: box.y + u * sin + v * cos }));
+}
+function project(corners, axis) {
+  let min = Infinity, max = -Infinity;
+  for (const c of corners) {
+    const d = c.x * axis.x + c.y * axis.y;
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+  return [min, max];
+}
+function boxesOverlap(a, b) {
+  const ca = boxCorners(a), cb = boxCorners(b);
+  for (const angle of [a.angle, a.angle + Math.PI / 2, b.angle, b.angle + Math.PI / 2]) {
+    const axis = { x: Math.cos(angle), y: Math.sin(angle) };
+    const [minA, maxA] = project(ca, axis), [minB, maxB] = project(cb, axis);
+    if (maxA <= minB + 1e-9 || maxB <= minA + 1e-9) return false;
+  }
+  return true;
+}
+function extent(box) {
+  const corners = boxCorners(box);
+  const xs = corners.map((c) => c.x), ys = corners.map((c) => c.y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+var BoxGrid = class {
+  cells = /* @__PURE__ */ new Map();
+  size;
+  constructor(size = 64) {
+    this.size = size;
+  }
+  keys(box) {
+    const { x0, y0, x1, y1 } = extent(box);
+    const keys = [];
+    for (let i = Math.floor(x0 / this.size); i <= Math.floor(x1 / this.size); i++) {
+      for (let j = Math.floor(y0 / this.size); j <= Math.floor(y1 / this.size); j++) keys.push(`${i},${j}`);
+    }
+    return keys;
+  }
+  add(box) {
+    for (const key of this.keys(box)) (this.cells.get(key) ?? this.cells.set(key, []).get(key)).push(box);
+  }
+  /** Whether the box overlaps one in the grid, other than those owned by the given nodes. */
+  hits(box, except = []) {
+    for (const key of this.keys(box)) {
+      for (const other of this.cells.get(key) ?? []) {
+        if (other.owner !== void 0 && except.includes(other.owner)) continue;
+        if (boxesOverlap(box, other)) return true;
+      }
+    }
+    return false;
+  }
+};
+function placeEdgeLabels(edges, obstacles, spots = EDGE_LABEL_SPOTS, gap = 2) {
+  const grid = new BoxGrid();
+  for (const box of obstacles) grid.add(box);
+  const placed = [];
+  for (const edge of edges) {
+    const dx = edge.to.x - edge.from.x, dy = edge.to.y - edge.from.y;
+    const length = Math.hypot(dx, dy);
+    const start = edge.fromRadius + gap, end = length - edge.toRadius - gap;
+    if (length === 0 || end - start < edge.width) continue;
+    const ux = dx / length, uy = dy / length;
+    const angle = uprightAngle(dx, dy);
+    const tried = /* @__PURE__ */ new Set();
+    for (const spot of spots) {
+      const along = Math.min(end - edge.width / 2, Math.max(start + edge.width / 2, start + spot * (end - start)));
+      const rounded = Math.round(along);
+      if (tried.has(rounded)) continue;
+      tried.add(rounded);
+      const box = { x: edge.from.x + ux * along, y: edge.from.y + uy * along, width: edge.width, height: edge.height, angle };
+      if (grid.hits(box, edge.ends)) continue;
+      grid.add(box);
+      placed.push({ key: edge.key, x: box.x, y: box.y, angle });
+      break;
+    }
+  }
+  return placed;
+}
+
+// node-labels.ts
+var NODE_LABEL_MARGIN = 5;
+var LABEL_SIDES = ["right", "left", "above", "below"];
+function nodeLabelBox(node, side) {
+  const box = { x: node.x, y: node.y, width: node.width, height: node.height, angle: 0 };
+  const across = node.radius + NODE_LABEL_MARGIN + node.width / 2, along = node.radius + NODE_LABEL_MARGIN + node.height / 2;
+  if (side === "right") box.x += across;
+  else if (side === "left") box.x -= across;
+  else if (side === "above") box.y -= along;
+  else box.y += along;
+  return box;
+}
+function pickNodeLabels(candidates, nodes) {
+  const nodeGrid = new BoxGrid();
+  for (const box of nodes) nodeGrid.add(box);
+  const labels = new BoxGrid();
+  const picked = /* @__PURE__ */ new Map();
+  for (const candidate of candidates) {
+    const sides = candidate.side ? [candidate.side] : LABEL_SIDES;
+    const boxes = sides.map((side) => ({ side, box: nodeLabelBox(candidate, side) }));
+    const free = boxes.filter(({ box }) => !labels.hits(box));
+    const clear = free.find(({ box }) => !nodeGrid.hits(box, [candidate.key]));
+    const choice = clear ?? (candidate.forced || candidate.hub ? free[0] : void 0) ?? (candidate.forced ? boxes[0] : void 0);
+    if (!choice) continue;
+    labels.add(choice.box);
+    picked.set(candidate.key, choice.side);
+  }
+  return picked;
+}
+
+// sigma-setup.ts
+var LABEL_SIZE = 12;
+var LABEL_WEIGHT = "500";
+var LABEL_FONT_STRING = `${LABEL_WEIGHT} ${LABEL_FONT}`;
+var EDGE_LABEL_SIZE = 14;
+var PRIMITIVES = {
+  nodes: {
+    shapes: [sdfCircle()],
+    variables: { borderColor: { type: "color", default: "#000000" }, fillColor: { type: "color", default: "#ffffff" } },
+    layers: [layerBorder({
+      borders: [
+        { size: 2, mode: "pixels", color: { attribute: "borderColor" } },
+        { size: 0, fill: true, color: { attribute: "fillColor" } }
+      ]
+    })],
+    label: { font: { family: LABEL_FONT, weight: LABEL_WEIGHT } }
+  },
+  edges: { paths: [pathLine()], extremities: [extremityArrow()], layers: [layerPlain()] }
+};
+var SIGMA_SETTINGS = {
+  itemSizesReference: "screen",
+  enableCameraRotation: false,
+  enableCameraMouseRotation: false,
+  enableNodeDrag: false,
+  // Every edge label may show, as in sigma 3 (sigma 4 shows only those of edges with a node label shown)
+  edgeLabelAnchors: "allNodes",
+  // A host may mount the widget in a hidden or not yet sized container (a closed panel, a tab)
+  allowInvalidContainer: true
+};
+function labelDensityFor(nodeCount) {
+  return nodeCount > 200 ? 0.5 : nodeCount > 50 ? 1 : 2;
+}
+function isHidden(display) {
+  return !display || display.visibility === "hidden";
+}
+function hoverCard(background, labelColor2) {
+  return {
+    backdropColor: background,
+    backdropBorderColor: withAlpha(labelColor2, 0.35),
+    backdropBorderWidth: 1,
+    backdropShadowBlur: 0,
+    backdropShadowColor: "rgba(0, 0, 0, 0)",
+    backdropPadding: 2,
+    backdropCornerRadius: 0
+  };
+}
+function labelPicker(renderer, options = {}) {
+  const graph = renderer.getGraph();
+  const measure = document.createElement("canvas").getContext("2d");
+  let placed = null;
+  let signature = "";
+  function labelSize(text) {
+    if (measure) measure.font = `${LABEL_WEIGHT} ${LABEL_SIZE}px ${LABEL_FONT}`;
+    return { width: (measure ? measure.measureText(text).width : text.length * 7.2) + 4, height: LABEL_SIZE + 4 };
+  }
+  function update() {
+    const enabled = (options.enabled?.() ?? true) && renderer.getSetting("renderLabels");
+    if (!enabled) {
+      if (placed) {
+        placed = null;
+        signature = "";
+        renderer.scheduleRefresh();
+      }
+      return;
+    }
+    const { width, height } = renderer.getDimensions();
+    const threshold = renderer.getSetting("labelRenderedSizeThreshold");
+    const nodes = [];
+    const candidates = [];
+    graph.forEachNode((node) => {
+      const shown = renderer.getNodeDisplayData(node);
+      if (!shown || isHidden(shown)) return;
+      const at = renderer.framedGraphToViewport(shown);
+      const radius = renderer.scaleSize(shown.size);
+      nodes.push({ x: at.x, y: at.y, width: 1.6 * radius, height: 1.6 * radius, angle: 0, owner: node });
+      if (!shown.label) return;
+      if (at.x < -radius - 200 || at.x > width + radius || at.y < -radius - 20 || at.y > height + radius + 20) return;
+      const forced = options.forced?.(node) ?? false;
+      if (!forced && radius < threshold) return;
+      candidates.push({ key: node, x: at.x, y: at.y, radius, ...labelSize(shown.label), forced, side: options.side?.(node), degree: graph.degree(node) });
+    });
+    candidates.sort((a, b) => Number(b.forced) - Number(a.forced) || b.radius - a.radius || b.degree - a.degree || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    const hubs = Math.max(3, Math.round(Math.sqrt(graph.order) / 2));
+    candidates.filter((c) => !c.forced).slice(0, hubs).forEach((c) => c.hub = true);
+    const cell = renderer.getSetting("labelGridCellSize");
+    const ratio = renderer.getCamera().getState().ratio;
+    const perCell = Math.ceil(renderer.getSetting("labelDensity") / (ratio * ratio));
+    const inCell = /* @__PURE__ */ new Map();
+    const allowed = candidates.filter((c) => {
+      const key = `${Math.floor(c.x / cell)},${Math.floor(c.y / cell)}`;
+      const count = (inCell.get(key) ?? 0) + 1;
+      inCell.set(key, count);
+      return c.forced || c.hub || count <= perCell;
+    });
+    const next = pickNodeLabels(allowed, nodes);
+    const nextSignature = [...next].map(([node, side]) => `${node}:${side}`).join("|");
+    placed = next;
+    if (nextSignature !== signature) {
+      signature = nextSignature;
+      renderer.scheduleRefresh();
+    }
+  }
+  function apply(node, out, isHovered) {
+    if (!placed || isHovered || out.visibility === "hidden" || !out.label) return;
+    const side = placed.get(node);
+    if (side) {
+      out.labelVisibility = "visible";
+      out.labelPosition = side;
+    } else {
+      out.labelVisibility = "hidden";
+    }
+  }
+  function drawnBoxes() {
+    return [...renderer.getNodeDisplayedLabels()].map((node) => {
+      const shown = renderer.getNodeDisplayData(node);
+      const at = renderer.framedGraphToViewport(shown);
+      const size = labelSize(shown.label || "");
+      const side = ["left", "above", "below"].find((s) => s === shown.labelPosition) ?? "right";
+      const box = nodeLabelBox({ x: at.x, y: at.y, radius: renderer.scaleSize(shown.size), ...size }, side);
+      return { node, label: shown.label || "", x0: box.x - box.width / 2, x1: box.x + box.width / 2, y0: box.y - box.height / 2, y1: box.y + box.height / 2 };
+    });
+  }
+  return { update, apply, drawnBoxes, labelSize };
+}
 
 // icons.ts
 var ICONS = {
@@ -262,20 +1082,6 @@ function panelControls(panel) {
     toggle: () => setPanelOpen(panel, !isOpen()),
     isOpen
   };
-}
-
-// types.ts
-function globalSymbol(key) {
-  return globalThis[key];
-}
-function setGlobalSymbol(key, value) {
-  globalThis[key] = value;
-}
-function deleteGlobalSymbol(key) {
-  delete globalThis[key];
-}
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // neo4j.ts
@@ -691,13 +1497,14 @@ async function fetchSchema2(model) {
 }
 
 // grafeo-embed.ts
-var GRAFEO_WASM_VERSION = "0.6.2";
+var GRAFEO_WASM_VERSION = "0.6.3";
 var GRAFEO_WASM_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}`;
+var GRAFEO_DATASETS_VERSION = "0.6.3";
+var GRAFEO_DATASETS_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/datasets@${GRAFEO_DATASETS_VERSION}`;
 var wasmDatabases = /* @__PURE__ */ new WeakMap();
 function databaseOf(model) {
   return wasmDatabases.get(model.host ?? model) ?? null;
 }
-var loadedStatements = /* @__PURE__ */ new WeakMap();
 var WASM_BINDINGS_KEY = /* @__PURE__ */ Symbol.for(`grafeo-wasm:${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`);
 function loadWasmBindings() {
   if (!globalSymbol(WASM_BINDINGS_KEY)) {
@@ -791,30 +1598,25 @@ async function executeQuery3(query, language, model) {
     return null;
   }
 }
-async function loadStatements(statements, model) {
+var demoLoads = /* @__PURE__ */ new WeakMap();
+function loadDemo(model, extra = [], baseUrl = GRAFEO_DATASETS_CDN) {
   const db = databaseOf(model);
-  if (!db) return statements.length;
-  const key = JSON.stringify(statements);
-  const loaded = loadedStatements.get(db) || /* @__PURE__ */ new Set();
-  loadedStatements.set(db, loaded);
-  if (loaded.has(key)) {
-    await fetchSchema3(model);
-    return 0;
+  if (!db) return Promise.reject(new Error("WASM database not initialized"));
+  let loading = demoLoads.get(db);
+  if (!loading) {
+    loading = (async () => {
+      try {
+        const { statements } = await import(`${baseUrl}/dist/silicon-valley/gql.js`);
+        for (const statement of [...statements, ...extra]) runStatement(db, statement, "gql");
+      } catch (err) {
+        demoLoads.delete(db);
+        await disconnect3(model);
+        throw err;
+      }
+    })();
+    demoLoads.set(db, loading);
   }
-  loaded.add(key);
-  let failed = 0;
-  for (const stmt of statements) {
-    const text = stmt.trim().replace(/;$/, "");
-    if (!text) continue;
-    try {
-      runStatement(db, text, "gql");
-    } catch (err) {
-      failed += 1;
-      console.warn("Grafeo WASM statement failed:", text, err);
-    }
-  }
-  await fetchSchema3(model);
-  return failed;
+  return loading.then(() => fetchSchema3(model));
 }
 async function fetchSchema3(model) {
   const db = databaseOf(model);
@@ -1374,535 +2176,6 @@ function updateStatusDot(dot, status) {
   dot.className = "awg-status-dot awg-status-" + status;
 }
 
-// lanes.ts
-var LANE_WIDTH = 1e3;
-var LANE_HEIGHT = 1e3;
-var LANE_GAP = 400;
-function laneOf(node, lanes) {
-  const ids = lanes.map((lane) => lane.id);
-  const laneId = typeof node.lane === "string" ? node.lane : "";
-  return ids.includes(laneId) ? laneId : ids[0];
-}
-function laneBands(lanes, { width = LANE_WIDTH, height = LANE_HEIGHT, gap = LANE_GAP } = {}) {
-  const bands = [];
-  let x0 = 0;
-  for (const lane of lanes) {
-    const share = typeof lane.width === "number" && lane.width > 0 ? lane.width : 1;
-    bands.push({ x0, x1: x0 + width * share, y0: 0, y1: height });
-    x0 += width * share + gap;
-  }
-  return bands;
-}
-function insetBand(band, share = 0.06) {
-  const dx = (band.x1 - band.x0) * share, dy = (band.y1 - band.y0) * share;
-  return { x0: band.x0 + dx, x1: band.x1 - dx, y0: band.y0 + dy, y1: band.y1 - dy };
-}
-function lanesBBox(bands, margin = 120, right = 0) {
-  return {
-    x: [Math.min(...bands.map((band) => band.x0)) - margin, Math.max(...bands.map((band) => band.x1)) + margin + right],
-    y: [Math.min(...bands.map((band) => band.y0)) - margin, Math.max(...bands.map((band) => band.y1)) + margin]
-  };
-}
-function columnPositions(ids, band) {
-  const height = band.y1 - band.y0;
-  const spacing = ids.length > 1 ? Math.min(height / ids.length, height * 0.12) : 0;
-  const cx = (band.x0 + band.x1) / 2, cy = (band.y0 + band.y1) / 2;
-  const placed = {};
-  ids.forEach((id, i) => {
-    placed[id] = { x: cx, y: cy + (i - (ids.length - 1) / 2) * spacing };
-  });
-  return placed;
-}
-function fitBox(box, width, height, padding = 0) {
-  const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
-  const scale = fitScale(box, width, height, padding);
-  const offsetX = (width - spanX * scale) / 2, offsetY = (height - spanY * scale) / 2;
-  return (point) => ({ x: offsetX + (point.x - box.x[0]) * scale, y: offsetY + (box.y[1] - point.y) * scale });
-}
-function fitScale(box, width, height, padding = 0) {
-  const spanX = box.x[1] - box.x[0] || 1, spanY = box.y[1] - box.y[0] || 1;
-  const side = Math.min(width, height);
-  const shrink = side > 0 ? Math.max(0, side - 2 * padding) / side : 0;
-  return Math.min(width / spanX, height / spanY) * shrink;
-}
-function roomyFrame(box, largest, width, height, padding, right, top = 0) {
-  let frame = box;
-  for (let pass = 0; pass < 2; pass++) {
-    const scale = fitScale(frame, width, height, padding);
-    if (!(scale > 0)) return box;
-    const edge = largest / scale;
-    frame = { x: [box.x[0] - edge, box.x[1] + edge + right / scale], y: [box.y[0] - edge, box.y[1] + edge + top / scale] };
-  }
-  return frame;
-}
-var LABEL_ROW = 18;
-var LABEL_COLUMN = 144;
-var LABEL_FONT = '"JetBrains Mono", ui-monospace, monospace';
-var LANE_LABEL_MAX = 132;
-function laneIcon(lane, accent) {
-  const icon = typeof lane.icon === "string" ? lane.icon.trim() : "";
-  if (icon.startsWith("<svg")) {
-    return { kind: "image", src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(icon.replaceAll("currentColor", accent))}` };
-  }
-  if (icon) return { kind: "image", src: icon };
-  if (Array.isArray(lane.glyph) && lane.glyph.length) return { kind: "bars", colors: lane.glyph };
-  return { kind: "open" };
-}
-function glyphHit(point, center, half = 24) {
-  return Math.abs(point.x - center.x) <= half && Math.abs(point.y - center.y) <= half;
-}
-function fitToBand(positions, band) {
-  const ids = Object.keys(positions);
-  if (!ids.length) return {};
-  const xs = ids.map((id) => positions[id].x);
-  const ys = ids.map((id) => positions[id].y);
-  const minX = Math.min(...xs), minY = Math.min(...ys);
-  const spanX = Math.max(...xs) - minX || 1, spanY = Math.max(...ys) - minY || 1;
-  const width = band.x1 - band.x0, height = band.y1 - band.y0;
-  const placed = {};
-  for (const id of ids) {
-    placed[id] = ids.length === 1 ? { x: band.x0 + width / 2, y: band.y0 + height / 2 } : { x: band.x0 + (positions[id].x - minX) / spanX * width, y: band.y0 + (positions[id].y - minY) / spanY * height };
-  }
-  return placed;
-}
-function isCrossEdge(edge, laneById) {
-  if (edge.cross) return true;
-  const a = laneById.get(edge.source), b = laneById.get(edge.target);
-  return a !== void 0 && b !== void 0 && a !== b;
-}
-function crossNeighbours(ids, cross) {
-  const partners = /* @__PURE__ */ new Set();
-  for (const edge of cross) {
-    if (ids.has(edge.source)) partners.add(edge.target);
-    if (ids.has(edge.target)) partners.add(edge.source);
-  }
-  return partners;
-}
-function crossKey(edge) {
-  return `${edge.source}|${edge.target}`;
-}
-function hashUnit(text) {
-  return hash32(text) / 4294967296;
-}
-function hash32(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  h ^= h >>> 16;
-  h = Math.imul(h, 2246822507);
-  h ^= h >>> 13;
-  h = Math.imul(h, 3266489909);
-  h ^= h >>> 16;
-  return h >>> 0;
-}
-function seededRandom(seed) {
-  let state = hash32(String(seed));
-  return () => {
-    state = state + 1831565813 >>> 0;
-    let t = state;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-function clampInto(node, band) {
-  clampIntoColumn(node, band);
-  if (node.y < band.y0 || node.y > band.y1) {
-    node.y = clamp(node.y, band.y0, band.y1);
-    if ("vy" in node) node.vy = 0;
-  }
-  return node;
-}
-function clampIntoColumn(node, band) {
-  if (node.x < band.x0 || node.x > band.x1) {
-    node.x = clamp(node.x, band.x0, band.x1);
-    if ("vx" in node) node.vx = 0;
-  }
-  return node;
-}
-function laneBounds(lane) {
-  return lane.free === true && !lane.rows ? "column" : "rect";
-}
-function groupCentroids(nodes, groupOf) {
-  const sums = /* @__PURE__ */ new Map();
-  for (const node of nodes) {
-    const g = groupOf(node);
-    if (g === void 0 || g === null || node.x === void 0 || node.y === void 0) continue;
-    const s = sums.get(g) ?? { x: 0, y: 0, n: 0 };
-    s.x += node.x;
-    s.y += node.y;
-    s.n += 1;
-    sums.set(g, s);
-  }
-  return new Map([...sums].map(([g, s]) => [g, { x: s.x / s.n, y: s.y / s.n }]));
-}
-function groupForce(nodes, groupOf, strength) {
-  return (alpha) => {
-    const centroids = groupCentroids(nodes, groupOf);
-    for (const node of nodes) {
-      const g = groupOf(node);
-      const c = g === void 0 ? void 0 : centroids.get(g);
-      if (!c || node.fx !== void 0) continue;
-      node.vx = (node.vx ?? 0) + (c.x - (node.x ?? 0)) * strength * alpha;
-      node.vy = (node.vy ?? 0) + (c.y - (node.y ?? 0)) * strength * alpha;
-    }
-  };
-}
-function partnerHeights(ids, cross, placed) {
-  const wanted = new Set(ids);
-  const sums = /* @__PURE__ */ new Map();
-  for (const edge of cross) {
-    for (const [own, other] of [[edge.source, edge.target], [edge.target, edge.source]]) {
-      if (!wanted.has(own) || !placed.has(other)) continue;
-      const [sum, count] = sums.get(own) ?? [0, 0];
-      sums.set(own, [sum + placed.get(other).y, count + 1]);
-    }
-  }
-  return new Map(ids.filter((id) => sums.has(id)).map((id) => [id, sums.get(id)[0] / sums.get(id)[1]]));
-}
-function laneSpacing(count, band) {
-  const area = (band.x1 - band.x0) * (band.y1 - band.y0);
-  return Math.sqrt(area / Math.max(1, count));
-}
-function laneSizeScale(sizes, band, pxPerUnit, share = 0.35) {
-  const discs = sizes.reduce((sum, size) => sum + Math.PI * size * size, 0);
-  const area = (band.x1 - band.x0) * (band.y1 - band.y0) * pxPerUnit * pxPerUnit;
-  return discs > 0 ? Math.min(1, Math.sqrt(share * area / discs)) : 1;
-}
-function rowOf(node, rows) {
-  const index = rows.order.indexOf(node[rows.field]);
-  return index >= 0 ? index : rows.order.length;
-}
-function rowBands(band, order, counts, minShare = 0.12, inset = 0.1, nameRoom = 0) {
-  const used = counts[order.length] > 0 ? order.length + 1 : order.length;
-  const least = Math.min(minShare, 1 / used);
-  const shares = new Array(used).fill(1 / used);
-  const fixed = /* @__PURE__ */ new Set();
-  for (let changed = true; changed; ) {
-    changed = false;
-    const rest = 1 - fixed.size * least;
-    const free = [...shares.keys()].filter((i) => !fixed.has(i));
-    const counted = free.reduce((sum2, i) => sum2 + (counts[i] || 0), 0);
-    for (const i of free) shares[i] = counted ? rest * (counts[i] || 0) / counted : rest / free.length;
-    for (const i of free) {
-      if (shares[i] < least - 1e-12) {
-        shares[i] = least;
-        fixed.add(i);
-        changed = true;
-      }
-    }
-  }
-  const sum = shares.reduce((a, b) => a + b, 0);
-  const height = band.y1 - band.y0;
-  let y1 = band.y1;
-  return shares.map((share, i) => {
-    const y0 = i === used - 1 ? band.y0 : y1 - height * share / sum;
-    const pad = (y1 - y0) * inset;
-    const top = Math.min(Math.max(pad, nameRoom), (y1 - y0) * 0.6);
-    const row = { label: i < order.length ? String(order[i]) : "", y0, y1, band: { x0: band.x0, x1: band.x1, y0: y0 + pad, y1: y1 - top } };
-    y1 = y0;
-    return row;
-  });
-}
-function bigBatch(before, removed, added, share = 1 / 3) {
-  if (!removed && !added) return false;
-  return before === 0 || removed > before * share || added > before * share;
-}
-function colorFor(item, type, typeColors, fallback) {
-  return (typeof item.color === "string" ? item.color : void 0) || typeColors?.[type] || fallback;
-}
-function labelsThatFit(nodes, count, { height, gap = 0, margin = 0, band, taken = [] }) {
-  const ranked = [...nodes].sort((a, b) => (b.size || 0) - (a.size || 0) || (b.degree || 0) - (a.degree || 0));
-  const boxOf = (node, side) => {
-    const y0 = node.y - height / 2, y1 = node.y + height / 2;
-    if (side === "right") {
-      const x0 = node.x + (node.size || 0) + gap;
-      return { x0, x1: x0 + (node.width ?? 0), y0, y1 };
-    }
-    const x1 = node.x - (node.size || 0) - gap;
-    return { x0: x1 - (node.width ?? 0), x1, y0, y1 };
-  };
-  const overlap = (a, b) => a.x0 < b.x1 + margin && b.x0 < a.x1 + margin && a.y0 < b.y1 + margin && b.y0 < a.y1 + margin;
-  const coversDisc = (box, other) => {
-    const dx = Math.max(box.x0 - other.x, 0, other.x - box.x1), dy = Math.max(box.y0 - other.y, 0, other.y - box.y1);
-    return Math.hypot(dx, dy) < (other.size || 0) * 0.5;
-  };
-  const chosenIds = /* @__PURE__ */ new Set();
-  const chosen = [];
-  for (const node of ranked) {
-    if (chosen.length >= count) break;
-    let side = "right";
-    let box = boxOf(node, "right");
-    if (band && box.x1 > band.x1) {
-      side = "left";
-      box = boxOf(node, "left");
-      if (box.x0 < band.x0) continue;
-    }
-    if (taken.some((space) => overlap(box, space))) continue;
-    if (chosen.some((other) => overlap(box, other.box) || coversDisc(other.box, node))) continue;
-    const blocked = (other) => other.id !== node.id && ((other.size || 0) >= (node.size || 0) || chosenIds.has(other.id)) && coversDisc(box, other);
-    if (nodes.some(blocked)) continue;
-    chosen.push({ id: node.id, side, box });
-    chosenIds.add(node.id);
-  }
-  return chosen.map(({ id, side }) => ({ id, side }));
-}
-function shortenLabel(text, maxWidth, measure) {
-  if (!text || measure(text) <= maxWidth) return text;
-  let cut = text;
-  while (cut && measure(cut + "…") > maxWidth) cut = cut.slice(0, -1);
-  return cut.trimEnd() + "…";
-}
-function labelClear(spot, occupied, unit) {
-  return occupied.every((o) => Math.abs(o.x - spot.x) >= unit.x * 0.999 || Math.abs(o.y - spot.y) >= unit.y * 0.999);
-}
-function clamp(value, low, high) {
-  return Math.min(high, Math.max(low, value));
-}
-function placeAppended(nodeId, { cross = [], lane = [], occupied = [], unit }, band) {
-  const width = band.x1 - band.x0, height = band.y1 - band.y0;
-  let spot;
-  if (cross.length) {
-    const y = cross.reduce((sum, p) => sum + p.y, 0) / cross.length;
-    spot = { x: band.x0 + width / 2, y: clamp(y, band.y0, band.y1) };
-  } else if (lane.length) {
-    const cx = lane.reduce((sum, p) => sum + p.x, 0) / lane.length;
-    const cy = lane.reduce((sum, p) => sum + p.y, 0) / lane.length;
-    const angle = 2 * Math.PI * hashUnit(nodeId + "a");
-    spot = { x: clamp(cx + Math.cos(angle) * width * 0.04, band.x0, band.x1), y: clamp(cy + Math.sin(angle) * height * 0.04, band.y0, band.y1) };
-  } else {
-    spot = { x: band.x0 + width * hashUnit(nodeId + "x"), y: band.y0 + height * hashUnit(nodeId + "y") };
-  }
-  return freeSpot(spot, occupied, band, unit || { x: width * 0.04, y: height * 0.04 });
-}
-function freeSpot(spot, occupied, band, unit) {
-  const cell = (p) => [Math.floor(p.x / unit.x), Math.floor(p.y / unit.y)];
-  const buckets = /* @__PURE__ */ new Map();
-  for (const o of occupied) {
-    const key = cell(o).join(",");
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(o);
-  }
-  const clear = (p) => {
-    const [cx, cy] = cell(p);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (const o of buckets.get(`${cx + dx},${cy + dy}`) || []) {
-          if (Math.abs(o.x - p.x) < unit.x * 0.999 && Math.abs(o.y - p.y) < unit.y * 0.999) return false;
-        }
-      }
-    }
-    return true;
-  };
-  if (clear(spot)) return spot;
-  const rows = Math.ceil((band.y1 - band.y0) / unit.y), columns = Math.ceil((band.x1 - band.x0) / unit.x);
-  for (let cost = 1; cost <= rows + 3 * columns; cost++) {
-    for (let col = Math.floor(cost / 3); col >= 0; col--) {
-      const row = cost - 3 * col;
-      for (const j of col ? [col, -col] : [0]) {
-        for (const i of row ? [row, -row] : [0]) {
-          const p = { x: spot.x + j * unit.x, y: spot.y + i * unit.y };
-          if (p.x < band.x0 || p.x > band.x1 || p.y < band.y0 || p.y > band.y1) continue;
-          if (clear(p)) return p;
-        }
-      }
-    }
-  }
-  return { ...spot, crowded: true };
-}
-function curveControl(a, b, bend = 0.18) {
-  return { x: (a.x + b.x) / 2 - (b.y - a.y) * bend, y: (a.y + b.y) / 2 + (b.x - a.x) * bend };
-}
-function curvePoint(a, c, b, t) {
-  const u = 1 - t;
-  return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
-}
-function curveUntil(a, c, b, t) {
-  return { control: { x: a.x + (c.x - a.x) * t, y: a.y + (c.y - a.y) * t }, end: curvePoint(a, c, b, t) };
-}
-function staggerSchedule(n, stagger, maxTotal = 1500) {
-  if (n <= 0) return [];
-  const step = n > 1 ? Math.min(stagger, maxTotal / (n - 1)) : 0;
-  return Array.from({ length: n }, (_, i) => Math.round(i * step));
-}
-function progress(start, now, duration) {
-  const t = Math.min(1, Math.max(0, (now - start) / duration));
-  return 1 - Math.pow(1 - t, 3);
-}
-function pulseScale(t, period = 1400, amplitude = 0.35) {
-  return 1 + amplitude * (0.5 - 0.5 * Math.cos(2 * Math.PI * t / period));
-}
-var THEME_VARIABLES = {
-  background: ["--awg-bg", "--awg-graph-bg", "--awg-input-bg"],
-  panel: ["--awg-bg-secondary", "--awg-bg-tertiary"],
-  text: ["--awg-text"],
-  muted: ["--awg-text-secondary", "--awg-text-muted"],
-  border: ["--awg-border", "--awg-input-border"],
-  accent: ["--awg-accent", "--awg-accent-hover"]
-};
-function themeVariables(theme) {
-  const variables = {};
-  for (const [key, names] of Object.entries(THEME_VARIABLES)) {
-    const value = theme?.[key];
-    for (const name of names) variables[name] = typeof value === "string" ? value : "";
-  }
-  return variables;
-}
-function labelColor(theme, dark) {
-  return theme?.text || (dark ? "#e0e0e0" : "#333");
-}
-function nextLaneAction(lane, current) {
-  return { lane, seq: (Number(current?.seq) || 0) + 1 };
-}
-function edgeKey(edge) {
-  return `${edge.source}|${edge.target}|${edge.label || ""}`;
-}
-function mergeItems(items, nodes = [], edges = []) {
-  const merged = { nodes: new Map(items?.nodes ?? []), edges: [...items?.edges ?? []] };
-  for (const node of nodes) merged.nodes.set(node.id, { ...merged.nodes.get(node.id), ...node });
-  if (!items) {
-    merged.edges.push(...edges);
-    return merged;
-  }
-  const keys = new Set(merged.edges.map(edgeKey));
-  for (const edge of edges) {
-    if (keys.has(edgeKey(edge))) continue;
-    keys.add(edgeKey(edge));
-    merged.edges.push(edge);
-  }
-  return merged;
-}
-function edgeMatches(edge, spec) {
-  if (edge.source !== spec.source || edge.target !== spec.target) return false;
-  return spec.label === void 0 || spec.label === null || (edge.label || "") === spec.label;
-}
-function removeItems(items, remove = {}) {
-  const ids = new Set(remove.nodes || []);
-  const specs = remove.edges || [];
-  const gone = (edge) => ids.has(edge.source) || ids.has(edge.target) || specs.some((spec) => edgeMatches(edge, spec));
-  return { nodes: new Map([...items.nodes].filter(([id]) => !ids.has(id))), edges: items.edges.filter((edge) => !gone(edge)) };
-}
-function applyBatchItems(items, batch) {
-  return mergeItems(removeItems(items, batch.remove), batch.nodes || [], batch.edges || []);
-}
-function sameItems(items, nodes, edges) {
-  const ids = new Set(nodes.map((node) => node.id));
-  if (ids.size !== items.nodes.size || [...ids].some((id) => !items.nodes.has(id))) return false;
-  if (edges.length !== items.edges.length) return false;
-  const counts = /* @__PURE__ */ new Map();
-  for (const edge of items.edges) counts.set(edgeKey(edge), (counts.get(edgeKey(edge)) || 0) + 1);
-  for (const edge of edges) {
-    const left = counts.get(edgeKey(edge));
-    if (!left) return false;
-    counts.set(edgeKey(edge), left - 1);
-  }
-  return true;
-}
-function extentBand(points) {
-  if (!points.length) return null;
-  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
-  let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const size = Math.max(x1 - x0, y1 - y0) || LANE_WIDTH;
-  if (x1 - x0 < size / 1e6) [x0, x1] = [(x0 + x1 - size) / 2, (x0 + x1 + size) / 2];
-  if (y1 - y0 < size / 1e6) [y0, y1] = [(y0 + y1 - size) / 2, (y0 + y1 + size) / 2];
-  return { x0, x1, y0, y1 };
-}
-function withTotals(counts, totals) {
-  const rows = [...counts].sort((a, b) => b[1] - a[1]).map(([name, count]) => totals && name in totals ? { name, count, total: totals[name] } : { name, count });
-  if (totals) {
-    for (const [name, total] of Object.entries(totals)) if (!counts.has(name)) rows.push({ name, count: 0, total });
-  }
-  return rows;
-}
-function shownOf(count, total) {
-  if (total === void 0 || total === null) return String(count);
-  return `${Number(count).toLocaleString("en-US")} / ${Number(total).toLocaleString("en-US")}`;
-}
-var UNLABELED = "Unlabeled";
-function nodeType(node) {
-  const labels = node.labels;
-  return Array.isArray(labels) && labels.length > 0 ? String(labels[0]) : String(node.label || UNLABELED);
-}
-function edgeType(edge) {
-  return String(edge.type || edge.label || "unknown");
-}
-function totalShown(items, typeOf, group) {
-  const totals = Object.entries(group || {}).filter(([, n]) => Number.isFinite(Number(n)));
-  if (!totals.length) return void 0;
-  const listed = new Set(totals.map(([type]) => type));
-  return totals.reduce((sum, [, n]) => sum + Number(n), 0) + items.filter((item) => !listed.has(typeOf(item))).length;
-}
-function withAlpha(hex, alpha) {
-  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
-  if (!match) return hex;
-  const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-function neighbourhood(edges, id) {
-  if (id === null || id === void 0) return /* @__PURE__ */ new Set();
-  const near = /* @__PURE__ */ new Set([id]);
-  for (const edge of edges) {
-    if (edge.source === id) near.add(edge.target);
-    if (edge.target === id) near.add(edge.source);
-  }
-  return near;
-}
-function loopCircle(center, radius, index) {
-  const r = Math.max(7, radius * 0.7) + index * 5;
-  const reach = (radius + r * 0.4) * Math.SQRT1_2;
-  return { x: center.x + reach, y: center.y - reach, r };
-}
-function presetPositions(nodes) {
-  const positions = /* @__PURE__ */ new Map();
-  for (const node of nodes) {
-    if (typeof node.x === "number" && typeof node.y === "number" && Number.isFinite(node.x) && Number.isFinite(node.y)) {
-      positions.set(String(node.id), { x: node.x, y: node.y });
-    }
-  }
-  return positions;
-}
-function rgbOf(color) {
-  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(color || "");
-  if (hex) return hex.slice(1, 4).map((part) => parseInt(part, 16));
-  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color || "");
-  return rgb ? rgb.slice(1, 4).map(Number) : null;
-}
-var DIM_MIX = 0.65;
-function dimColor(color, background) {
-  return mixColor(color, background, DIM_MIX);
-}
-function mixColor(color, background, amount) {
-  const [from, to] = [rgbOf(color), rgbOf(background)];
-  if (!from || !to) return color;
-  return `#${from.map((v, i) => Math.round(v + (to[i] - v) * amount).toString(16).padStart(2, "0")).join("")}`;
-}
-function fadeColor(color, background, opacity) {
-  if (typeof opacity !== "number" || !(opacity < 1)) return color;
-  return mixColor(color, background, 1 - Math.max(0, opacity));
-}
-function dashPattern(dash) {
-  if (dash === true) return [5, 4];
-  const parts = Array.isArray(dash) ? dash : typeof dash === "string" ? dash.trim().split(/[\s,]+/) : [];
-  const pattern = parts.map(Number).filter((n) => Number.isFinite(n) && n >= 0);
-  return pattern.length && pattern.some((n) => n > 0) ? pattern : null;
-}
-function contrastText(color) {
-  const rgb = rgbOf(color);
-  if (!rgb) return "#ffffff";
-  const [r, g, b] = rgb;
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b >= 150 ? "#111111" : "#ffffff";
-}
-function levelState(level, current, levels = [], style = "dim") {
-  if (level === void 0 || level === null || !levels.length) return "shown";
-  const ids = levels.map((entry) => entry.id);
-  const rank = (value) => ids.includes(value) ? ids.indexOf(value) : Number(value);
-  const gap = rank(current) - rank(level);
-  if (!(gap > 0)) return "shown";
-  return gap === 1 && style === "dim" ? "dim" : "hidden";
-}
-
 // toolbar.ts
 function createToolbar(model, onExecuteQuery, panels, onSearch) {
   const toolbar = document.createElement("div");
@@ -2007,7 +2280,7 @@ function createToolbar(model, onExecuteQuery, panels, onSearch) {
   model.on("change:nodes", updateCount);
   model.on("change:edges", updateCount);
   model.on("change:totals", updateCount);
-  toolbar.appendChild(countBadge);
+  if (model.get("show_count") !== false) toolbar.appendChild(countBadge);
   const timingBadge = document.createElement("span");
   timingBadge.className = "awg-count-badge awg-timing-badge";
   function updateTiming() {
@@ -2614,16 +2887,16 @@ function createSchemaPanel(model, onExecuteQuery, callbacks, onFilterChange, onC
   panel.appendChild(content);
   return panelControls(panel);
 }
-function createFilterItem({ name, count, total, color, properties, isHidden, onToggle, onColorChange, onQuery }) {
+function createFilterItem({ name, count, total, color, properties, isHidden: isHidden2, onToggle, onColorChange, onQuery }) {
   const item = document.createElement("div");
-  item.className = "awg-schema-item" + (isHidden ? " awg-filter-hidden" : "");
+  item.className = "awg-schema-item" + (isHidden2 ? " awg-filter-hidden" : "");
   const itemHeader = document.createElement("div");
   itemHeader.className = "awg-schema-item-header";
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
-  checkbox.checked = !isHidden;
+  checkbox.checked = !isHidden2;
   checkbox.className = "awg-filter-checkbox";
-  checkbox.title = isHidden ? `Show ${name}` : `Hide ${name}`;
+  checkbox.title = isHidden2 ? `Show ${name}` : `Hide ${name}`;
   checkbox.addEventListener("click", (e) => {
     e.stopPropagation();
     const visible = checkbox.checked;
@@ -3331,8 +3604,8 @@ function fitPositions(positions, size = 2) {
     if (p.y > maxY) maxY = p.y;
     if (p.z > maxZ) maxZ = p.z;
   }
-  const extent = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-  const scale = size / extent;
+  const extent2 = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+  const scale = size / extent2;
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
   const out = /* @__PURE__ */ new Map();
   for (const [id, p] of positions) {
@@ -3590,12 +3863,12 @@ function createCanvas3D(model, container, callbacks = {}) {
   function nodeTypeOf2(r) {
     return String(r.data.labels?.[0] ?? r.data.label ?? "");
   }
-  function isHidden(r) {
+  function isHidden2(r) {
     return r.level === "hidden" || hiddenNodeTypes.has(nodeTypeOf2(r));
   }
   function isEdgeHidden(e) {
     const s = byKey.get(e.source), t = byKey.get(e.target);
-    return hiddenEdgeTypes.has(e.edgeType) || !s || !t || isHidden(s) || isHidden(t);
+    return hiddenEdgeTypes.has(e.edgeType) || !s || !t || isHidden2(s) || isHidden2(t);
   }
   function nodeRadius(sizePx) {
     return sizePx / 30 * 0.03 * SCENE_SIZE;
@@ -3834,11 +4107,11 @@ function createCanvas3D(model, container, callbacks = {}) {
       }
     }
     const pos = sim.positions();
-    let extent = 0;
+    let extent2 = 0;
     for (const p of pos.values()) {
-      extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y), Math.abs(p.z));
+      extent2 = Math.max(extent2, Math.abs(p.x), Math.abs(p.y), Math.abs(p.z));
     }
-    worldScale = extent > 0 ? SCENE_SIZE * 0.5 / extent : 1;
+    worldScale = extent2 > 0 ? SCENE_SIZE * 0.5 / extent2 : 1;
     for (const r of records) {
       const p = pos.get(r.key);
       if (p) r.pos = { x: p.x * worldScale, y: p.y * worldScale, z: p.z * worldScale };
@@ -3857,7 +4130,7 @@ function createCanvas3D(model, container, callbacks = {}) {
     const matrix = new THREE.Matrix4();
     const selected = new Set((model.get("selected_nodes") || []).map(String));
     for (const r of records) {
-      const hidden = isHidden(r);
+      const hidden = isHidden2(r);
       const scale = hidden ? 0 : r.radius * (selected.has(r.key) ? 1.6 : 1);
       const mesh = r.mesh;
       if (!mesh) continue;
@@ -3995,12 +4268,12 @@ function createCanvas3D(model, container, callbacks = {}) {
     if (records.length === 0) return;
     const box = new THREE.Box3();
     for (const r of records) {
-      if (isHidden(r)) continue;
+      if (isHidden2(r)) continue;
       box.expandByPoint(new THREE.Vector3(r.pos.x, r.pos.y, r.pos.z));
     }
     if (box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
-    const shown = records.filter((r) => !isHidden(r)).map((r) => r.pos);
+    const shown = records.filter((r) => !isHidden2(r)).map((r) => r.pos);
     const distance = fitDistance(shown, center, camera.fov, camera.aspect) || SCENE_SIZE;
     const dir = camera.position.clone().sub(controls.target);
     if (dir.lengthSq() < 1e-6) dir.set(0.6, 0.5, 0.8);
@@ -4026,7 +4299,7 @@ function createCanvas3D(model, container, callbacks = {}) {
       const hit = nodeHits[0];
       const key = hit.object.userData.isInstanced ? hit.object.userData.keys[hit.instanceId ?? 0] : hit.object.userData.key;
       const rec = byKey.get(key);
-      if (rec && !isHidden(rec)) return { kind: "node", rec };
+      if (rec && !isHidden2(rec)) return { kind: "node", rec };
     }
     const edgeHits = raycaster.intersectObjects(edgesGroup.children, false);
     if (edgeHits.length > 0) {
@@ -4268,7 +4541,7 @@ function createCanvas3D(model, container, callbacks = {}) {
       if (x2 - x1 < 4 && y2 - y1 < 4) return;
       const ids = [];
       for (const r of records) {
-        if (isHidden(r)) continue;
+        if (isHidden2(r)) continue;
         const p = projectToScreen(r);
         if (p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2) ids.push(r.key);
       }
@@ -4319,7 +4592,7 @@ function createCanvas3D(model, container, callbacks = {}) {
       lassoCoords.push(lassoCoords[0]);
       const ids = [];
       for (const r of records) {
-        if (isHidden(r)) continue;
+        if (isHidden2(r)) continue;
         const p = projectToScreen(r);
         if (pointInPolygon(p.x, p.y, lassoCoords)) ids.push(r.key);
       }
@@ -4363,14 +4636,14 @@ function createCanvas3D(model, container, callbacks = {}) {
     const bg = effectiveBackground();
     const base = /^#[0-9a-f]{6}$/i.test(bg) ? bg : pal.background;
     if (model.get("show_axes")) {
-      const extent = SCENE_SIZE * 0.6;
+      const extent2 = SCENE_SIZE * 0.6;
       const geometry = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(extent, 0, 0),
+        new THREE.Vector3(extent2, 0, 0),
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, extent, 0),
+        new THREE.Vector3(0, extent2, 0),
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(0, 0, extent)
+        new THREE.Vector3(0, 0, extent2)
       ]);
       axesGroup.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: pal.edge })));
       const labels = model.get("axis_labels") || { x: "X", y: "Y", z: "Z" };
@@ -4605,9 +4878,8 @@ function render3D({ model: host, el }) {
   if (model.get("_demo_mode")) {
     (async () => {
       try {
-        const demoDataStr = model.get("_demo_data");
-        if (demoDataStr && await connect3(model)) {
-          await loadStatements(JSON.parse(demoDataStr), model);
+        if (await connect3(model)) {
+          await loadDemo(model, JSON.parse(model.get("_demo_data") || "[]"));
         }
       } catch (err) {
         console.warn("Demo WASM init:", errorText(err));
@@ -4624,12 +4896,6 @@ function render3D({ model: host, el }) {
 }
 
 // index.ts
-var BORDERED = createNodeBorderProgram({
-  borders: [
-    { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
-    { size: { fill: true }, color: { attribute: "fillColor" } }
-  ]
-});
 function tangentPositions(a, b, r) {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -4709,7 +4975,10 @@ function render2D({ model: host, el }) {
   const detectHostDark = () => detectDark(el);
   let canvasBackground = "";
   let ringColor = "";
+  let graphBackground = "#ffffff";
+  let themeLabelColor = labelColor(model.get("theme"), model.get("dark_mode"));
   function readCanvasBackground() {
+    graphBackground = getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff";
     canvasBackground = getComputedStyle(wrapper).getPropertyValue("--awg-bg").trim();
     ringColor = getComputedStyle(wrapper).getPropertyValue("--awg-ring").trim();
   }
@@ -4717,7 +4986,7 @@ function render2D({ model: host, el }) {
     const variables = themeVariables(model.get("theme"));
     for (const [name, value] of Object.entries(variables)) wrapper.style.setProperty(name, value);
     readCanvasBackground();
-    rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), model.get("dark_mode")) });
+    themeLabelColor = labelColor(model.get("theme"), model.get("dark_mode"));
     rendererRef?.refresh();
   }
   model.on("change:theme", applyHostTheme);
@@ -4725,12 +4994,8 @@ function render2D({ model: host, el }) {
     const dark = model.get("dark_mode");
     wrapper.classList.toggle("awg-dark", dark);
     readCanvasBackground();
-    rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), dark) });
-    if (rendererRef) {
-      rendererRef.setSetting("defaultNodeColor", palette().data[0]);
-      rendererRef.setSetting("defaultEdgeColor", palette().edge);
-      restyle();
-    }
+    themeLabelColor = labelColor(model.get("theme"), dark);
+    if (rendererRef) restyle();
     rendererRef?.refresh();
   }
   const hostTheme = followHostTheme(model, detectHostDark);
@@ -4772,7 +5037,7 @@ function render2D({ model: host, el }) {
   function refreshLayout() {
     applyLayout(model.get("layout") || "spring");
     rendererRef?.refresh();
-    rendererRef?.getCamera().animatedReset({ duration: 300 });
+    rendererRef?.getCamera().reset({ duration: 300 });
   }
   const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, refreshLayout, { registries, palette });
   const properties = createPropertiesPanel(model, void 0, (label) => (model.get("type_colors")?.nodes || {})[label] || registries.for("node-type").colorFor(label, palette()));
@@ -5244,8 +5509,8 @@ function render2D({ model: host, el }) {
     laneState.quietLanes = new Set(laneState.lanes.filter((lane) => Number(lane.labels?.count) > 0).map((lane) => lane.id));
     if (!laneState.lanes.some((lane) => Number(lane.labels?.count) > 0)) return;
     const scale = laneScale();
-    const size = rendererRef?.getSetting("labelSize") ?? 12;
-    labelMeasure.font = `${rendererRef?.getSetting("labelWeight") ?? "500"} ${size}px ${rendererRef?.getSetting("labelFont") ?? "Arial"}`;
+    const size = LABEL_SIZE;
+    labelMeasure.font = `${LABEL_WEIGHT} ${size}px ${LABEL_FONT}`;
     const fit = { height: (size + 4) / scale, gap: 3 / scale, margin: 2 / scale };
     laneState.lanes.forEach((lane, index) => {
       const count = Number(lane.labels?.count) || 0;
@@ -5267,7 +5532,7 @@ function render2D({ model: host, el }) {
         y0: row.y1 - 16 / scale,
         y1: row.y1
       }));
-      labelMeasure.font = `${rendererRef?.getSetting("labelWeight") ?? "500"} ${size}px ${rendererRef?.getSetting("labelFont") ?? "Arial"}`;
+      labelMeasure.font = `${LABEL_WEIGHT} ${size}px ${LABEL_FONT}`;
       for (const { id, side } of labelsThatFit(nodes, count, { ...fit, band, taken })) laneState.labelled.set(id, side);
     });
   }
@@ -5324,70 +5589,31 @@ function render2D({ model: host, el }) {
   }
   applyLayout(model.get("layout") || "spring");
   const nodeCount = graph.order;
+  let nodeReducer = null;
+  let edgeReducer = null;
   const renderer = new Sigma(graph, container, {
-    renderLabels: model.get("show_labels"),
-    renderEdgeLabels: model.get("show_edge_labels"),
-    defaultNodeColor: palette().data[0],
-    defaultEdgeColor: palette().edge,
-    // Ink nodes: a 2px ring in the node's colour over an opaque fill of it (nodeDisplay)
-    nodeProgramClasses: { bordered: BORDERED },
-    defaultNodeType: "bordered",
-    labelColor: { color: labelColor(model.get("theme"), model.get("dark_mode")) },
-    labelFont: LABEL_FONT,
-    labelSize: 12,
-    labelWeight: "500",
-    // LOD: only show labels for nodes above this rendered-size threshold
-    labelRenderedSizeThreshold: nodeCount > 200 ? 8 : nodeCount > 50 ? 5 : 2,
-    // Limit label density to reduce clutter on large graphs
-    labelDensity: nodeCount > 200 ? 0.5 : nodeCount > 50 ? 1 : 2,
-    // Plain lines, or arrows from source to target (edge_arrows)
-    defaultEdgeType: model.get("edge_arrows") ? "arrow" : "line",
-    // Enable edge interaction events (click, hover)
-    enableEdgeEvents: true,
-    // A host may mount the widget in a hidden or not yet sized container (a closed panel, a tab)
-    allowInvalidContainer: true
+    settings: {
+      ...SIGMA_SETTINGS,
+      // Edge interaction events (click, hover)
+      enableEdgeEvents: true,
+      renderLabels: model.get("show_labels"),
+      renderEdgeLabels: model.get("show_edge_labels"),
+      // LOD: only show labels for nodes above this rendered-size threshold
+      labelRenderedSizeThreshold: nodeCount > 200 ? 8 : nodeCount > 50 ? 5 : 2,
+      // Limit label density to reduce clutter on large graphs
+      labelDensity: labelDensityFor(nodeCount)
+    },
+    primitives: PRIMITIVES,
+    nodeReducer: (node, data, attrs, state) => nodeReducer ? nodeReducer(node, data, attrs, state) : data,
+    edgeReducer: (edge, data, attrs) => edgeReducer ? edgeReducer(edge, data, attrs) : data
   });
   rendererRef = renderer;
-  const drawSigmaLabel = renderer.getSetting("defaultDrawNodeLabel");
-  renderer.setSetting("defaultDrawNodeLabel", (context, data, settings2) => {
-    if (!data.labelBacking || !data.label) return drawSigmaLabel(context, data, settings2);
-    context.font = `${settings2.labelWeight} ${settings2.labelSize}px ${settings2.labelFont}`;
-    const width = context.measureText(data.label).width;
-    const x = data.labelSide === "left" ? data.x - data.size - 3 - width : data.x + data.size + 3;
-    context.fillStyle = withAlpha(getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff", 0.82);
-    context.beginPath();
-    context.roundRect(x - 3, data.y - settings2.labelSize / 2 - 3, width + 6, settings2.labelSize + 6, 4);
-    context.fill();
-    context.fillStyle = settings2.labelColor.attribute ? data[settings2.labelColor.attribute] || settings2.labelColor.color || "#000" : settings2.labelColor.color;
-    context.fillText(data.label, x, data.y + settings2.labelSize / 3);
+  const forcedLabels = /* @__PURE__ */ new Set();
+  const labels = labelPicker(renderer, {
+    forced: (node) => forcedLabels.has(node) || idTexts(model.get("selected_nodes")).includes(node),
+    side: (node) => laneState.labelled.get(node)
   });
-  renderer.setSetting("defaultDrawNodeHover", (context, data, settings2) => {
-    const size = settings2.labelSize, padding = 2;
-    const textColor = settings2.labelColor.color || "#000";
-    context.font = `${settings2.labelWeight} ${size}px ${settings2.labelFont}`;
-    context.beginPath();
-    if (typeof data.label === "string" && data.label) {
-      const boxWidth = Math.round(context.measureText(data.label).width + 5);
-      const boxHeight = Math.round(size + 2 * padding);
-      const radius = Math.max(data.size, size / 2) + padding;
-      const angle = Math.asin(boxHeight / 2 / radius);
-      const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
-      context.moveTo(data.x + dx, data.y + boxHeight / 2);
-      context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
-      context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
-      context.lineTo(data.x + dx, data.y - boxHeight / 2);
-      context.arc(data.x, data.y, radius, angle, -angle);
-    } else {
-      context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
-    }
-    context.closePath();
-    context.fillStyle = getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff";
-    context.fill();
-    context.strokeStyle = withAlpha(textColor, 0.35);
-    context.lineWidth = 1;
-    context.stroke();
-    renderer.getSetting("defaultDrawNodeLabel")(context, data, settings2);
-  });
+  Object.defineProperty(container, "awgLabelBoxes", { value: () => labels.drawnBoxes(), configurable: true });
   frameLanes();
   framePlain();
   applyHostTheme();
@@ -5409,7 +5635,7 @@ function render2D({ model: host, el }) {
       if (!attrs.dash || source === target) return;
       const shown = renderer.getEdgeDisplayData(edge);
       const a = renderer.getNodeDisplayData(source), b = renderer.getNodeDisplayData(target);
-      if (!shown || shown.hidden || !a || !b || a.hidden || b.hidden) return;
+      if (!shown || isHidden(shown) || !a || !b || isHidden(a) || isHidden(b)) return;
       const p = renderer.framedGraphToViewport(a), q = renderer.framedGraphToViewport(b);
       const ra = renderer.scaleSize(a.size), rb = renderer.scaleSize(b.size);
       const length = Math.hypot(q.x - p.x, q.y - p.y);
@@ -5443,7 +5669,7 @@ function render2D({ model: host, el }) {
       const isPinned = Boolean(pinned[node]);
       if (!attrs.ring && !attrs.outlineDash && attrs.badge === void 0 && !isPinned) return;
       const shown = renderer.getNodeDisplayData(node);
-      if (!shown || shown.hidden) return;
+      if (!shown || isHidden(shown)) return;
       const p = renderer.framedGraphToViewport(shown), r = renderer.scaleSize(shown.size);
       let outer = r;
       ctx.save();
@@ -5486,12 +5712,12 @@ function render2D({ model: host, el }) {
   }
   function drawLoops(ctx) {
     const perNode = /* @__PURE__ */ new Map();
-    const arrows = model.get("edge_arrows"), labels = model.get("show_edge_labels");
+    const arrows = model.get("edge_arrows"), labels2 = model.get("show_edge_labels");
     graph.forEachEdge((edge, _attrs, source, target) => {
       if (source !== target) return;
       const shown = renderer.getEdgeDisplayData(edge);
       const node = renderer.getNodeDisplayData(source);
-      if (!shown?.loop || !node || node.hidden) return;
+      if (!shown?.loop || !node || isHidden(node)) return;
       const index = perNode.get(source) || 0;
       perNode.set(source, index + 1);
       const circle = loopCircle(renderer.framedGraphToViewport(node), renderer.scaleSize(node.size), index);
@@ -5512,14 +5738,74 @@ function render2D({ model: host, el }) {
         ctx.closePath();
         ctx.fill();
       }
-      if (labels && shown?.label) {
+      const loopLabel = shown?.label || shown?.overlayLabel;
+      if (labels2 && loopLabel) {
         ctx.font = "500 11px system-ui, -apple-system, sans-serif";
         ctx.textAlign = "center";
         ctx.fillStyle = color;
-        ctx.fillText(String(shown.label), circle.x, circle.y - circle.r - 4);
+        ctx.fillText(String(loopLabel), circle.x, circle.y - circle.r - 4);
         ctx.textAlign = "left";
       }
     });
+  }
+  function drawEdgeLabels(ctx) {
+    if (model.get("edge_label_overlap") !== "avoid" || !model.get("show_edge_labels")) return;
+    const width = container.offsetWidth, height = container.offsetHeight;
+    const obstacles = [];
+    const centre = /* @__PURE__ */ new Map();
+    ctx.font = `${LABEL_WEIGHT} ${LABEL_SIZE}px ${LABEL_FONT}`;
+    const shownLabels = renderer.getNodeDisplayedLabels();
+    graph.forEachNode((node) => {
+      const shown = renderer.getNodeDisplayData(node);
+      if (!shown || isHidden(shown)) return;
+      const at = renderer.framedGraphToViewport(shown);
+      const r = renderer.scaleSize(shown.size);
+      centre.set(node, { x: at.x, y: at.y, r });
+      obstacles.push({ x: at.x, y: at.y, width: 2 * r, height: 2 * r, angle: 0, owner: node });
+      if (!shown.label || !shownLabels.has(node)) return;
+      const side = ["left", "above", "below"].find((s) => s === shown.labelPosition) ?? "right";
+      obstacles.push(nodeLabelBox({ x: at.x, y: at.y, radius: r, ...labels.labelSize(shown.label) }, side));
+    });
+    ctx.font = `${EDGE_LABEL_SIZE}px sans-serif`;
+    const requests = [];
+    graph.forEachEdge((edge, _attrs, source, target) => {
+      if (source === target) return;
+      const shown = renderer.getEdgeDisplayData(edge);
+      const text = shown?.overlayLabel;
+      if (!shown || isHidden(shown) || typeof text !== "string" || !text) return;
+      const from = centre.get(source), to = centre.get(target);
+      if (!from || !to) return;
+      const outside = (p) => p.x < 0 || p.y < 0 || p.x > width || p.y > height;
+      if (outside(from) && outside(to) && (Math.max(from.x, to.x) < 0 || Math.min(from.x, to.x) > width || Math.max(from.y, to.y) < 0 || Math.min(from.y, to.y) > height)) return;
+      requests.push({
+        key: edge,
+        ends: [source, target],
+        from,
+        to,
+        fromRadius: from.r,
+        toRadius: to.r,
+        width: ctx.measureText(text).width + 4,
+        height: EDGE_LABEL_SIZE + 2,
+        size: Number(shown.size) || 1,
+        color: String(shown.dashColor || shown.color || palette().edge),
+        text
+      });
+    });
+    requests.sort((a, b) => b.size - a.size);
+    const byKey = new Map(requests.map((request) => [request.key, request]));
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const spot of placeEdgeLabels(requests, obstacles)) {
+      const request = byKey.get(spot.key);
+      ctx.save();
+      ctx.translate(spot.x, spot.y);
+      ctx.rotate(spot.angle);
+      ctx.fillStyle = request.color;
+      ctx.fillText(request.text, 0, 0);
+      ctx.restore();
+    }
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
   function drawOverlay() {
     const ctx = overlay.getContext("2d");
@@ -5529,6 +5815,7 @@ function render2D({ model: host, el }) {
     ctx.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
     drawLoops(ctx);
     drawItemMarks(ctx);
+    drawEdgeLabels(ctx);
     if (!laneState.lanes.length) return;
     const css = getComputedStyle(wrapper);
     const color = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
@@ -5572,9 +5859,9 @@ function render2D({ model: host, el }) {
       });
     });
     ctx.font = "600 12px system-ui, -apple-system, sans-serif";
-    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id, laneState.hoverAction].filter(Boolean));
+    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id, laneState.hoverAction].filter((id) => id !== null && id !== void 0 && id !== "").map(String));
     const endPoint = (id) => {
-      if (graph.hasNode(id)) return renderer.getNodeDisplayData(id)?.hidden ? null : renderer.graphToViewport(graph.getNodeAttributes(id));
+      if (graph.hasNode(id)) return isHidden(renderer.getNodeDisplayData(id)) ? null : renderer.graphToViewport(graph.getNodeAttributes(id));
       const index = actionLaneIndex(id);
       return index >= 0 && laneState.bands[index] ? actionCenter(index) : null;
     };
@@ -5675,7 +5962,10 @@ function render2D({ model: host, el }) {
     container.style.cursor = id ? "pointer" : "";
     renderer.refresh();
   });
-  renderer.on("afterRender", drawOverlay);
+  renderer.on("afterRender", () => {
+    labels.update();
+    drawOverlay();
+  });
   sizeOverlay();
   let animating = false;
   let destroyed = false;
@@ -5727,16 +6017,36 @@ function render2D({ model: host, el }) {
     }
     return lit.nodes;
   }
-  renderer.setSetting("nodeReducer", (node, data) => {
-    const res = reduceNode(node, data);
-    if (res.hidden || !res.color) return res;
-    const selected = (model.get("selected_nodes") || []).includes(node);
-    res.fillColor = nodeDisplay(res.color, canvasBackground || palette().background).fillColor;
-    res.borderColor = selected && ringColor ? ringColor : res.color;
-    return res;
-  });
+  nodeReducer = (node, display, attrs, state) => {
+    const res = reduceNode(node, { ...attrs, ...display });
+    if (!res.hidden && res.color) {
+      const selected = idTexts(model.get("selected_nodes")).includes(node);
+      res.fillColor = nodeDisplay(res.color, canvasBackground || palette().background).fillColor;
+      res.borderColor = selected && ringColor ? ringColor : res.color;
+    }
+    if (res.forceLabel) forcedLabels.add(node);
+    else forcedLabels.delete(node);
+    const out = sigmaNode(res);
+    labels.apply(node, out, state.isHovered);
+    return out;
+  };
+  function sigmaNode(res) {
+    const { hidden, forceLabel, labelSide, labelBacking, ...rest } = res;
+    const out = {
+      ...rest,
+      labelColor: themeLabelColor,
+      labelFont: LABEL_FONT_STRING,
+      labelSize: LABEL_SIZE,
+      ...hoverCard(graphBackground, themeLabelColor)
+    };
+    if (hidden) out.visibility = "hidden";
+    if (forceLabel) out.labelVisibility = "visible";
+    if (labelSide === "left") out.labelPosition = "left";
+    if (labelBacking) Object.assign(out, { labelBackgroundColor: withAlpha(graphBackground, 0.82), labelBackgroundPadding: 3 });
+    return out;
+  }
   function reduceNode(node, data) {
-    const selectedNodes = model.get("selected_nodes") || [];
+    const selectedNodes = idTexts(model.get("selected_nodes"));
     const res = { ...data };
     const level = levelOf(data);
     if (level === "hidden") {
@@ -5798,7 +6108,8 @@ function render2D({ model: host, el }) {
     zoomBand = band;
     renderer.refresh();
   });
-  renderer.setSetting("edgeReducer", (edge, data) => {
+  edgeReducer = (edge, display, attrs) => {
+    const data = { ...attrs, ...display };
     const res = { ...data };
     const ends = graph.extremities(edge).map((end) => levelOf(graph.getNodeAttributes(end)));
     if (ends.includes("hidden")) {
@@ -5840,7 +6151,7 @@ function render2D({ model: host, el }) {
         res.size = (res.size || data.size) * (1 - t);
       }
     }
-    const selected = model.get("selected_nodes") || [];
+    const selected = idTexts(model.get("selected_nodes"));
     const [from, to] = graph.extremities(edge);
     if (!res.hidden && model.get("highlight_neighbors") && selected.length === 1 && from !== selected[0] && to !== selected[0]) {
       res.color = dimColor(res.color || data.color, canvasBackground);
@@ -5855,8 +6166,20 @@ function render2D({ model: host, el }) {
       res.dashColor = res.color || data.color;
       res.color = canvasBackground || res.color;
     }
-    return res;
-  });
+    return sigmaEdge(res);
+  };
+  function sigmaEdge(res) {
+    const { hidden, ...rest } = res;
+    const out = { ...rest, labelColor: rest.color, labelSize: EDGE_LABEL_SIZE };
+    if (hidden) out.visibility = "hidden";
+    if (model.get("edge_label_overlap") === "avoid") {
+      out.overlayLabel = out.label || "";
+      out.label = "";
+    }
+    if (model.get("edge_arrows")) out.head = "arrow";
+    else delete out.head;
+    return out;
+  }
   function levelOf(attrs) {
     return levelState(attrs.level, model.get("current_level"), model.get("levels") || [], model.get("filtered_style"));
   }
@@ -5901,7 +6224,7 @@ function render2D({ model: host, el }) {
   model.on("change:filtered_style", () => renderer.refresh());
   function applyBatch(batch) {
     laneState.lastSeq = Number(batch.seq) || 0;
-    const nodes = batch.nodes || [], edges = batch.edges || [];
+    const nodes = (batch.nodes || []).map(drawnNode), edges = (batch.edges || []).map(drawnEdge);
     drawn = applyBatchItems(drawn, batch);
     const opts = getStylingOpts(model, nodes, edges, registries);
     const animated = model.get("append_animation") !== "none";
@@ -5909,7 +6232,7 @@ function render2D({ model: host, el }) {
     graph.forEachNode((node, attrs) => {
       if (attrs.lane !== void 0 && !laneState.vanish.has(node)) before.set(attrs.lane, (before.get(attrs.lane) || 0) + 1);
     });
-    for (const id of (batch.remove || {}).nodes || []) {
+    for (const id of idTexts((batch.remove || {}).nodes)) {
       if (!graph.hasNode(id) || laneState.vanish.has(id)) continue;
       const lane = graph.getNodeAttribute(id, "lane");
       if (lane !== void 0) dropped.set(lane, (dropped.get(lane) || 0) + 1);
@@ -5918,13 +6241,13 @@ function render2D({ model: host, el }) {
     const schedule = staggerSchedule(nodes.length + edges.length, model.get("append_stagger_ms") ?? 60);
     const t0 = performance.now();
     const lanes = laneState.lanes;
-    const extent = lanes.length ? null : extentBand(graph.mapNodes((_node, attrs) => ({ x: attrs.x, y: attrs.y })));
+    const extent2 = lanes.length ? null : extentBand(graph.mapNodes((_node, attrs) => ({ x: attrs.x, y: attrs.y })));
     const occupied = /* @__PURE__ */ new Map();
     const taken = (lane) => occupied.get(lane ?? "") ?? occupied.set(lane ?? "", []).get(lane ?? "");
     graph.forEachNode((node, attrs) => {
       if (!removed.has(node)) taken(attrs.lane).push({ x: attrs.x, y: attrs.y });
     });
-    const frame = lanes.length ? laneFrame() : extent && { x: [extent.x0, extent.x1], y: [extent.y0, extent.y1] };
+    const frame = lanes.length ? laneFrame() : extent2 && { x: [extent2.x0, extent2.x1], y: [extent2.y0, extent2.y1] };
     const scale = frame ? fitScale(frame, container.offsetWidth, container.offsetHeight, renderer.getSetting("stagePadding")) : 0;
     const unit = scale > 0 ? { x: LABEL_COLUMN / scale, y: LABEL_ROW / scale } : void 0;
     let item = 0;
@@ -5939,7 +6262,7 @@ function render2D({ model: host, el }) {
       }
       const lane = lanes.length ? laneOf(node, lanes) : void 0;
       const laneIndex = lanes.length ? lanes.findIndex((l) => l.id === lane) : 0;
-      const band = !lanes.length ? extent || laneBands([{ id: "" }])[0] : laneState.bands[laneIndex] ? nodeBand(lanes[laneIndex], laneIndex, node) : insetBand(laneBands(lanes)[laneIndex]);
+      const band = !lanes.length ? extent2 || laneBands([{ id: "" }])[0] : laneState.bands[laneIndex] ? nodeBand(lanes[laneIndex], laneIndex, node) : insetBand(laneBands(lanes)[laneIndex]);
       const cross = [], laneNeighbours = [];
       for (const edge of edges) {
         const other = edge.source === node.id ? edge.target : edge.target === node.id ? edge.source : null;
@@ -6035,8 +6358,8 @@ function render2D({ model: host, el }) {
     }
   }
   function removeDrawn(remove, animated) {
-    const ids = new Set((remove.nodes || []).filter((id) => graph.hasNode(id)));
-    const specs = remove.edges || [];
+    const ids = new Set(idTexts(remove.nodes).filter((id) => graph.hasNode(id)));
+    const specs = (remove.edges || []).map(drawnEdge);
     const edgeKeys = [];
     for (const spec of specs) {
       if (!graph.hasNode(spec.source) || !graph.hasNode(spec.target)) continue;
@@ -6061,14 +6384,14 @@ function render2D({ model: host, el }) {
         laneState.laneById.delete(id);
       }
     }
-    const selected = model.get("selected_nodes") || [];
+    const selected = idTexts(model.get("selected_nodes"));
     if (selected.some((id) => ids.has(id))) model.set("selected_nodes", selected.filter((id) => !ids.has(id)));
-    if (ids.has(model.get("selected_node")?.id)) model.set("selected_node", null);
+    if (ids.has(String(model.get("selected_node")?.id))) model.set("selected_node", null);
     model.save_changes();
     return ids;
   }
   function applyPulse() {
-    laneState.pulse = new Set((model.get("pulse_nodes") || []).filter((id) => graph.hasNode(id)));
+    laneState.pulse = new Set(idTexts(model.get("pulse_nodes")).filter((id) => graph.hasNode(id)));
     if (laneState.pulse.size) startAnimating();
     else renderer.refresh();
   }
@@ -6087,7 +6410,7 @@ function render2D({ model: host, el }) {
     if (selMode === "box" || selMode === "lasso") return;
     draggedNode = node;
     isDragging = false;
-    renderer.getCamera().disable();
+    renderer.getCamera().enabled = false;
     container.style.cursor = "grabbing";
   });
   renderer.getMouseCaptor().on("mousemovebody", (e) => {
@@ -6108,7 +6431,7 @@ function render2D({ model: host, el }) {
     }
     draggedNode = null;
     isDragging = false;
-    renderer.getCamera().enable();
+    renderer.getCamera().enabled = true;
     container.style.cursor = "default";
   });
   const zoomControls = document.createElement("div");
@@ -6118,21 +6441,21 @@ function render2D({ model: host, el }) {
   zoomInBtn.innerHTML = ICONS.zoomIn;
   zoomInBtn.title = "Zoom in";
   zoomInBtn.addEventListener("click", () => {
-    renderer.getCamera().animatedZoom({ duration: 200 });
+    renderer.getCamera().zoomIn({ duration: 200 });
   });
   const zoomOutBtn = document.createElement("button");
   zoomOutBtn.className = "awg-zoom-btn";
   zoomOutBtn.innerHTML = ICONS.zoomOut;
   zoomOutBtn.title = "Zoom out";
   zoomOutBtn.addEventListener("click", () => {
-    renderer.getCamera().animatedUnzoom({ duration: 200 });
+    renderer.getCamera().zoomOut({ duration: 200 });
   });
   const zoomFitBtn = document.createElement("button");
   zoomFitBtn.className = "awg-zoom-btn";
   zoomFitBtn.innerHTML = ICONS.zoomFit;
   zoomFitBtn.title = "Fit to view";
   zoomFitBtn.addEventListener("click", () => {
-    renderer.getCamera().animatedReset({ duration: 200 });
+    renderer.getCamera().reset({ duration: 200 });
   });
   const layoutPick = document.createElement("label");
   layoutPick.className = "awg-layout-pick";
@@ -6401,7 +6724,7 @@ function render2D({ model: host, el }) {
     const nodeData = graph.getNodeAttributes(node);
     model.set("selected_node", nodePayload(node, nodeData));
     const mode = model.get("selection_mode") || "click";
-    const current = model.get("selected_nodes") || [];
+    const current = idTexts(model.get("selected_nodes"));
     if (mode === "multi" || event && event.original && event.original.shiftKey) {
       if (current.includes(node)) {
         model.set("selected_nodes", current.filter((id) => id !== node));
@@ -6439,7 +6762,7 @@ function render2D({ model: host, el }) {
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (e.key === "f" || e.key === "F") {
       e.preventDefault();
-      renderer.getCamera().animatedReset({ duration: 200 });
+      renderer.getCamera().reset({ duration: 200 });
     } else if (e.key === "Escape") {
       model.set("selected_node", null);
       model.set("selected_edge", null);
@@ -6447,7 +6770,7 @@ function render2D({ model: host, el }) {
       model.set("selected_edges", []);
       model.save_changes();
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      const selected = model.get("selected_nodes") || [];
+      const selected = idTexts(model.get("selected_nodes"));
       if (selected.length === 0) return;
       e.preventDefault();
       const removeSet = new Set(selected);
@@ -6525,9 +6848,9 @@ function render2D({ model: host, el }) {
     applyLayout(model.get("layout") || "spring");
     const n = graph.order;
     renderer.setSetting("labelRenderedSizeThreshold", n > 200 ? 8 : n > 50 ? 5 : 2);
-    renderer.setSetting("labelDensity", n > 200 ? 0.5 : n > 50 ? 1 : 2);
+    renderer.setSetting("labelDensity", labelDensityFor(n));
     renderer.refresh();
-    renderer.getCamera().animatedReset({ duration: 300 });
+    renderer.getCamera().reset({ duration: 300 });
   }
   model.on("change:nodes", () => queueSync("data"));
   model.on("change:edges", () => queueSync("data"));
@@ -6539,15 +6862,15 @@ function render2D({ model: host, el }) {
     model.on(`change:${name}`, () => queueSync("style"));
   }
   model.on("change:layout", refreshLayout);
-  model.on("change:edge_arrows", () => renderer.setSetting("defaultEdgeType", model.get("edge_arrows") ? "arrow" : "line"));
+  model.on("change:edge_arrows", () => renderer.refresh());
   model.on("change:show_edge_labels", () => renderer.setSetting("renderEdgeLabels", model.get("show_edge_labels")));
+  model.on("change:edge_label_overlap", () => renderer.refresh());
   model.on("change:highlight_neighbors", () => renderer.refresh());
   if (model.get("_demo_mode")) {
     (async () => {
       try {
-        const demoDataStr = model.get("_demo_data");
-        if (demoDataStr && await connect3(model)) {
-          await loadStatements(JSON.parse(demoDataStr), model);
+        if (await connect3(model)) {
+          await loadDemo(model, JSON.parse(model.get("_demo_data") || "[]"));
         }
       } catch (err) {
         console.warn("Demo WASM init:", errorText(err));

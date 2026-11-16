@@ -1,13 +1,15 @@
-"""Tests for the demo widget (WASM mode with pre-populated data)."""
+"""Tests for the demo widget: grafeo's Silicon Valley demo dataset, drawn from Python, queried on Grafeo WASM."""
 
 from __future__ import annotations
 
 import json
+from collections import Counter
 
 import grafeo
+from grafeo_datasets import silicon_valley
 
 from anywidget_graph.backends.grafeo import GrafeoBackend
-from anywidget_graph.demo import DEMO_EDGES, DEMO_INSERT_STATEMENTS, DEMO_NODES, DEMO_QUERY, demo_graph
+from anywidget_graph.demo import DEMO_QUERY, demo_edges, demo_graph, demo_nodes
 
 
 def test_demo_graph_configures_wasm_mode():
@@ -17,8 +19,30 @@ def test_demo_graph_configures_wasm_mode():
     assert graph.query_language == "gql"
     assert graph.query == DEMO_QUERY
     assert graph._demo_mode is True
-    assert len(graph.nodes) == len(DEMO_NODES)
-    assert len(graph.edges) == len(DEMO_EDGES)
+    # The browser loads the dataset itself; demo_graph() adds no statements
+    assert json.loads(graph._demo_data) == []
+
+
+def test_demo_graph_draws_the_whole_dataset():
+    graph = demo_graph()
+    assert len(graph.nodes) == 64
+    assert len(graph.edges) == 149
+    # Eight node labels: each takes one of the eight palette colours
+    assert len(Counter(node["labels"][0] for node in graph.nodes)) == 8
+    ids = {node["id"] for node in graph.nodes}
+    assert all(edge["source"] in ids and edge["target"] in ids for edge in graph.edges)
+
+
+def test_demo_nodes_are_shaped_as_a_grafeo_result():
+    piper = next(node for node in demo_nodes() if node["id"] == "pied-piper")
+    assert piper["label"] == "Pied Piper"
+    assert piper["labels"] == ["Company"]
+    assert piper["name"] == "Pied Piper"
+    assert piper["description"].startswith("Richard Hendricks")
+    # The node's own properties come along
+    assert piper["founded"] == "2014-03"
+    edge = demo_edges()[0]
+    assert set(edge) >= {"source", "target", "label"}
 
 
 def test_demo_graph_kwargs_override_defaults():
@@ -28,27 +52,11 @@ def test_demo_graph_kwargs_override_defaults():
     assert graph.show_toolbar is False
 
 
-def test_demo_data_is_one_statement_per_entry():
-    """The engine rejects several `;`-separated statements in one call, so the browser runs them one by one."""
-    statements = json.loads(demo_graph()._demo_data)
-    assert statements == DEMO_INSERT_STATEMENTS.split("\n")
-    for statement in statements:
-        assert statement.count(";") == 1
-        assert statement.endswith(";")
-
-
-def test_demo_statements_run_on_the_engine():
-    """The WASM build runs the same engine: every demo statement must be valid there too."""
+def test_demo_query_on_the_dataset_returns_the_drawn_graph():
+    """The browser runs the dataset's GQL on the same engine: the demo query there finds what Python draws, the node
+    without a relationship (Fiona) included."""
     db = grafeo.GrafeoDB()
-    for statement in json.loads(demo_graph()._demo_data):
-        db.execute(statement.rstrip(";"))
-    assert db.node_count == len(DEMO_NODES)
-    assert db.edge_count == len(DEMO_EDGES)
-
+    silicon_valley.load(db)
     nodes, edges = GrafeoBackend(db).execute(DEMO_QUERY, language="gql")
-    assert len(nodes) == len(DEMO_NODES)
-    assert len(edges) == len(DEMO_EDGES)
-    # Demo nodes carry an `id` property ("m1", "p1", ...); the widget id must stay the engine id
-    node_ids = {n["id"] for n in nodes}
-    assert all(e["source"] in node_ids and e["target"] in node_ids for e in edges)
-    assert sorted(n["name"] for n in nodes) == sorted(n["label"] for n in DEMO_NODES)
+    assert len(edges) == len(demo_edges())
+    assert sorted(node["name"] for node in nodes) == sorted(node["name"] for node in demo_nodes())

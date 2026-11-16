@@ -140,9 +140,9 @@ export function render3D({ model: host, el }: { model: WidgetModel; el: HTMLElem
   if (model.get("_demo_mode")) {
     (async () => {
       try {
-        const demoDataStr = model.get("_demo_data");
-        if (demoDataStr && (await grafeoEmbedBackend.connect(model))) {
-          await grafeoEmbedBackend.loadStatements(JSON.parse(demoDataStr), model);
+        // The Silicon Valley dataset from the CDN, then the statements demo_graph() adds (none by default)
+        if (await grafeoEmbedBackend.connect(model)) {
+          await grafeoEmbedBackend.loadDemo(model, JSON.parse(model.get("_demo_data") || "[]"));
         }
       } catch (err) {
         console.warn("Demo WASM init:", errorText(err));

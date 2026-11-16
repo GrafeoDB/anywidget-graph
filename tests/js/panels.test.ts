@@ -229,6 +229,19 @@ test("show_view_toggle false: the toolbar has no 2D/3D switch", async () => {
   assert.ok(!titles(make({ show_view_toggle: false, nodes: [], edges: [] })).some((t) => /3D|2D/.test(t)));
 });
 
+test("show_count false: the toolbar has no node and edge count", async () => {
+  const { createToolbar } = await import("../../src/anywidget_graph/ui/toolbar.ts");
+  const make = (values: Record<string, any>) => {
+    const model = { get: (k: string) => values[k], set() {}, on() {}, save_changes() {} };
+    return createToolbar(model as any, () => {}, {}) as unknown as FakeElement;
+  };
+  const counts = (el: FakeElement) => el.descendants().filter((d) => /nodes · .* edges/.test(d.textContent));
+  const data = { nodes: [{ id: "a" }], edges: [] };
+  assert.equal(counts(make({ ...data })).length > 0, true, "shown when unset (a host without Python)");
+  assert.equal(counts(make({ ...data, show_count: true })).length > 0, true);
+  assert.equal(counts(make({ ...data, show_count: false })).length, 0);
+});
+
 test("a closed side panel is inert, so Tab and screen readers skip its controls", async () => {
   const { panelControls } = await import("../../src/anywidget_graph/ui/panel.ts");
   const el = new FakeElement("div") as any;

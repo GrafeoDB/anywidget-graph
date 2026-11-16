@@ -2,12 +2,240 @@
 "use strict";
 (() => {
   // vendor-globals.ts
-  var { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2, d3Force } = anywidgetGraphVendor;
+  var {
+    Graph,
+    Sigma,
+    layerBorder,
+    sdfCircle,
+    pathLine,
+    extremityArrow,
+    layerPlain,
+    circular,
+    random,
+    forceAtlas2,
+    d3Force
+  } = anywidgetGraphVendor;
 
   // lanes.ts
   var LABEL_FONT = '"JetBrains Mono", ui-monospace, monospace';
   function colorFor(item, type, typeColors, fallback) {
     return (typeof item.color === "string" ? item.color : void 0) || typeColors?.[type] || fallback;
+  }
+  function withAlpha(hex, alpha) {
+    const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || "");
+    if (!match) return hex;
+    const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  // edge-labels.ts
+  function boxCorners(box) {
+    const cos = Math.cos(box.angle), sin = Math.sin(box.angle);
+    const hw = box.width / 2, hh = box.height / 2;
+    return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([u, v]) => ({ x: box.x + u * cos - v * sin, y: box.y + u * sin + v * cos }));
+  }
+  function project(corners, axis) {
+    let min = Infinity, max = -Infinity;
+    for (const c of corners) {
+      const d = c.x * axis.x + c.y * axis.y;
+      if (d < min) min = d;
+      if (d > max) max = d;
+    }
+    return [min, max];
+  }
+  function boxesOverlap(a, b) {
+    const ca = boxCorners(a), cb = boxCorners(b);
+    for (const angle of [a.angle, a.angle + Math.PI / 2, b.angle, b.angle + Math.PI / 2]) {
+      const axis = { x: Math.cos(angle), y: Math.sin(angle) };
+      const [minA, maxA] = project(ca, axis), [minB, maxB] = project(cb, axis);
+      if (maxA <= minB + 1e-9 || maxB <= minA + 1e-9) return false;
+    }
+    return true;
+  }
+  function extent(box) {
+    const corners = boxCorners(box);
+    const xs = corners.map((c) => c.x), ys = corners.map((c) => c.y);
+    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  }
+  var BoxGrid = class {
+    cells = /* @__PURE__ */ new Map();
+    size;
+    constructor(size = 64) {
+      this.size = size;
+    }
+    keys(box) {
+      const { x0, y0, x1, y1 } = extent(box);
+      const keys = [];
+      for (let i = Math.floor(x0 / this.size); i <= Math.floor(x1 / this.size); i++) {
+        for (let j = Math.floor(y0 / this.size); j <= Math.floor(y1 / this.size); j++) keys.push(`${i},${j}`);
+      }
+      return keys;
+    }
+    add(box) {
+      for (const key of this.keys(box)) (this.cells.get(key) ?? this.cells.set(key, []).get(key)).push(box);
+    }
+    /** Whether the box overlaps one in the grid, other than those owned by the given nodes. */
+    hits(box, except = []) {
+      for (const key of this.keys(box)) {
+        for (const other of this.cells.get(key) ?? []) {
+          if (other.owner !== void 0 && except.includes(other.owner)) continue;
+          if (boxesOverlap(box, other)) return true;
+        }
+      }
+      return false;
+    }
+  };
+
+  // node-labels.ts
+  var NODE_LABEL_MARGIN = 5;
+  var LABEL_SIDES = ["right", "left", "above", "below"];
+  function nodeLabelBox(node, side) {
+    const box = { x: node.x, y: node.y, width: node.width, height: node.height, angle: 0 };
+    const across = node.radius + NODE_LABEL_MARGIN + node.width / 2, along = node.radius + NODE_LABEL_MARGIN + node.height / 2;
+    if (side === "right") box.x += across;
+    else if (side === "left") box.x -= across;
+    else if (side === "above") box.y -= along;
+    else box.y += along;
+    return box;
+  }
+  function pickNodeLabels(candidates, nodes2) {
+    const nodeGrid = new BoxGrid();
+    for (const box of nodes2) nodeGrid.add(box);
+    const labels2 = new BoxGrid();
+    const picked = /* @__PURE__ */ new Map();
+    for (const candidate of candidates) {
+      const sides = candidate.side ? [candidate.side] : LABEL_SIDES;
+      const boxes = sides.map((side) => ({ side, box: nodeLabelBox(candidate, side) }));
+      const free = boxes.filter(({ box }) => !labels2.hits(box));
+      const clear = free.find(({ box }) => !nodeGrid.hits(box, [candidate.key]));
+      const choice = clear ?? (candidate.forced || candidate.hub ? free[0] : void 0) ?? (candidate.forced ? boxes[0] : void 0);
+      if (!choice) continue;
+      labels2.add(choice.box);
+      picked.set(candidate.key, choice.side);
+    }
+    return picked;
+  }
+
+  // sigma-setup.ts
+  var LABEL_SIZE = 12;
+  var LABEL_WEIGHT = "500";
+  var LABEL_FONT_STRING = `${LABEL_WEIGHT} ${LABEL_FONT}`;
+  var EDGE_LABEL_SIZE = 14;
+  var PRIMITIVES = {
+    nodes: {
+      shapes: [sdfCircle()],
+      variables: { borderColor: { type: "color", default: "#000000" }, fillColor: { type: "color", default: "#ffffff" } },
+      layers: [layerBorder({
+        borders: [
+          { size: 2, mode: "pixels", color: { attribute: "borderColor" } },
+          { size: 0, fill: true, color: { attribute: "fillColor" } }
+        ]
+      })],
+      label: { font: { family: LABEL_FONT, weight: LABEL_WEIGHT } }
+    },
+    edges: { paths: [pathLine()], extremities: [extremityArrow()], layers: [layerPlain()] }
+  };
+  var SIGMA_SETTINGS = {
+    itemSizesReference: "screen",
+    enableCameraRotation: false,
+    enableCameraMouseRotation: false,
+    enableNodeDrag: false,
+    // Every edge label may show, as in sigma 3 (sigma 4 shows only those of edges with a node label shown)
+    edgeLabelAnchors: "allNodes",
+    // A host may mount the widget in a hidden or not yet sized container (a closed panel, a tab)
+    allowInvalidContainer: true
+  };
+  function isHidden(display) {
+    return !display || display.visibility === "hidden";
+  }
+  function hoverCard(background, labelColor) {
+    return {
+      backdropColor: background,
+      backdropBorderColor: withAlpha(labelColor, 0.35),
+      backdropBorderWidth: 1,
+      backdropShadowBlur: 0,
+      backdropShadowColor: "rgba(0, 0, 0, 0)",
+      backdropPadding: 2,
+      backdropCornerRadius: 0
+    };
+  }
+  function labelPicker(renderer2, options = {}) {
+    const graph2 = renderer2.getGraph();
+    const measure = document.createElement("canvas").getContext("2d");
+    let placed = null;
+    let signature = "";
+    function labelSize(text) {
+      if (measure) measure.font = `${LABEL_WEIGHT} ${LABEL_SIZE}px ${LABEL_FONT}`;
+      return { width: (measure ? measure.measureText(text).width : text.length * 7.2) + 4, height: LABEL_SIZE + 4 };
+    }
+    function update() {
+      const enabled = (options.enabled?.() ?? true) && renderer2.getSetting("renderLabels");
+      if (!enabled) {
+        if (placed) {
+          placed = null;
+          signature = "";
+          renderer2.scheduleRefresh();
+        }
+        return;
+      }
+      const { width, height } = renderer2.getDimensions();
+      const threshold = renderer2.getSetting("labelRenderedSizeThreshold");
+      const nodes2 = [];
+      const candidates = [];
+      graph2.forEachNode((node) => {
+        const shown = renderer2.getNodeDisplayData(node);
+        if (!shown || isHidden(shown)) return;
+        const at = renderer2.framedGraphToViewport(shown);
+        const radius = renderer2.scaleSize(shown.size);
+        nodes2.push({ x: at.x, y: at.y, width: 1.6 * radius, height: 1.6 * radius, angle: 0, owner: node });
+        if (!shown.label) return;
+        if (at.x < -radius - 200 || at.x > width + radius || at.y < -radius - 20 || at.y > height + radius + 20) return;
+        const forced = options.forced?.(node) ?? false;
+        if (!forced && radius < threshold) return;
+        candidates.push({ key: node, x: at.x, y: at.y, radius, ...labelSize(shown.label), forced, side: options.side?.(node), degree: graph2.degree(node) });
+      });
+      candidates.sort((a, b) => Number(b.forced) - Number(a.forced) || b.radius - a.radius || b.degree - a.degree || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      const hubs = Math.max(3, Math.round(Math.sqrt(graph2.order) / 2));
+      candidates.filter((c) => !c.forced).slice(0, hubs).forEach((c) => c.hub = true);
+      const cell = renderer2.getSetting("labelGridCellSize");
+      const ratio = renderer2.getCamera().getState().ratio;
+      const perCell = Math.ceil(renderer2.getSetting("labelDensity") / (ratio * ratio));
+      const inCell = /* @__PURE__ */ new Map();
+      const allowed = candidates.filter((c) => {
+        const key = `${Math.floor(c.x / cell)},${Math.floor(c.y / cell)}`;
+        const count = (inCell.get(key) ?? 0) + 1;
+        inCell.set(key, count);
+        return c.forced || c.hub || count <= perCell;
+      });
+      const next = pickNodeLabels(allowed, nodes2);
+      const nextSignature = [...next].map(([node, side]) => `${node}:${side}`).join("|");
+      placed = next;
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        renderer2.scheduleRefresh();
+      }
+    }
+    function apply(node, out, isHovered) {
+      if (!placed || isHovered || out.visibility === "hidden" || !out.label) return;
+      const side = placed.get(node);
+      if (side) {
+        out.labelVisibility = "visible";
+        out.labelPosition = side;
+      } else {
+        out.labelVisibility = "hidden";
+      }
+    }
+    function drawnBoxes() {
+      return [...renderer2.getNodeDisplayedLabels()].map((node) => {
+        const shown = renderer2.getNodeDisplayData(node);
+        const at = renderer2.framedGraphToViewport(shown);
+        const size = labelSize(shown.label || "");
+        const side = ["left", "above", "below"].find((s) => s === shown.labelPosition) ?? "right";
+        const box = nodeLabelBox({ x: at.x, y: at.y, radius: renderer2.scaleSize(shown.size), ...size }, side);
+        return { node, label: shown.label || "", x0: box.x - box.width / 2, x1: box.x + box.width / 2, y0: box.y - box.height / 2, y1: box.y + box.height / 2 };
+      });
+    }
+    return { update, apply, drawnBoxes, labelSize };
   }
 
   // palette.ts
@@ -358,55 +586,35 @@
     }
   }
   var container = document.getElementById("container");
+  var labels = null;
   var renderer = new Sigma(graph, container, {
-    renderLabels: OPTIONS.show_labels,
-    renderEdgeLabels: OPTIONS.show_edge_labels,
-    defaultNodeColor: opts.palette.data[0],
-    defaultEdgeColor: opts.palette.edge,
-    nodeProgramClasses: {
-      bordered: createNodeBorderProgram({
-        borders: [
-          { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
-          { size: { fill: true }, color: { attribute: "fillColor" } }
-        ]
-      })
+    settings: { ...SIGMA_SETTINGS, renderLabels: OPTIONS.show_labels, renderEdgeLabels: OPTIONS.show_edge_labels },
+    primitives: PRIMITIVES,
+    nodeReducer: (node, display, attrs, state) => {
+      const out = {
+        ...display,
+        borderColor: attrs.borderColor,
+        fillColor: attrs.fillColor,
+        labelColor: OPTIONS.label_color,
+        labelFont: LABEL_FONT_STRING,
+        labelSize: LABEL_SIZE,
+        ...hoverCard(OPTIONS.background, OPTIONS.label_color)
+      };
+      labels?.apply(node, out, state.isHovered);
+      return out;
     },
-    defaultNodeType: "bordered",
-    labelColor: { color: OPTIONS.label_color },
-    labelFont: LABEL_FONT,
-    labelSize: 12,
-    labelWeight: "500",
-    defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line"
-  });
-  var drawLabel = renderer.getSetting("defaultDrawNodeLabel");
-  renderer.setSetting("defaultDrawNodeHover", (context, data, settings) => {
-    const size = settings.labelSize, padding = 2;
-    context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
-    context.beginPath();
-    if (typeof data.label === "string" && data.label) {
-      const boxWidth = Math.round(context.measureText(data.label).width + 5);
-      const boxHeight = Math.round(size + 2 * padding);
-      const radius = Math.max(data.size, size / 2) + padding;
-      const angle = Math.asin(boxHeight / 2 / radius);
-      const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
-      context.moveTo(data.x + dx, data.y + boxHeight / 2);
-      context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
-      context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
-      context.lineTo(data.x + dx, data.y - boxHeight / 2);
-      context.arc(data.x, data.y, radius, angle, -angle);
-    } else {
-      context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
+    edgeReducer: (edge, display) => {
+      const out = { ...display, labelColor: display.color, labelSize: EDGE_LABEL_SIZE };
+      const [source, target] = graph.extremities(edge);
+      if (source === target) out.visibility = "hidden";
+      if (OPTIONS.edge_arrows) out.head = "arrow";
+      return out;
     }
-    context.closePath();
-    context.fillStyle = OPTIONS.background;
-    context.fill();
-    context.globalAlpha = 0.35;
-    context.strokeStyle = OPTIONS.label_color;
-    context.lineWidth = 1;
-    context.stroke();
-    context.globalAlpha = 1;
-    drawLabel(context, data, settings);
   });
+  var picker = labelPicker(renderer);
+  labels = picker;
+  renderer.on("afterRender", () => picker.update());
+  renderer.refresh();
   var tooltip = document.getElementById("tooltip");
   function placeTooltip(x, y) {
     const width = tooltip.offsetWidth, height = tooltip.offsetHeight;

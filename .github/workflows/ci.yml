@@ -11,9 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13", "3.14", "3.15"]
+        python-version: ["3.13", "3.14", "3.15"]
     env:
-      # Without this, uv follows .python-version and every job runs 3.12
+      # Without this, uv follows .python-version and every job runs 3.13
       UV_PYTHON: ${{ matrix.python-version }}
 
     steps:

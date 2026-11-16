@@ -1,5 +1,6 @@
 // Pure helpers for linked lanes, incremental append, pulse and host theme.
-import type { GraphEdge, GraphNode } from "./types.ts";
+import { drawnEdge, drawnNode, idTexts } from "./types.ts";
+import type { DrawnEdge, DrawnNode, GraphEdge, GraphNode, ItemId } from "./types.ts";
 
 // No DOM and no sigma here: index.ts uses them, Node tests cover them (tests/js/lanes.test.ts).
 
@@ -28,13 +29,13 @@ export interface Lane {
 }
 
 /** A drawn node with its layout fields. */
-export type LayoutNode = GraphNode & { x: number; y: number; vx?: number; vy?: number; width?: number; degree?: number }
+export type LayoutNode = DrawnNode & { x: number; y: number; vx?: number; vy?: number; width?: number; degree?: number }
 
 /** The drawn data: nodes by id, edges as a list. */
-export interface DrawnItems { nodes: Map<string, GraphNode>; edges: GraphEdge[] }
+export interface DrawnItems { nodes: Map<string, DrawnNode>; edges: DrawnEdge[] }
 
 /** A batch of changes: removals first, then nodes and edges to merge in. */
-export interface Batch { seq?: number; remove?: { nodes?: string[]; edges?: GraphEdge[] }; nodes?: GraphNode[]; edges?: GraphEdge[] }
+export interface Batch { seq?: number; remove?: { nodes?: ItemId[]; edges?: GraphEdge[] }; nodes?: GraphNode[]; edges?: GraphEdge[] }
 
 /** A band split into rows, one per value plus the extra row. */
 export interface RowBand { label: string; y0: number; y1: number; band: Band }
@@ -184,14 +185,14 @@ export function fitToBand(positions: Record<string, Point>, band: Band): Record<
 }
 
 /** True when an edge joins two lanes: marked `cross`, or its ends sit in different known lanes. */
-export function isCrossEdge(edge: GraphEdge, laneById: Map<string, string>): boolean {
+export function isCrossEdge(edge: DrawnEdge, laneById: Map<string, string>): boolean {
   if (edge.cross) return true;
   const a = laneById.get(edge.source), b = laneById.get(edge.target);
   return a !== undefined && b !== undefined && a !== b;
 }
 
 /** The partners in other lanes of the given nodes, through the cross-lane links either way (for a search). */
-export function crossNeighbours(ids: Set<string>, cross: GraphEdge[]): Set<string> {
+export function crossNeighbours(ids: Set<string>, cross: DrawnEdge[]): Set<string> {
   const partners = new Set<string>();
   for (const edge of cross) {
     if (ids.has(edge.source)) partners.add(edge.target);
@@ -301,7 +302,7 @@ export function groupForce<T extends { x?: number; y?: number; vx?: number; vy?:
 }
 
 /** The mean height of each node's cross-lane partners among the nodes already placed (lanes laid out before it). */
-export function partnerHeights(ids: string[], cross: GraphEdge[], placed: Map<string, Point>): Map<string, number> {
+export function partnerHeights(ids: string[], cross: DrawnEdge[], placed: Map<string, Point>): Map<string, number> {
   const wanted = new Set(ids);
   const sums = new Map<string, [number, number]>();
   for (const edge of cross) {
@@ -593,13 +594,17 @@ export function edgeKey(edge: GraphEdge): string {
  */
 export function mergeItems(items: DrawnItems | null | undefined, nodes: GraphNode[] = [], edges: GraphEdge[] = []): DrawnItems {
   const merged: DrawnItems = { nodes: new Map(items?.nodes ?? []), edges: [...(items?.edges ?? [])] };
-  for (const node of nodes) merged.nodes.set(node.id, { ...merged.nodes.get(node.id), ...node });
+  // Ids enter as text here, so a host's numeric ids (an engine id, a pandas index) key the same as their text
+  for (const node of nodes.map(drawnNode)) {
+    const old = merged.nodes.get(node.id);
+    merged.nodes.set(node.id, old ? { ...old, ...node } : node);
+  }
   if (!items) {
-    merged.edges.push(...edges);
+    merged.edges.push(...edges.map(drawnEdge));
     return merged;
   }
   const keys = new Set(merged.edges.map(edgeKey));
-  for (const edge of edges) {
+  for (const edge of edges.map(drawnEdge)) {
     if (keys.has(edgeKey(edge))) continue;
     keys.add(edgeKey(edge));
     merged.edges.push(edge);
@@ -614,10 +619,10 @@ export function edgeMatches(edge: GraphEdge, spec: GraphEdge): boolean {
 }
 
 /** The drawn data without the given nodes (and every edge touching them) and edges. Returns new data. */
-export function removeItems(items: DrawnItems, remove: { nodes?: string[]; edges?: GraphEdge[] } = {}): DrawnItems {
-  const ids = new Set<string>(remove.nodes || []);
-  const specs: GraphEdge[] = remove.edges || [];
-  const gone = (edge: GraphEdge) => ids.has(edge.source) || ids.has(edge.target) || specs.some((spec) => edgeMatches(edge, spec));
+export function removeItems(items: DrawnItems, remove: { nodes?: ItemId[]; edges?: GraphEdge[] } = {}): DrawnItems {
+  const ids = new Set<string>(idTexts(remove.nodes));
+  const specs = (remove.edges || []).map(drawnEdge);
+  const gone = (edge: DrawnEdge) => ids.has(edge.source) || ids.has(edge.target) || specs.some((spec) => edgeMatches(edge, spec));
   return { nodes: new Map([...items.nodes].filter(([id]) => !ids.has(id))), edges: items.edges.filter((edge) => !gone(edge)) };
 }
 
@@ -628,7 +633,7 @@ export function applyBatchItems(items: DrawnItems, batch: Batch): DrawnItems {
 
 /** Whether the host's lists hold exactly the drawn items (the same node ids, the same edges): a copy, not new data. */
 export function sameItems(items: DrawnItems, nodes: GraphNode[], edges: GraphEdge[]): boolean {
-  const ids = new Set(nodes.map((node) => node.id));
+  const ids = new Set(nodes.map((node) => String(node.id)));
   if (ids.size !== items.nodes.size || [...ids].some((id) => !items.nodes.has(id))) return false;
   if (edges.length !== items.edges.length) return false;
   const counts = new Map<string, number>();
@@ -708,12 +713,13 @@ export function withAlpha(hex: string, alpha: number): string {
 }
 
 // A node and every node it shares an edge with (either direction); empty without a node
-export function neighbourhood(edges: GraphEdge[], id: string | number | null | undefined): Set<string | number> {
+export function neighbourhood(edges: GraphEdge[], id: ItemId | null | undefined): Set<string> {
   if (id === null || id === undefined) return new Set();
-  const near = new Set<string | number>([id as string | number]);
+  const own = String(id);
+  const near = new Set<string>([own]);
   for (const edge of edges) {
-    if (edge.source === id) near.add(edge.target);
-    if (edge.target === id) near.add(edge.source);
+    if (String(edge.source) === own) near.add(String(edge.target));
+    if (String(edge.target) === own) near.add(String(edge.source));
   }
   return near;
 }

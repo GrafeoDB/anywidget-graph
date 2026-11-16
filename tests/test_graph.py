@@ -3,6 +3,7 @@
 import json
 
 import pytest
+import traitlets
 
 from anywidget_graph import Graph, Graph3D
 
@@ -528,7 +529,7 @@ def test_to_html_draws_arrows_when_asked():
     nodes = [{"id": "a"}, {"id": "b"}]
     assert '"edge_arrows": true' in Graph(nodes=nodes, edges=edges, edge_arrows=True).to_html()
     assert '"edge_arrows": false' in Graph(nodes=nodes, edges=edges).to_html()
-    assert 'OPTIONS.edge_arrows ? "arrow" : "line"' in Graph(nodes=nodes, edges=edges).to_html()
+    assert 'if (OPTIONS.edge_arrows) out.head = "arrow"' in Graph(nodes=nodes, edges=edges).to_html()
 
 
 def test_to_html_needs_no_cdn():
@@ -583,7 +584,8 @@ def test_to_html_keeps_css_values_plain():
     graph = Graph(nodes=[{"id": "a"}], theme={"background": "red}</style><script>alert(1)</script>"})
     html = graph.to_html(width="1px}</style><script>alert(2)</script>")
     assert "alert" not in html
-    assert html.count("</style>") == 1
+    # The page's own style element; the inlined libraries may hold "</style>" in their script, which ends no style
+    assert html.split("<script", 1)[0].count("</style>") == 1
     assert "width: 100%;" in html
 
 
@@ -1042,6 +1044,22 @@ def test_remove_takes_items_out_of_the_lists_and_sends_a_removal_batch():
     assert graph.append_batch["seq"] == 2
 
 
+def test_append_remove_and_expansion_key_ids_by_their_text():
+    """Node 1 and node "1" are one node, as the widget draws them (an engine id, a pandas index)."""
+    graph = Graph(nodes=[{"id": 1, "label": "One"}, {"id": 2}], edges=[{"source": 1, "target": 2}])
+    graph.append(nodes=[{"id": "1", "color": "red"}, {"id": 3}], edges=[{"source": "1", "target": "2"}])
+    assert [str(n["id"]) for n in graph.nodes] == ["1", "2", "3"]
+    assert graph.nodes[0]["label"] == "One" and graph.nodes[0]["color"] == "red"
+    assert len(graph.edges) == 1
+    graph.remove(nodes=["2"])
+    assert [str(n["id"]) for n in graph.nodes] == ["1", "3"]
+    assert graph.edges == []
+    graph._merge_graph([{"id": "3"}, {"id": 4}], [{"source": "1", "target": 4}])
+    graph._merge_graph([{"id": "4"}], [{"source": 1, "target": "4"}])
+    assert [str(n["id"]) for n in graph.nodes] == ["1", "3", "4"]
+    assert len(graph.edges) == 1
+
+
 def test_append_sends_the_lists_and_the_batch_in_one_message(monkeypatch):
     graph = Graph(nodes=[{"id": "a"}])
     sent = []
@@ -1155,6 +1173,20 @@ def test_layout_menu_and_view_toggle_show_by_default():
     fixed = Graph(show_layout_menu=False, show_view_toggle=False)
     assert fixed.show_layout_menu is False
     assert fixed.show_view_toggle is False
+
+
+def test_count_badge_shows_by_default():
+    """A host that writes its own counts (Deriva Studio's header) hides the toolbar's node and edge count."""
+    assert Graph().show_count is True
+    assert Graph(show_count=False).show_count is False
+
+
+def test_edge_labels_allow_overlap_by_default():
+    """edge_label_overlap="avoid" moves edge labels clear of each other and of nodes; the default leaves them be."""
+    assert Graph().edge_label_overlap == "allow"
+    assert Graph(edge_label_overlap="avoid").edge_label_overlap == "avoid"
+    with pytest.raises(traitlets.TraitError):
+        Graph(edge_label_overlap="sometimes")
 
 
 def test_run_without_a_backend_says_so():

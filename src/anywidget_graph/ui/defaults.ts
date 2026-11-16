@@ -41,6 +41,7 @@ export const TRAIT_DEFAULTS: Record<string, unknown> = {
   "edge_arrows": false,
   "edge_color_field": null,
   "edge_color_scale": "viridis",
+  "edge_label_overlap": "allow",
   "edge_size_field": null,
   "edge_size_range": [
     1,
@@ -82,6 +83,7 @@ export const TRAIT_DEFAULTS: Record<string, unknown> = {
   "selected_nodes": [],
   "selection_mode": "click",
   "show_axes": true,
+  "show_count": true,
   "show_edge_labels": false,
   "show_grid": true,
   "show_labels": true,

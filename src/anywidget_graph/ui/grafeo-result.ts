@@ -1,12 +1,12 @@
-import type { GraphEdge, GraphNode } from "./types.ts";
+import type { DrawnEdge, DrawnNode } from "./types.ts";
 
 /** Engine value: node, edge, path, or a plain property value. */
 type GrafeoValue = any;
 
 /** The accumulator collecting entities while rows are walked. */
 export interface GrafeoAccumulator {
-  nodes: Map<string, GraphNode>;
-  edges: Map<string, GraphEdge>;
+  nodes: Map<string, DrawnNode>;
+  edges: Map<string, DrawnEdge>;
   pathNodeIds: Set<string>;
   pathEdgeIds: Set<string>;
 }
@@ -86,7 +86,7 @@ function userProperties(entity: Record<string, unknown>): Record<string, unknown
 }
 
 /** Widget node: properties first, so a user property named `id` cannot replace the identity. */
-export function grafeoNodeToWidget(node: { _id: unknown; _labels: unknown[] } & Record<string, unknown>): GraphNode {
+export function grafeoNodeToWidget(node: { _id: unknown; _labels: unknown[] } & Record<string, unknown>): DrawnNode {
   const props = userProperties(node);
   const labels = (node._labels as unknown[]).map(String);
   return {
@@ -98,7 +98,7 @@ export function grafeoNodeToWidget(node: { _id: unknown; _labels: unknown[] } & 
 }
 
 /** Widget edge: `source` / `target` always come from the engine, never from properties. */
-export function grafeoEdgeToWidget(edge: { _id: unknown; _source: unknown; _target: unknown; _type: string } & Record<string, unknown>): GraphEdge {
+export function grafeoEdgeToWidget(edge: { _id: unknown; _source: unknown; _target: unknown; _type: string } & Record<string, unknown>): DrawnEdge {
   return {
     label: edge._type,
     ...userProperties(edge),
@@ -108,7 +108,7 @@ export function grafeoEdgeToWidget(edge: { _id: unknown; _source: unknown; _targ
 }
 
 export function createGrafeoAccumulator(): GrafeoAccumulator {
-  return { nodes: new Map<string, GraphNode>(), edges: new Map<string, GraphEdge>(), pathNodeIds: new Set<string>(), pathEdgeIds: new Set<string>() };
+  return { nodes: new Map<string, DrawnNode>(), edges: new Map<string, DrawnEdge>(), pathNodeIds: new Set<string>(), pathEdgeIds: new Set<string>() };
 }
 
 /** Walk one result value, collecting entities and the ids that still need a lookup. */
@@ -184,7 +184,7 @@ export function grafeoEdgeLookupQuery(ids: string[]): string {
 }
 
 /** Final {nodes, edges}; edges whose endpoints could not be resolved are dropped. */
-export function finishGrafeoGraph(acc: GrafeoAccumulator): { nodes: GraphNode[]; edges: GraphEdge[] } {
+export function finishGrafeoGraph(acc: GrafeoAccumulator): { nodes: DrawnNode[]; edges: DrawnEdge[] } {
   const edges = [...acc.edges.values()].filter((e) => acc.nodes.has(e.source) && acc.nodes.has(e.target));
   return { nodes: [...acc.nodes.values()], edges };
 }
@@ -213,7 +213,7 @@ export function grafeoSchemaToTypes(schema: any): { nodeTypes: { label: string; 
  * `runLookup(gqlQuery) -> rows` (sync or async). Lookup failures are not fatal:
  * the entities that were returned directly are still shown.
  */
-export async function grafeoRowsToGraph(rows: unknown, runLookup?: (query: string) => unknown | Promise<unknown>): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+export async function grafeoRowsToGraph(rows: unknown, runLookup?: (query: string) => unknown | Promise<unknown>): Promise<{ nodes: DrawnNode[]; edges: DrawnEdge[] }> {
   const acc = addGrafeoRows(createGrafeoAccumulator(), rows);
 
   if (runLookup) {

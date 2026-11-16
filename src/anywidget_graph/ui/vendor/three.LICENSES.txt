@@ -1,6 +1,6 @@
 Licenses of the packages bundled in three.min.js (built by scripts/vendor)
 
-== three@0.186.1 (MIT)
+== three@0.187.0 (MIT)
 
 The MIT License
 

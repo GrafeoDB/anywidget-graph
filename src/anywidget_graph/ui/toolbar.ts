@@ -141,7 +141,8 @@ export function createToolbar(
   model.on("change:nodes", updateCount);
   model.on("change:edges", updateCount);
   model.on("change:totals", updateCount);
-  toolbar.appendChild(countBadge);
+  // show_count false: a host that writes its own counts keeps the badge out
+  if (model.get("show_count") !== false) toolbar.appendChild(countBadge);
 
   // Query timing badge
   const timingBadge = document.createElement("span");

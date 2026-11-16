@@ -8,8 +8,8 @@
 Works with Marimo, Jupyter, VS Code, Colab, anywhere [anywidget](https://anywidget.dev/) runs.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-dark.png">
-  <img src="assets/demo-light.png" alt="anywidget-graph showing a small code base as a graph, with the filter panel open">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-dark.png">
+  <img src="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-light.png" alt="anywidget-graph showing a small code base as a graph, with the filter panel open">
 </picture>
 
 ## Features
@@ -37,10 +37,11 @@ uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
 uv add "anywidget-graph[neo4j]"      # Neo4j Python driver (Neo4jBackend)
 uv add "anywidget-graph[arango]"     # ArangoDB (ArangoBackend)
 uv add "anywidget-graph[3d]"         # 3D view (Graph3D / view="3d"); Three.js is bundled, no extra deps
+uv add "anywidget-graph[demo]"       # demo_graph(): grafeo's Silicon Valley demo dataset
 uv add "anywidget-graph[examples]"   # marimo, to run the apps in examples/
 ```
 
-Requires Python 3.12 or newer. The Grafeo backends need grafeo 0.6: the `grafeo` extra for embedded mode, grafeo-server 0.6 for server mode, and WASM mode loads `@grafeo-db/wasm` 0.6 in the browser. anywidget-graph 0.4.x is the line for grafeo 0.5.
+Requires Python 3.13 or newer, and a browser with WebGL 2 (any current one). The Grafeo backends need grafeo 0.6: the `grafeo` extra for embedded mode, grafeo-server 0.6 for server mode, and WASM mode loads `@grafeo-db/wasm` 0.6 in the browser. anywidget-graph 0.4.x is the line for grafeo 0.5.
 
 ## Quick Start
 
@@ -236,6 +237,7 @@ graph.theme = {
 - `pulse_nodes`: ids that pulse softly.
 - `type_colors`: colours per type, `{"nodes": {"<type>": "#hex"}, "edges": {"<type>": "#hex"}}` (types as the schema panel groups them). They colour the items of that type and the legend swatches; an item's own `color` still wins, and other types keep the palette.
 - `totals`: for a host that sends a sample of a larger graph, `{"nodes": {"<type>": n}, "edges": {"<type>": n}}` (types as the schema panel groups them: a node's first label, an edge's type). The count badge and the schema panel show "shown / total"; a type the sample lacks shows as 0, a type without a total shows its count (and counts as shown in full).
+- `show_count`: `False` leaves the node and edge count out of the toolbar, for a host that writes its own counts; the schema panel keeps its "shown / total" (default `True`).
 - `theme`: host colours (`background`, `panel`, `text`, `muted`, `border`, `accent`) that replace the widget's light and dark defaults; a key left out (or `theme = {}`) brings the default back.
 - `_features`: the widget sets the capabilities it supports when it renders, so a host can detect an older build.
 
@@ -326,8 +328,8 @@ A citation network of scientific papers (topic-coloured clusters, hub papers siz
 roster), laid out and rendered in three dimensions:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-3d-dark.png">
-  <img src="assets/demo-3d-light.png" alt="3D view of a papers citation network">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-3d-dark.png">
+  <img src="https://raw.githubusercontent.com/GrafeoDB/anywidget-graph/main/assets/demo-3d-light.png" alt="3D view of a citation network of papers, coloured by topic, with hub papers sized by citations">
 </picture>
 
 ```python
@@ -376,6 +378,7 @@ graph = Graph(
     background="#fafafa",  # Background color
     show_labels=True,  # Node labels
     show_edge_labels=False,  # Edge labels
+    edge_label_overlap="allow",  # "avoid": an edge label moves along its edge clear of nodes and labels, or is left out
     edge_arrows=False,  # Edges as arrows from source to target
     highlight_neighbors=False,  # A selected node keeps its neighbours and their edges lit
     show_toolbar=True,  # Toolbar visibility
@@ -398,7 +401,7 @@ graph = Graph(
 
 Grafeo runs in one of three modes, picked with `grafeo_connection_mode` or in the settings panel.
 
-**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.6.2,<0.7`).
+**Embedded** (Python, the default): queries run in the notebook kernel. Requires the `grafeo` extra (`grafeo>=0.6.3,<0.7`).
 
 ```python
 import grafeo
@@ -413,7 +416,7 @@ graph = Graph(database_backend="grafeo", grafeo_db=db, query_language="gql")
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="server", grafeo_server_url="http://localhost:7474")
 ```
 
-**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.2) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
+**WASM**: the engine runs in the browser. `@grafeo-db/wasm` (0.6.3) is downloaded from jsDelivr when you click "Initialize WASM", so nothing extra is installed in Python.
 
 ```python
 graph = Graph(database_backend="grafeo", grafeo_connection_mode="wasm", query_language="gql")
@@ -425,13 +428,15 @@ Property values reach the widget as JSON: a GQL number with a point (`1.50`), wh
 
 Databases written by grafeo 0.5 are migrated on first open (0.5 can't open them afterwards; the old file is kept as `<path>.pre-0.6`); see grafeo's [Upgrading to 0.6](https://docs.grafeo.dev/get-started/upgrading/0.6/).
 
-Try it without any setup:
+Try it without any setup (`uv add "anywidget-graph[demo]"`):
 
 ```python
 from anywidget_graph.demo import demo_graph
 
-demo_graph()  # WASM mode with a small movie graph loaded
+demo_graph()  # grafeo's Silicon Valley demo dataset, queried in the browser on Grafeo WASM
 ```
+
+The demo draws the 64 people, companies, products, places and events of grafeo's Silicon Valley demo dataset (`grafeo-datasets` 0.6.3) and their 149 relationships, coloured by node label. Run sends the query in the toolbar to Grafeo WASM, which loads `@grafeo-db/wasm` and `@grafeo-db/datasets` 0.6.3 from jsDelivr, so any GQL on the same data works there. `demo_nodes()` and `demo_edges()` return the data as the widget takes it.
 
 ### Neo4j (browser-side)
 
