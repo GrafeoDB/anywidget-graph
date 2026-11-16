@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def _edge_key(edge: dict[str, Any]) -> tuple[str, str, str]:
+    """An edge's identity as the widget draws it: its ends as text and its label."""
+    return (str(edge["source"]), str(edge["target"]), edge.get("label") or "")
+
+
 def _script_json(value: Any) -> str:
     """JSON for a ``<script>`` element: ``<``, ``>`` and ``&`` are escaped, so a value cannot close the element."""
     return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
@@ -206,6 +211,9 @@ class Graph(anywidget.AnyWidget):
     background = traitlets.Unicode(default_value="#fafafa").tag(sync=True)
     show_labels = traitlets.Bool(default_value=True).tag(sync=True)
     show_edge_labels = traitlets.Bool(default_value=False).tag(sync=True)
+    # "avoid": an edge label moves along its edge to keep clear of nodes, node labels and other edge labels, or is left
+    # out; "allow" (the default) puts every label in the middle of its edge
+    edge_label_overlap = traitlets.Enum(["allow", "avoid"], default_value="allow").tag(sync=True)
     # Draw edges as arrows (source to target); self-loops are drawn as loops either way
     edge_arrows = traitlets.Bool(default_value=False).tag(sync=True)
     # A selected node keeps its neighbours and their edges lit; everything else dims
@@ -268,6 +276,8 @@ class Graph(anywidget.AnyWidget):
     # (lanes, one view) turns them off
     show_layout_menu = traitlets.Bool(default_value=True).tag(sync=True)
     show_view_toggle = traitlets.Bool(default_value=True).tag(sync=True)
+    # The toolbar's node and edge count; a host that writes its own counts (Deriva Studio's header) turns it off
+    show_count = traitlets.Bool(default_value=True).tag(sync=True)
 
     # === Visibility levels ===
     # Levels of detail, lowest first: [{"id": 0, "label": "All", "count": 5230}, ...]; `count` comes from the host.
@@ -466,13 +476,14 @@ class Graph(anywidget.AnyWidget):
         widget shown again include them; the widget sees the lists match what it draws and does not lay out again.
         """
         nodes, edges = list(nodes or []), list(edges or [])
-        merged_nodes = {node["id"]: node for node in self.nodes}
+        # Keyed by the id's text, as the widget draws them: node 1 and node "1" are one node
+        merged_nodes = {str(node["id"]): node for node in self.nodes}
         for node in nodes:
-            merged_nodes[node["id"]] = {**merged_nodes.get(node["id"], {}), **node}
-        edge_keys = {(e["source"], e["target"], e.get("label") or "") for e in self.edges}
+            merged_nodes[str(node["id"])] = {**merged_nodes.get(str(node["id"]), {}), **node}
+        edge_keys = {_edge_key(e) for e in self.edges}
         merged_edges = list(self.edges)
         for edge in edges:
-            key = (edge["source"], edge["target"], edge.get("label") or "")
+            key = _edge_key(edge)
             if key not in edge_keys:
                 edge_keys.add(key)
                 merged_edges.append(edge)
@@ -482,26 +493,29 @@ class Graph(anywidget.AnyWidget):
             self.edges = merged_edges
             self.append_batch = {"seq": seq, "nodes": nodes, "edges": edges}
 
-    def remove(self, nodes: list[str] | None = None, edges: list[dict[str, Any]] | None = None) -> None:
+    def remove(self, nodes: list[str | int] | None = None, edges: list[dict[str, Any]] | None = None) -> None:
         """Take nodes (with every edge touching them) and edges out of the drawn graph without a re-layout.
 
         They fade out; the rest stays where it is. An edge is ``{"source", "target"}`` (every edge between those ends)
         or with a ``"label"`` (that edge only). They also leave ``nodes`` and ``edges``.
         """
-        ids, specs = set(nodes or []), list(edges or [])
+        ids, specs = {str(node_id) for node_id in nodes or []}, list(edges or [])
 
         def named(edge: dict[str, Any]) -> bool:
             return any(
-                edge["source"] == spec["source"]
-                and edge["target"] == spec["target"]
+                str(edge["source"]) == str(spec["source"])
+                and str(edge["target"]) == str(spec["target"])
                 and (spec.get("label") is None or (edge.get("label") or "") == spec["label"])
                 for spec in specs
             )
 
-        kept_edges = [e for e in self.edges if e["source"] not in ids and e["target"] not in ids and not named(e)]
+        def touches(edge: dict[str, Any]) -> bool:
+            return str(edge["source"]) in ids or str(edge["target"]) in ids
+
+        kept_edges = [e for e in self.edges if not touches(e) and not named(e)]
         seq = int(self.append_batch.get("seq", 0)) + 1
         with self.hold_sync():
-            self.nodes = [n for n in self.nodes if n["id"] not in ids]
+            self.nodes = [n for n in self.nodes if str(n["id"]) not in ids]
             self.edges = kept_edges
             self.append_batch = {
                 "seq": seq,
@@ -644,29 +658,29 @@ class Graph(anywidget.AnyWidget):
 
     def _merge_graph(self, new_nodes: list[dict], new_edges: list[dict]) -> None:
         """Merge new nodes and edges into the existing graph, deduplicating."""
-        existing_node_ids = {n["id"] for n in self.nodes}
-        existing_edge_keys = {(e["source"], e["target"], e.get("label", "")) for e in self.edges}
+        # Keyed by the id's text, as the widget draws them: node 1 and node "1" are one node
+        existing_node_ids = {str(n["id"]) for n in self.nodes}
+        existing_edge_keys = {_edge_key(e) for e in self.edges}
 
-        added = [n for n in new_nodes if n["id"] not in existing_node_ids]
+        added = [n for n in new_nodes if str(n["id"]) not in existing_node_ids]
         merged_nodes = list(self.nodes) + added
-        merged_edges = list(self.edges) + [
-            e for e in new_edges if (e["source"], e["target"], e.get("label", "")) not in existing_edge_keys
-        ]
+        merged_edges = list(self.edges) + [e for e in new_edges if _edge_key(e) not in existing_edge_keys]
 
         if len(merged_nodes) > self.max_nodes:
             # The drawn graph stays; the room left goes to the new nodes with the most links to it, so the cut keeps
             # the neighbours that connect rather than whichever came first
             room = max(self.max_nodes - len(self.nodes), 0)
-            links = dict.fromkeys((n["id"] for n in added), 0)
+            links = dict.fromkeys((str(n["id"]) for n in added), 0)
             for e in merged_edges:
-                for end, other in ((e["source"], e["target"]), (e["target"], e["source"])):
+                source, target = str(e["source"]), str(e["target"])
+                for end, other in ((source, target), (target, source)):
                     if end in links and other in existing_node_ids:
                         links[end] += 1
-            ranked = sorted(range(len(added)), key=lambda i: -links[added[i]["id"]])
+            ranked = sorted(range(len(added)), key=lambda i: -links[str(added[i]["id"])])
             chosen = sorted(ranked[:room])
             merged_nodes = list(self.nodes)[: self.max_nodes] + [added[i] for i in chosen]
-            kept_ids = {n["id"] for n in merged_nodes}
-            merged_edges = [e for e in merged_edges if e["source"] in kept_ids and e["target"] in kept_ids]
+            kept_ids = {str(n["id"]) for n in merged_nodes}
+            merged_edges = [e for e in merged_edges if str(e["source"]) in kept_ids and str(e["target"]) in kept_ids]
             self.query_note = f"Graph truncated to {self.max_nodes} nodes. Call clear() or increase max_nodes."
 
         self.nodes = merged_nodes

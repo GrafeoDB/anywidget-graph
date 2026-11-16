@@ -26,11 +26,19 @@ ROOT = Path(__file__).resolve().parent.parent
 UI_DIR = ROOT / "src" / "anywidget_graph" / "ui"
 WASM_URL_RE = re.compile(r"@grafeo-db/wasm@")
 VERSION_RE = re.compile(r'export const GRAFEO_WASM_VERSION = "([^"]+)";')
+DATASETS_VERSION_RE = re.compile(r'export const GRAFEO_DATASETS_VERSION = "([^"]+)";')
 
 
 def _wasm_version() -> str:
     match = VERSION_RE.search((UI_DIR / "grafeo-embed.ts").read_text(encoding="utf-8"))
     assert match, "GRAFEO_WASM_VERSION not found in grafeo-embed.ts"
+    return match.group(1)
+
+
+def _datasets_version() -> str:
+    """The exact @grafeo-db/datasets version the demo loads (ui/grafeo-embed.ts)."""
+    match = DATASETS_VERSION_RE.search((UI_DIR / "grafeo-embed.ts").read_text(encoding="utf-8"))
+    assert match, "GRAFEO_DATASETS_VERSION is not defined in ui/grafeo-embed.ts"
     return match.group(1)
 
 
@@ -68,10 +76,16 @@ def test_bundle_is_built_from_the_current_sources(node_bin):
 
 
 def test_only_the_optional_backends_load_code_from_the_network(esm):
-    """neo4j-driver and the WASM engine load when their backend connects, never with the widget."""
-    # Dynamic imports only: graphology's own graph.import(...) method is no module load
-    dynamic = set(re.findall(r"""(?<![\w$.])import\(\s*([^)]+?)\s*\)""", esm))
-    assert dynamic == {"NEO4J_DRIVER_URL", "`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`"}
+    """neo4j-driver and the WASM engine load when their backend connects, and the demo's dataset in demo mode only;
+    never with the widget."""
+    # Dynamic imports only: graphology's own graph.import(...) method, called or defined (`import(t,e=!1){`, as
+    # graphology 0.26 ships it), is no module load
+    dynamic = set(re.findall(r"""(?<![\w$.])import\(\s*([^)]+?)\s*\)(?!\s*\{)""", esm))
+    assert dynamic == {
+        "NEO4J_DRIVER_URL",
+        "`${GRAFEO_WASM_CDN}/grafeo_wasm_bg.js`",
+        "`${baseUrl}/dist/silicon-valley/gql.js`",
+    }
     driver = '"https://cdn.jsdelivr.net/npm/neo4j-driver@5.28.3/lib/browser/neo4j-web.esm.min.js";'
     assert esm.count(f"NEO4J_DRIVER_URL = {driver}") == 1
 
@@ -123,6 +137,21 @@ def test_wasm_version_in_lockstep_with_python_extra():
     spec = SpecifierSet(requirement.removeprefix("grafeo"))
     version = _wasm_version()
     assert spec.contains(Version(version), prereleases=True), f"@grafeo-db/wasm {version} outside grafeo{spec}"
+
+
+def test_datasets_version_is_pinned_exactly_once(esm):
+    """The demo's dataset URL is built from one constant, an exact version, named once in the bundle."""
+    assert re.fullmatch(r"\d+\.\d+\.\d+", _datasets_version()), "pin an exact version"
+    assert esm.count("@grafeo-db/datasets@") == 1
+    assert esm.count("https://cdn.jsdelivr.net/npm/@grafeo-db/datasets@${GRAFEO_DATASETS_VERSION}") == 1
+
+
+def test_datasets_version_in_lockstep_with_demo_extra():
+    """The dataset the browser loads is the release the `demo` extra installs at least, and the dev extra tests."""
+    extras = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    (pin,) = [r for r in extras["demo"] if r.startswith("grafeo-datasets")]
+    assert pin in extras["dev"], "the dev extra should test the same grafeo-datasets range"
+    assert pin == f"grafeo-datasets>={_datasets_version()}", "bump GRAFEO_DATASETS_VERSION with the demo extra"
 
 
 def test_bundle_parses_with_node(esm, node_bin, tmp_path):
@@ -238,3 +267,11 @@ def test_bundle_carries_three_js_for_the_3d_view(esm):
     assert "esm.sh" not in esm
     # The 3D force layout (bloom/spread in three dimensions) is bundled too
     assert "createForce3D" in esm
+
+
+def test_package_version_matches_the_project():
+    """`anywidget_graph.__version__` is the version pyproject.toml releases."""
+    import anywidget_graph
+
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert anywidget_graph.__version__ == project["version"]

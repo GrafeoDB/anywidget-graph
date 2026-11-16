@@ -1,20 +1,19 @@
 [project]
 name = "anywidget-graph"
-version = "1.0.0"
+version = "1.1.0"
 description = "Interactive graph visualization for Python notebooks using anywidget"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 authors = [{ name = "S.T. Grond", email = "dev@grafeo.dev" }]
 keywords = ["anywidget", "graph", "visualization", "jupyter", "marimo", "cypher", "neo4j"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: Jupyter",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
@@ -27,22 +26,25 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "prek>=0.5.7",
-    "pytest>=9.2",
-    "ruff>=0.17.3",
-    "ty>=0.0.94",
+    "prek>=0.5.11",
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+    "ty>=0.0.104",
     "marimo>=0.25.2; python_version < '3.15'",
+    # The demo tests load the published dataset, at the demo extra's range
+    "grafeo-datasets>=0.6.3",
 ]
-networkx = ["networkx>=3"]
-pandas = ["pandas>=3"]
-grafeo = ["grafeo>=0.6.2,<0.7"]
-cosmosdb = ["gremlinpython>=3.8"]
-neo4j = ["neo4j>=5"]
-arango = ["python-arango>=8"]
+networkx = ["networkx>=3.7.0"]
+pandas = ["pandas>=3.1.1"]
+grafeo = ["grafeo>=0.6.3,<0.7"]
+cosmosdb = ["gremlinpython>=3.8.2"]
+neo4j = ["neo4j>=6.4.1"]
+arango = ["python-arango>=8.3.7"]
 # marimo, to run the apps in examples/; it pulls in loro, which has no Python 3.15 wheels yet
-examples = ["marimo>=0.19.9; python_version < '3.15'"]
+examples = ["marimo>=0.25.2; python_version < '3.15'"]
 embed = []  # Marker extra: WASM loads from CDN on demand
-demo = []  # Marker extra: enables demo mode with pre-populated dataset
+# demo_graph(): grafeo's Silicon Valley demo dataset; the browser loads the engine and the dataset from jsDelivr
+demo = ["grafeo-datasets>=0.6.3"]
 # Marker extra: the 3D view (Graph3D / view="3d"); Three.js is bundled in the wheel, so it needs no extra Python deps
 3d = []
 
@@ -79,13 +81,13 @@ only-include = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ty.environment]
-python-version = "3.12"
+python-version = "3.13"
 
 [tool.ty.analysis]
 # The marimo apps in examples/ import marimo, which does not install on Python 3.15 yet (loro has no 3.15 wheels)
@@ -106,7 +108,7 @@ repos = [
 
 [dependency-groups]
 dev = [
-    "anywidget-graph[grafeo]",  # Engine contract tests run against the pinned grafeo extra
-    "pytest>=9.2",
-    "ruff>=0.17.3",
+    "anywidget-graph[grafeo,demo]",  # Engine contract and demo tests run against the pinned extras
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
 ]

@@ -8,8 +8,11 @@ import { deleteGlobalSymbol, errorText, globalSymbol, setGlobalSymbol } from "./
 
 // The only place the browser engine version is set. Keep it exact and in
 // lockstep with the `grafeo` Python extra in pyproject.toml.
-export const GRAFEO_WASM_VERSION = "0.6.2";
+export const GRAFEO_WASM_VERSION = "0.6.3";
 export const GRAFEO_WASM_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/wasm@${GRAFEO_WASM_VERSION}`;
+// The demo's dataset (grafeo's Silicon Valley demo dataset), exact and in lockstep with the `demo` Python extra
+export const GRAFEO_DATASETS_VERSION = "0.6.3";
+export const GRAFEO_DATASETS_CDN = `https://cdn.jsdelivr.net/npm/@grafeo-db/datasets@${GRAFEO_DATASETS_VERSION}`;
 
 // Each widget's in-browser database, keyed by its host model: every view of a widget shares it, and two widgets on a
 // page each have their own (the engine itself is loaded once per page, see loadWasmBindings)
@@ -21,9 +24,6 @@ const wasmDatabases = new WeakMap<object, WasmDatabase>();
 function databaseOf(model: WidgetModel): WasmDatabase | null {
   return wasmDatabases.get(model.host ?? model) ?? null;
 }
-
-// The statement lists each database has loaded (see loadStatements)
-const loadedStatements = new WeakMap<WasmDatabase, Set<string>>();
 
 // The loaded bindings live on the page, not in this module: a page can hold two copies of the widget's module (a
 // notebook that reconnects to a restarted kernel, a cell run again) or another widget on the same engine
@@ -161,39 +161,34 @@ export async function executeQuery(query: string, language: string, model: Widge
   }
 }
 
+// The demo load of each database (see loadDemo)
+const demoLoads = new WeakMap<WasmDatabase, Promise<void>>();
+
 /**
- * Run data-loading statements one at a time (the engine rejects several
- * `;`-separated statements in one call), then refresh the schema panel.
- * Returns the number of statements that failed.
+ * Load the Silicon Valley demo dataset into the widget's database, then run `extra` (statements demo_graph() adds),
+ * once per database: later calls, also from another view of the widget, wait for the same load. A load that fails
+ * partway disconnects the database, so a retry starts from an empty one instead of adding the nodes twice.
+ *
+ * `baseUrl` exists for tests, which load a local copy of the package.
  */
-export async function loadStatements(statements: string[], model: WidgetModel): Promise<number> {
+export function loadDemo(model: WidgetModel, extra: string[] = [], baseUrl: string = GRAFEO_DATASETS_CDN): Promise<void> {
   const db = databaseOf(model);
-  if (!db) return statements.length;
-
-  // The same statements go into a database once: a widget drawn again (a second view of it, a notebook that
-  // reconnects) shares its database and would otherwise load its data twice
-  const key = JSON.stringify(statements);
-  const loaded = loadedStatements.get(db) || new Set();
-  loadedStatements.set(db, loaded);
-  if (loaded.has(key)) {
-    await fetchSchema(model);
-    return 0;
+  if (!db) return Promise.reject(new Error("WASM database not initialized"));
+  let loading = demoLoads.get(db);
+  if (!loading) {
+    loading = (async () => {
+      try {
+        const { statements } = (await import(`${baseUrl}/dist/silicon-valley/gql.js`)) as { statements: string[] };
+        for (const statement of [...statements, ...extra]) runStatement(db, statement, "gql");
+      } catch (err) {
+        demoLoads.delete(db);
+        await disconnect(model);
+        throw err;
+      }
+    })();
+    demoLoads.set(db, loading);
   }
-  loaded.add(key);
-
-  let failed = 0;
-  for (const stmt of statements) {
-    const text = stmt.trim().replace(/;$/, "");
-    if (!text) continue;
-    try {
-      runStatement(db, text, "gql");
-    } catch (err) {
-      failed += 1;
-      console.warn("Grafeo WASM statement failed:", text, err);
-    }
-  }
-  await fetchSchema(model);
-  return failed;
+  return loading.then(() => fetchSchema(model));
 }
 
 /**

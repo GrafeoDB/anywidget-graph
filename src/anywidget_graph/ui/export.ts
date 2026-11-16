@@ -4,9 +4,10 @@
  * scripts/vendor/build-esm.mjs into dist/export.js and inlined into the page after those constants, so the page
  * needs no CDN and no module files.
  */
-import { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2 } from "./vendor-globals.ts";
+import { Graph, Sigma, circular, random, forceAtlas2 } from "./vendor-globals.ts";
+import { EDGE_LABEL_SIZE, LABEL_FONT_STRING, LABEL_SIZE, PRIMITIVES, SIGMA_SETTINGS, hoverCard, labelPicker } from "./sigma-setup.ts";
+import type { SigmaEdgeDisplay, SigmaNodeDisplay } from "./sigma-setup.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, nodeDisplay } from "./styling.ts";
-import { LABEL_FONT } from "./lanes.ts";
 import { springLayout } from "./spring.ts";
 import type { SpringNode } from "./spring.ts";
 import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
@@ -94,58 +95,42 @@ if (graph.order > 0) {
 }
 
 // --- Create Sigma renderer ---
+// Ink nodes, labels and the hover card as in the widget (sigma-setup.ts); a self-loop is not drawn, as in the widget
+// before it draws loops on its overlay
 const container = document.getElementById("container")!;
+// The label placement (below): sigma runs the reducers in its constructor, before it exists
+let labels: ReturnType<typeof labelPicker> | null = null;
 const renderer = new Sigma(graph, container, {
-  renderLabels: OPTIONS.show_labels,
-  renderEdgeLabels: OPTIONS.show_edge_labels,
-  defaultNodeColor: opts.palette.data[0],
-  defaultEdgeColor: opts.palette.edge,
-  nodeProgramClasses: {
-    bordered: createNodeBorderProgram({
-      borders: [
-        { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
-        { size: { fill: true }, color: { attribute: "fillColor" } },
-      ],
-    }),
+  settings: { ...SIGMA_SETTINGS, renderLabels: OPTIONS.show_labels, renderEdgeLabels: OPTIONS.show_edge_labels },
+  primitives: PRIMITIVES,
+  nodeReducer: (node, display, attrs, state): SigmaNodeDisplay => {
+    const out: SigmaNodeDisplay = {
+      ...display,
+      borderColor: attrs.borderColor,
+      fillColor: attrs.fillColor,
+      labelColor: OPTIONS.label_color,
+      labelFont: LABEL_FONT_STRING,
+      labelSize: LABEL_SIZE,
+      ...hoverCard(OPTIONS.background, OPTIONS.label_color),
+    };
+    // Node labels never cover each other, as in the widget
+    labels?.apply(node, out, state.isHovered);
+    return out;
   },
-  defaultNodeType: "bordered",
-  labelColor: { color: OPTIONS.label_color },
-  labelFont: LABEL_FONT,
-  labelSize: 12,
-  labelWeight: "500",
-  defaultEdgeType: OPTIONS.edge_arrows ? "arrow" : "line",
+  edgeReducer: (edge, display): SigmaEdgeDisplay => {
+    const out: SigmaEdgeDisplay = { ...display, labelColor: display.color, labelSize: EDGE_LABEL_SIZE };
+    const [source, target] = graph.extremities(edge);
+    if (source === target) out.visibility = "hidden";
+    if (OPTIONS.edge_arrows) out.head = "arrow";
+    return out;
+  },
 });
 
-// A hovered node's label sits on a card in the page colour, outlined in the label colour (sigma's card is white)
-const drawLabel = renderer.getSetting("defaultDrawNodeLabel");
-renderer.setSetting("defaultDrawNodeHover", (context, data, settings) => {
-  const size = settings.labelSize, padding = 2;
-  context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
-  context.beginPath();
-  if (typeof data.label === "string" && data.label) {
-    const boxWidth = Math.round(context.measureText(data.label).width + 5);
-    const boxHeight = Math.round(size + 2 * padding);
-    const radius = Math.max(data.size, size / 2) + padding;
-    const angle = Math.asin(boxHeight / 2 / radius);
-    const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
-    context.moveTo(data.x + dx, data.y + boxHeight / 2);
-    context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
-    context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
-    context.lineTo(data.x + dx, data.y - boxHeight / 2);
-    context.arc(data.x, data.y, radius, angle, -angle);
-  } else {
-    context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
-  }
-  context.closePath();
-  context.fillStyle = OPTIONS.background;
-  context.fill();
-  context.globalAlpha = 0.35;
-  context.strokeStyle = OPTIONS.label_color;
-  context.lineWidth = 1;
-  context.stroke();
-  context.globalAlpha = 1;
-  drawLabel(context, data, settings);
-});
+// Node labels never cover each other, as in the widget: placed after each frame, drawn in the next
+const picker = labelPicker(renderer);
+labels = picker;
+renderer.on("afterRender", () => picker.update());
+renderer.refresh();
 
 // --- Tooltip ---
 const tooltip = document.getElementById("tooltip")!;

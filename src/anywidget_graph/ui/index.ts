@@ -4,8 +4,13 @@
  */
 import { wrapperSize } from "./size.ts";
 import { withDefaults, followHostTheme, detectDark, WIDGET_FEATURES } from "./defaults.ts";
-import { Graph, Sigma, createNodeBorderProgram, circular, random, forceAtlas2, d3Force } from "./vendor-globals.ts";
-
+import { Graph, Sigma, circular, random, forceAtlas2, d3Force } from "./vendor-globals.ts";
+import { EDGE_LABEL_SIZE, LABEL_FONT_STRING, LABEL_SIZE, LABEL_WEIGHT, PRIMITIVES, SIGMA_SETTINGS, hoverCard, isHidden, labelDensityFor, labelPicker } from "./sigma-setup.ts";
+import { nodeLabelBox } from "./node-labels.ts";
+import type { LabelSide } from "./node-labels.ts";
+import type { SigmaEdgeDisplay, SigmaEdgeReducer, SigmaNodeDisplay, SigmaNodeReducer } from "./sigma-setup.ts";
+import { placeEdgeLabels } from "./edge-labels.ts";
+import type { EdgeLabelRequest, LabelBox } from "./edge-labels.ts";
 import { ICONS } from "./icons.ts";
 import { createToolbar } from "./toolbar.ts";
 import { createSchemaPanel } from "./schema.ts";
@@ -17,20 +22,13 @@ import * as grafeoEmbedBackend from "./grafeo-embed.ts";
 import { autoLabel, computeEdgeColor, computeNodeColor, computeNodeSize, getStylingOpts, nodeDisplay, pointInPolygon, registriesFor } from "./styling.ts";
 import { DARK, LIGHT } from "./palette.ts";
 
-// The node program: the ring (borderColor, 2px) over the fill (fillColor), both set per node by the reducer
-const BORDERED = createNodeBorderProgram({
-  borders: [
-    { size: { value: 2, mode: "pixels" }, color: { attribute: "borderColor" } },
-    { size: { fill: true }, color: { attribute: "fillColor" } },
-  ],
-});
 import { executeQuery } from "./query.ts";
 import { springLayout } from "./spring.ts";
 import type { SpringNode } from "./spring.ts";
 import { render3D } from "./index3d.ts";
 import { mountCanvasNote } from "./states.ts";
-import type { GraphEdge, GraphNode, WidgetModel } from "./types.ts";
-import { errorText } from "./types.ts";
+import type { DrawnEdge, GraphEdge, GraphNode, ItemId, WidgetModel } from "./types.ts";
+import { drawnEdge, drawnNode, errorText, idTexts } from "./types.ts";
 import type { Band, Batch, Box, Lane, LaneIcon, LayoutNode, Point, RowBand } from "./lanes.ts";
 import type { StylingOpts } from "./styling.ts";
 import type { SimulationLinkDatum, SimulationNodeDatum } from "d3-force";
@@ -175,7 +173,12 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   let canvasBackground = "";
   // The ring of a selected node (the theme's --awg-ring), read with the background
   let ringColor = "";
+  // The graph area's colour (--awg-graph-bg): the hover card and a lane label's backing
+  let graphBackground = "#ffffff";
+  // The node label colour of the theme (host theme or light / dark default); the reducer gives it to every label
+  let themeLabelColor = labelColor(model.get("theme"), model.get("dark_mode"));
   function readCanvasBackground() {
+    graphBackground = getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff";
     canvasBackground = getComputedStyle(wrapper).getPropertyValue("--awg-bg").trim();
     ringColor = getComputedStyle(wrapper).getPropertyValue("--awg-ring").trim();
   }
@@ -186,7 +189,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     const variables = themeVariables(model.get("theme"));
     for (const [name, value] of Object.entries(variables)) wrapper.style.setProperty(name, value);
     readCanvasBackground();
-    rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), model.get("dark_mode")) });
+    themeLabelColor = labelColor(model.get("theme"), model.get("dark_mode"));
     rendererRef?.refresh();
   }
   model.on("change:theme", applyHostTheme);
@@ -195,13 +198,9 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     const dark = model.get("dark_mode");
     wrapper.classList.toggle("awg-dark", dark);
     readCanvasBackground();
-    rendererRef?.setSetting("labelColor", { color: labelColor(model.get("theme"), dark) });
-    if (rendererRef) {
-      // Each theme has its own data colours, edge colour and canvas: everything drawn takes the new theme's
-      rendererRef.setSetting("defaultNodeColor", palette().data[0]);
-      rendererRef.setSetting("defaultEdgeColor", palette().edge);
-      restyle();
-    }
+    themeLabelColor = labelColor(model.get("theme"), dark);
+    // Each theme has its own data colours, edge colour and canvas: everything drawn takes the new theme's
+    if (rendererRef) restyle();
     rendererRef?.refresh();
   }
 
@@ -259,7 +258,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   function refreshLayout(): void {
     applyLayout(model.get("layout") || "spring");
     rendererRef?.refresh();
-    rendererRef?.getCamera().animatedReset({ duration: 300 });
+    rendererRef?.getCamera().reset({ duration: 300 });
   }
 
   const schema = createSchemaPanel(model, onExecuteQuery, null, onFilterChange, onColorChange, refreshLayout, { registries, palette });
@@ -387,7 +386,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     return laneState.lanes.findIndex((lane) => lane.action && lane.id === id);
   }
   const drawable = (id: string): boolean => graph.hasNode(id) || actionLaneIndex(id) >= 0;
-  const overlayEdge = (edge: GraphEdge): boolean => actionLaneIndex(edge.source) >= 0 || actionLaneIndex(edge.target) >= 0 || isCrossEdge(edge, laneState.laneById);
+  const overlayEdge = (edge: DrawnEdge): boolean => actionLaneIndex(edge.source) >= 0 || actionLaneIndex(edge.target) >= 0 || isCrossEdge(edge, laneState.laneById);
 
   // Add initial nodes and edges with property-based styling
   function rebuildGraph() {
@@ -417,7 +416,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     addEdges(edges, opts);
   }
 
-  function addEdges(edges: GraphEdge[], opts: StylingOpts): void {
+  function addEdges(edges: DrawnEdge[], opts: StylingOpts): void {
     edges.forEach((edge) => {
       if (!drawable(edge.source) || !drawable(edge.target)) return;
       // Cross-lane edges (and edges into an action lane) are drawn on the overlay, not by sigma, and take no part in the layout
@@ -878,8 +877,8 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     if (!laneState.lanes.some((lane) => Number(lane.labels?.count) > 0)) return;
     const scale = laneScale();
     // Label boxes in graph units: each label's own width in the label font, one line high, 3 px from its node
-    const size = rendererRef?.getSetting("labelSize") ?? 12;
-    labelMeasure.font = `${rendererRef?.getSetting("labelWeight") ?? "500"} ${size}px ${rendererRef?.getSetting("labelFont") ?? "Arial"}`;
+    const size = LABEL_SIZE;
+    labelMeasure.font = `${LABEL_WEIGHT} ${size}px ${LABEL_FONT}`;
     const fit = { height: (size + 4) / scale, gap: 3 / scale, margin: 2 / scale };
     laneState.lanes.forEach((lane, index) => {
       const count = Number(lane.labels?.count) || 0;
@@ -899,7 +898,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       const taken = (laneState.rows.get(lane.id) || []).filter((row) => row.label).map((row) => ({
         x0: band.x0, x1: band.x0 + (labelMeasure.measureText(row.label).width + 6) / scale, y0: row.y1 - 16 / scale, y1: row.y1,
       }));
-      labelMeasure.font = `${rendererRef?.getSetting("labelWeight") ?? "500"} ${size}px ${rendererRef?.getSetting("labelFont") ?? "Arial"}`;
+      labelMeasure.font = `${LABEL_WEIGHT} ${size}px ${LABEL_FONT}`;
       for (const { id, side } of labelsThatFit(nodes, count, { ...fit, band, taken })) laneState.labelled.set(id, side);
     });
   }
@@ -987,75 +986,35 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // Initialize Sigma renderer with LOD settings
   const nodeCount = graph.order;
+  // Sigma 4 takes its reducers when it is built and runs them in the constructor's first frame, before the widget's
+  // reducers (below) exist: these hand over to them once they do
+  let nodeReducer: SigmaNodeReducer | null = null;
+  let edgeReducer: SigmaEdgeReducer | null = null;
   const renderer = new Sigma(graph, container, {
-    renderLabels: model.get("show_labels"),
-    renderEdgeLabels: model.get("show_edge_labels"),
-    defaultNodeColor: palette().data[0],
-    defaultEdgeColor: palette().edge,
-    // Ink nodes: a 2px ring in the node's colour over an opaque fill of it (nodeDisplay)
-    nodeProgramClasses: { bordered: BORDERED },
-    defaultNodeType: "bordered",
-    labelColor: { color: labelColor(model.get("theme"), model.get("dark_mode")) },
-    labelFont: LABEL_FONT,
-    labelSize: 12,
-    labelWeight: "500",
-    // LOD: only show labels for nodes above this rendered-size threshold
-    labelRenderedSizeThreshold: nodeCount > 200 ? 8 : nodeCount > 50 ? 5 : 2,
-    // Limit label density to reduce clutter on large graphs
-    labelDensity: nodeCount > 200 ? 0.5 : nodeCount > 50 ? 1 : 2,
-    // Plain lines, or arrows from source to target (edge_arrows)
-    defaultEdgeType: model.get("edge_arrows") ? "arrow" : "line",
-    // Enable edge interaction events (click, hover)
-    enableEdgeEvents: true,
-    // A host may mount the widget in a hidden or not yet sized container (a closed panel, a tab)
-    allowInvalidContainer: true,
+    settings: {
+      ...SIGMA_SETTINGS,
+      // Edge interaction events (click, hover)
+      enableEdgeEvents: true,
+      renderLabels: model.get("show_labels"),
+      renderEdgeLabels: model.get("show_edge_labels"),
+      // LOD: only show labels for nodes above this rendered-size threshold
+      labelRenderedSizeThreshold: nodeCount > 200 ? 8 : nodeCount > 50 ? 5 : 2,
+      // Limit label density to reduce clutter on large graphs
+      labelDensity: labelDensityFor(nodeCount),
+    },
+    primitives: PRIMITIVES,
+    nodeReducer: (node, data, attrs, state) => (nodeReducer ? nodeReducer(node, data, attrs, state) : data),
+    edgeReducer: (edge, data, attrs) => (edgeReducer ? edgeReducer(edge, data, attrs) : data),
   });
   rendererRef = renderer;
-  // A lane's chosen labels (labels: {count}) sit on a soft backing in the canvas colour, so they read cleanly over the
-  // smaller nodes they may cover, on the left of their node when they would cross the lane's right edge; any other
-  // label is drawn as sigma draws it
-  const drawSigmaLabel = renderer.getSetting("defaultDrawNodeLabel");
-  renderer.setSetting("defaultDrawNodeLabel", (context, data, settings) => {
-    if (!data.labelBacking || !data.label) return drawSigmaLabel(context, data, settings);
-    context.font = `${settings.labelWeight} ${settings.labelSize}px ${settings.labelFont}`;
-    const width = context.measureText(data.label).width;
-    const x = data.labelSide === "left" ? data.x - data.size - 3 - width : data.x + data.size + 3;
-    context.fillStyle = withAlpha(getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff", 0.82);
-    context.beginPath();
-    context.roundRect(x - 3, data.y - settings.labelSize / 2 - 3, width + 6, settings.labelSize + 6, 4);
-    context.fill();
-    context.fillStyle = settings.labelColor.attribute ? data[settings.labelColor.attribute] || settings.labelColor.color || "#000" : settings.labelColor.color;
-    context.fillText(data.label, x, data.y + settings.labelSize / 3);
+  // Node labels never cover each other (sigma-setup.ts labelPicker); the labels the widget always shows are forced
+  const forcedLabels = new Set<string>();
+  const labels = labelPicker(renderer, {
+    forced: (node) => forcedLabels.has(node) || idTexts(model.get("selected_nodes")).includes(node),
+    side: (node) => laneState.labelled.get(node) as LabelSide | undefined,
   });
-  // A hovered node's label sits on a card in the canvas colour, outlined in the label colour: sigma's own card is
-  // white, so on a dark canvas the light label vanished on it
-  renderer.setSetting("defaultDrawNodeHover", (context, data, settings) => {
-    const size = settings.labelSize, padding = 2;
-    const textColor = settings.labelColor.color || "#000";
-    context.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
-    context.beginPath();
-    if (typeof data.label === "string" && data.label) {
-      const boxWidth = Math.round(context.measureText(data.label).width + 5);
-      const boxHeight = Math.round(size + 2 * padding);
-      const radius = Math.max(data.size, size / 2) + padding;
-      const angle = Math.asin(boxHeight / 2 / radius);
-      const dx = Math.sqrt(Math.abs(radius ** 2 - (boxHeight / 2) ** 2));
-      context.moveTo(data.x + dx, data.y + boxHeight / 2);
-      context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
-      context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
-      context.lineTo(data.x + dx, data.y - boxHeight / 2);
-      context.arc(data.x, data.y, radius, angle, -angle);
-    } else {
-      context.arc(data.x, data.y, data.size + padding, 0, Math.PI * 2);
-    }
-    context.closePath();
-    context.fillStyle = getComputedStyle(wrapper).getPropertyValue("--awg-graph-bg").trim() || "#ffffff";
-    context.fill();
-    context.strokeStyle = withAlpha(textColor, 0.35);
-    context.lineWidth = 1;
-    context.stroke();
-    renderer.getSetting("defaultDrawNodeLabel")(context, data, settings);
-  });
+  // For the browser tests: the boxes of the node labels drawn in the last frame
+  Object.defineProperty(container, "awgLabelBoxes", { value: () => labels.drawnBoxes(), configurable: true });
   frameLanes();
   framePlain();
   applyHostTheme();
@@ -1085,7 +1044,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       if (!attrs.dash || source === target) return;
       const shown = renderer.getEdgeDisplayData(edge);
       const a = renderer.getNodeDisplayData(source), b = renderer.getNodeDisplayData(target);
-      if (!shown || shown.hidden || !a || !b || a.hidden || b.hidden) return;
+      if (!shown || isHidden(shown) || !a || !b || isHidden(a) || isHidden(b)) return;
       const p = renderer.framedGraphToViewport(a), q = renderer.framedGraphToViewport(b);
       const ra = renderer.scaleSize(a.size), rb = renderer.scaleSize(b.size);
       const length = Math.hypot(q.x - p.x, q.y - p.y);
@@ -1119,7 +1078,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       const isPinned = Boolean(pinned[node]);
       if (!attrs.ring && !attrs.outlineDash && attrs.badge === undefined && !isPinned) return;
       const shown = renderer.getNodeDisplayData(node);
-      if (!shown || shown.hidden) return;
+      if (!shown || isHidden(shown)) return;
       const p = renderer.framedGraphToViewport(shown), r = renderer.scaleSize(shown.size);
       let outer = r;
       ctx.save();
@@ -1168,7 +1127,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       if (source !== target) return;
       const shown = renderer.getEdgeDisplayData(edge);
       const node = renderer.getNodeDisplayData(source);
-      if (!(shown as unknown as Record<string, unknown>)?.loop || !node || node.hidden) return;
+      if (!(shown as unknown as Record<string, unknown>)?.loop || !node || isHidden(node)) return;
       const index = perNode.get(source) || 0;
       perNode.set(source, index + 1);
       const circle = loopCircle(renderer.framedGraphToViewport(node), renderer.scaleSize(node.size), index);
@@ -1190,14 +1149,71 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
         ctx.closePath();
         ctx.fill();
       }
-      if (labels && shown?.label) {
+      const loopLabel = shown?.label || (shown as unknown as Record<string, unknown>)?.overlayLabel;
+      if (labels && loopLabel) {
         ctx.font = "500 11px system-ui, -apple-system, sans-serif";
         ctx.textAlign = "center";
         ctx.fillStyle = color;
-        ctx.fillText(String(shown.label), circle.x, circle.y - circle.r - 4);
+        ctx.fillText(String(loopLabel), circle.x, circle.y - circle.r - 4);
         ctx.textAlign = "left";
       }
     });
+  }
+
+  // edge_label_overlap "avoid": the edge labels, each moved along its edge to keep clear of nodes, node labels and the
+  // labels placed before it, or left out (edge-labels.ts places them). Thicker edges place first, then by order.
+  function drawEdgeLabels(ctx: CanvasRenderingContext2D): void {
+    if (model.get("edge_label_overlap") !== "avoid" || !model.get("show_edge_labels")) return;
+    const width = container.offsetWidth, height = container.offsetHeight;
+    const obstacles: LabelBox[] = [];
+    const centre = new Map<string, { x: number; y: number; r: number }>();
+    ctx.font = `${LABEL_WEIGHT} ${LABEL_SIZE}px ${LABEL_FONT}`;
+    const shownLabels = renderer.getNodeDisplayedLabels();
+    graph.forEachNode((node) => {
+      const shown = renderer.getNodeDisplayData(node);
+      if (!shown || isHidden(shown)) return;
+      const at = renderer.framedGraphToViewport(shown);
+      const r = renderer.scaleSize(shown.size);
+      centre.set(node, { x: at.x, y: at.y, r });
+      obstacles.push({ x: at.x, y: at.y, width: 2 * r, height: 2 * r, angle: 0, owner: node });
+      if (!shown.label || !shownLabels.has(node)) return;
+      // The node's label box, as the node labels are placed (node-labels.ts)
+      const side = (["left", "above", "below"] as const).find((s) => s === shown.labelPosition) ?? "right";
+      obstacles.push(nodeLabelBox({ x: at.x, y: at.y, radius: r, ...labels.labelSize(shown.label) }, side));
+    });
+    ctx.font = `${EDGE_LABEL_SIZE}px sans-serif`;
+    const requests: (EdgeLabelRequest & { size: number; color: string; text: string })[] = [];
+    graph.forEachEdge((edge, _attrs, source, target) => {
+      if (source === target) return;
+      const shown = renderer.getEdgeDisplayData(edge) as SigmaEdgeDisplay | undefined;
+      const text = shown?.overlayLabel;
+      if (!shown || isHidden(shown) || typeof text !== "string" || !text) return;
+      const from = centre.get(source), to = centre.get(target);
+      if (!from || !to) return;
+      // Off screen at both ends and not crossing it: nothing to place
+      const outside = (p: { x: number; y: number }) => p.x < 0 || p.y < 0 || p.x > width || p.y > height;
+      if (outside(from) && outside(to) && (Math.max(from.x, to.x) < 0 || Math.min(from.x, to.x) > width || Math.max(from.y, to.y) < 0 || Math.min(from.y, to.y) > height)) return;
+      requests.push({
+        key: edge, ends: [source, target], from, to, fromRadius: from.r, toRadius: to.r,
+        width: ctx.measureText(text).width + 4, height: EDGE_LABEL_SIZE + 2,
+        size: Number(shown.size) || 1, color: String(shown.dashColor || shown.color || palette().edge), text,
+      });
+    });
+    requests.sort((a, b) => b.size - a.size);
+    const byKey = new Map(requests.map((request) => [request.key, request]));
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const spot of placeEdgeLabels(requests, obstacles)) {
+      const request = byKey.get(spot.key)!;
+      ctx.save();
+      ctx.translate(spot.x, spot.y);
+      ctx.rotate(spot.angle);
+      ctx.fillStyle = request.color;
+      ctx.fillText(request.text, 0, 0);
+      ctx.restore();
+    }
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
 
   function drawOverlay() {
@@ -1208,6 +1224,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     ctx.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
     drawLoops(ctx);
     drawItemMarks(ctx);
+    drawEdgeLabels(ctx);
     if (!laneState.lanes.length) return;
     // The widget's own colours: its light or dark defaults, or the host theme (applyHostTheme sets these variables)
     const css = getComputedStyle(wrapper);
@@ -1259,10 +1276,10 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
     // Cross-lane curves (under the buttons, so a curve into an action lane ends at its button's edge); an appearing
     // one is drawn up to its progress
-    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id, laneState.hoverAction].filter(Boolean));
+    const focus = new Set([model.get("selected_node")?.id, model.get("hovered_node")?.id, laneState.hoverAction].filter((id) => id !== null && id !== undefined && id !== "").map(String));
     const endPoint = (id: string): Point | null => {
       // A node hidden by a filter or a search (or not yet appeared) hides its curves too
-      if (graph.hasNode(id)) return renderer.getNodeDisplayData(id)?.hidden ? null : renderer.graphToViewport(graph.getNodeAttributes(id) as unknown as { x: number; y: number });
+      if (graph.hasNode(id)) return isHidden(renderer.getNodeDisplayData(id)) ? null : renderer.graphToViewport(graph.getNodeAttributes(id) as unknown as { x: number; y: number });
       const index = actionLaneIndex(id);
       return index >= 0 && laneState.bands[index] ? actionCenter(index) : null;
     };
@@ -1378,7 +1395,11 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     renderer.refresh();
   });
 
-  renderer.on("afterRender", drawOverlay);
+  // Each frame: place the node labels for the next one (a change refreshes), then draw the overlay over this one
+  renderer.on("afterRender", () => {
+    labels.update();
+    drawOverlay();
+  });
   sizeOverlay();
 
   // One requestAnimationFrame loop while something appears or pulses; sigma's refresh redraws the overlay too
@@ -1440,16 +1461,41 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // Node reducer for type filtering, search filtering, selection, and pinned indicator
   // Every node reducer result gets its ring and fill from its final colour; a selected node rings in ink
-  renderer.setSetting("nodeReducer", (node: string, data: Record<string, any>) => {
-    const res = reduceNode(node, data);
-    if (res.hidden || !res.color) return res;
-    const selected = (model.get("selected_nodes") || []).includes(node);
-    res.fillColor = nodeDisplay(res.color, canvasBackground || palette().background).fillColor;
-    res.borderColor = selected && ringColor ? ringColor : res.color;
-    return res;
-  });
+  // The reducers work on the node's attributes with sigma's display data over them, and say what to draw in the
+  // terms the widget uses (hidden, forceLabel, labelSide, labelBacking); sigmaNode and sigmaEdge put that in sigma's
+  nodeReducer = (node, display, attrs, state) => {
+    const res = reduceNode(node, { ...attrs, ...display });
+    if (!res.hidden && res.color) {
+      const selected = idTexts(model.get("selected_nodes")).includes(node);
+      res.fillColor = nodeDisplay(res.color, canvasBackground || palette().background).fillColor;
+      res.borderColor = selected && ringColor ? ringColor : res.color;
+    }
+    if (res.forceLabel) forcedLabels.add(node);
+    else forcedLabels.delete(node);
+    const out = sigmaNode(res);
+    labels.apply(node, out, state.isHovered);
+    return out;
+  };
+  // In sigma's terms: shown or hidden, the label forced or left to the label grid, a lane label on its side and on a
+  // soft backing in the canvas colour (so it reads cleanly over the smaller nodes it may cover); every label in the
+  // theme's label colour and face, and a hovered node on a card in the canvas colour outlined in the label colour
+  function sigmaNode(res: Record<string, any>): SigmaNodeDisplay {
+    const { hidden, forceLabel, labelSide, labelBacking, ...rest } = res;
+    const out: SigmaNodeDisplay = {
+      ...rest,
+      labelColor: themeLabelColor,
+      labelFont: LABEL_FONT_STRING,
+      labelSize: LABEL_SIZE,
+      ...hoverCard(graphBackground, themeLabelColor),
+    };
+    if (hidden) out.visibility = "hidden";
+    if (forceLabel) out.labelVisibility = "visible";
+    if (labelSide === "left") out.labelPosition = "left";
+    if (labelBacking) Object.assign(out, { labelBackgroundColor: withAlpha(graphBackground, 0.82), labelBackgroundPadding: 3 });
+    return out;
+  }
   function reduceNode(node: string, data: Record<string, any>): Record<string, any> {
-    const selectedNodes: string[] = model.get("selected_nodes") || [];
+    const selectedNodes = idTexts(model.get("selected_nodes"));
     const res: Record<string, any> = { ...data };
 
     // Visibility levels: below the current level a node is hidden, or dimmed one level down (filtered_style "dim")
@@ -1538,8 +1584,9 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   });
 
   // Edge reducer for type filtering and search filtering
-  renderer.setSetting("edgeReducer", (edge, data) => {
-    const res = { ...data };
+  edgeReducer = (edge, display, attrs) => {
+    const data: Record<string, any> = { ...attrs, ...display };
+    const res: Record<string, any> = { ...data };
 
     // An edge to a node hidden by its level is hidden; one to a dimmed node is dimmed
     const ends = graph.extremities(edge).map((end) => levelOf(graph.getNodeAttributes(end)));
@@ -1591,7 +1638,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     }
 
     // With highlight_neighbors a selected node's own edges stay lit, the others dim and lose their labels (as dimmed nodes do)
-    const selected = model.get("selected_nodes") || [];
+    const selected = idTexts(model.get("selected_nodes"));
     const [from, to] = graph.extremities(edge);
     if (!res.hidden && model.get("highlight_neighbors") && selected.length === 1 && from !== selected[0] && to !== selected[0]) {
       res.color = dimColor(res.color || data.color, canvasBackground);
@@ -1610,8 +1657,22 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       res.color = canvasBackground || res.color;
     }
 
-    return res;
-  });
+    return sigmaEdge(res);
+  };
+  // In sigma's terms: shown or hidden, an arrow head with edge_arrows, the label in the edge's colour (as sigma 3 drew it)
+  // With edge_label_overlap "avoid" the overlay draws the label (drawEdgeLabels) and sigma draws none
+  function sigmaEdge(res: Record<string, any>): SigmaEdgeDisplay {
+    const { hidden, ...rest } = res;
+    const out: SigmaEdgeDisplay = { ...rest, labelColor: rest.color, labelSize: EDGE_LABEL_SIZE };
+    if (hidden) out.visibility = "hidden";
+    if (model.get("edge_label_overlap") === "avoid") {
+      out.overlayLabel = out.label || "";
+      out.label = "";
+    }
+    if (model.get("edge_arrows")) out.head = "arrow";
+    else delete out.head;
+    return out;
+  }
 
   // A node's visibility at the current level (levels, current_level, filtered_style)
   function levelOf(attrs: Record<string, any>): string {
@@ -1656,7 +1717,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   // Incremental append: merge new nodes and edges without moving what is drawn; new items appear one after another
   function applyBatch(batch: Batch): void {
     laneState.lastSeq = Number(batch.seq) || 0;
-    const nodes = batch.nodes || [], edges = batch.edges || [];
+    const nodes = (batch.nodes || []).map(drawnNode), edges = (batch.edges || []).map(drawnEdge);
     drawn = applyBatchItems(drawn, batch);
     const opts = getStylingOpts(model, nodes, edges, registries);
     const animated = model.get("append_animation") !== "none";
@@ -1665,7 +1726,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     graph.forEachNode((node, attrs) => {
       if (attrs.lane !== undefined && !laneState.vanish.has(node)) before.set(attrs.lane, (before.get(attrs.lane) || 0) + 1);
     });
-    for (const id of (batch.remove || {}).nodes || []) {
+    for (const id of idTexts((batch.remove || {}).nodes)) {
       if (!graph.hasNode(id) || laneState.vanish.has(id)) continue;
       const lane = graph.getNodeAttribute(id, "lane");
       if (lane !== undefined) dropped.set(lane, (dropped.get(lane) || 0) + 1);
@@ -1810,9 +1871,9 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // A batch's removals: the nodes (with their edges and cross-lane curves) and edges fade out, then leave the graph
   // (at once without animation). Nothing is laid out again. Returns the ids of the removed nodes.
-  function removeDrawn(remove: { nodes?: string[]; edges?: GraphEdge[] }, animated: boolean): Set<string> {
-    const ids = new Set<string>((remove.nodes || []).filter((id) => graph.hasNode(id)));
-    const specs = remove.edges || [];
+  function removeDrawn(remove: { nodes?: ItemId[]; edges?: GraphEdge[] }, animated: boolean): Set<string> {
+    const ids = new Set<string>(idTexts(remove.nodes).filter((id) => graph.hasNode(id)));
+    const specs = (remove.edges || []).map(drawnEdge);
     const edgeKeys: string[] = [];
     for (const spec of specs) {
       if (!graph.hasNode(spec.source) || !graph.hasNode(spec.target)) continue;
@@ -1839,16 +1900,16 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       }
     }
     // A removed node leaves the selection (else everything else stays dimmed)
-    const selected: string[] = model.get("selected_nodes") || [];
+    const selected = idTexts(model.get("selected_nodes"));
     if (selected.some((id) => ids.has(id))) model.set("selected_nodes", selected.filter((id) => !ids.has(id)));
-    if (ids.has(model.get("selected_node")?.id)) model.set("selected_node", null);
+    if (ids.has(String(model.get("selected_node")?.id))) model.set("selected_node", null);
     model.save_changes();
     return ids;
   }
 
   // Pulsing nodes: a soft breath on the ids in pulse_nodes, until the list is empty
   function applyPulse() {
-    laneState.pulse = new Set<string>((model.get("pulse_nodes") || []).filter((id: string) => graph.hasNode(id)));
+    laneState.pulse = new Set<string>(idTexts(model.get("pulse_nodes")).filter((id) => graph.hasNode(id)));
     if (laneState.pulse.size) startAnimating();
     else renderer.refresh();
   }
@@ -1867,7 +1928,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     if (selMode === "box" || selMode === "lasso") return;
     draggedNode = node;
     isDragging = false;
-    renderer.getCamera().disable();
+    renderer.getCamera().enabled = false;
     container.style.cursor = "grabbing";
   });
 
@@ -1891,7 +1952,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     }
     draggedNode = null;
     isDragging = false;
-    renderer.getCamera().enable();
+    renderer.getCamera().enabled = true;
     container.style.cursor = "default";
   });
 
@@ -1904,7 +1965,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   zoomInBtn.innerHTML = ICONS.zoomIn;
   zoomInBtn.title = "Zoom in";
   zoomInBtn.addEventListener("click", () => {
-    renderer.getCamera().animatedZoom({ duration: 200 });
+    renderer.getCamera().zoomIn({ duration: 200 });
   });
 
   const zoomOutBtn = document.createElement("button");
@@ -1912,7 +1973,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   zoomOutBtn.innerHTML = ICONS.zoomOut;
   zoomOutBtn.title = "Zoom out";
   zoomOutBtn.addEventListener("click", () => {
-    renderer.getCamera().animatedUnzoom({ duration: 200 });
+    renderer.getCamera().zoomOut({ duration: 200 });
   });
 
   const zoomFitBtn = document.createElement("button");
@@ -1920,7 +1981,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
   zoomFitBtn.innerHTML = ICONS.zoomFit;
   zoomFitBtn.title = "Fit to view";
   zoomFitBtn.addEventListener("click", () => {
-    renderer.getCamera().animatedReset({ duration: 200 });
+    renderer.getCamera().reset({ duration: 200 });
   });
 
   // Layout menu: an icon button with the real select laid over it (invisible), so the keyboard and screen readers
@@ -2239,7 +2300,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     model.set("selected_node", nodePayload(node, nodeData));
 
     const mode = model.get("selection_mode") || "click";
-    const current = model.get("selected_nodes") || [];
+    const current = idTexts(model.get("selected_nodes"));
     if (mode === "multi" || (event && event.original && event.original.shiftKey)) {
       if (current.includes(node)) {
         model.set("selected_nodes", current.filter((id: string) => id !== node));
@@ -2284,7 +2345,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
     if (e.key === "f" || e.key === "F") {
       e.preventDefault();
-      renderer.getCamera().animatedReset({ duration: 200 });
+      renderer.getCamera().reset({ duration: 200 });
     } else if (e.key === "Escape") {
       model.set("selected_node", null);
       model.set("selected_edge", null);
@@ -2292,7 +2353,7 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
       model.set("selected_edges", []);
       model.save_changes();
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      const selected = model.get("selected_nodes") || [];
+      const selected = idTexts(model.get("selected_nodes"));
       if (selected.length === 0) return;
       e.preventDefault();
       const removeSet = new Set(selected);
@@ -2389,11 +2450,11 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
     // Update LOD thresholds based on new graph size
     const n = graph.order;
     renderer.setSetting("labelRenderedSizeThreshold", n > 200 ? 8 : n > 50 ? 5 : 2);
-    renderer.setSetting("labelDensity", n > 200 ? 0.5 : n > 50 ? 1 : 2);
+    renderer.setSetting("labelDensity", labelDensityFor(n));
 
     renderer.refresh();
     // Auto-fit camera to show all nodes after layout
-    renderer.getCamera().animatedReset({ duration: 300 });
+    renderer.getCamera().reset({ duration: 300 });
   }
 
   model.on("change:nodes", () => queueSync("data"));
@@ -2408,17 +2469,18 @@ function render2D({ model: host, el }: { model: WidgetModel; el: HTMLElement }):
 
   // Layout change handler
   model.on("change:layout", refreshLayout);
-  model.on("change:edge_arrows", () => renderer.setSetting("defaultEdgeType", model.get("edge_arrows") ? "arrow" : "line"));
+  model.on("change:edge_arrows", () => renderer.refresh());
   model.on("change:show_edge_labels", () => renderer.setSetting("renderEdgeLabels", model.get("show_edge_labels")));
+  model.on("change:edge_label_overlap", () => renderer.refresh());
   model.on("change:highlight_neighbors", () => renderer.refresh());
 
   // === Demo Mode: auto-init WASM and populate data ===
   if (model.get("_demo_mode")) {
     (async () => {
       try {
-        const demoDataStr = model.get("_demo_data");
-        if (demoDataStr && (await grafeoEmbedBackend.connect(model))) {
-          await grafeoEmbedBackend.loadStatements(JSON.parse(demoDataStr), model);
+        // The Silicon Valley dataset from the CDN, then the statements demo_graph() adds (none by default)
+        if (await grafeoEmbedBackend.connect(model)) {
+          await grafeoEmbedBackend.loadDemo(model, JSON.parse(model.get("_demo_data") || "[]"));
         }
       } catch (err) {
         console.warn("Demo WASM init:", errorText(err));

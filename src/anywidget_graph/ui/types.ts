@@ -12,9 +12,12 @@ export interface WidgetModel {
   off?(event: string, callback: (...args: any[]) => void): void;
 }
 
+/** A node or edge id as a host sends it: text, or a number (an engine id, a pandas index). */
+export type ItemId = string | number;
+
 /** A synced graph node (the `nodes` trait). */
 export interface GraphNode {
-  id: string;
+  id: ItemId;
   label?: string;
   name?: string;
   labels?: string[];
@@ -31,13 +34,38 @@ export interface GraphNode {
 export interface GraphEdge {
   type?: string;
   cross?: boolean;
-  id?: string;
-  source: string;
-  target: string;
+  id?: ItemId;
+  source: ItemId;
+  target: ItemId;
   label?: string;
   size?: number;
   color?: string;
   [key: string]: unknown;
+}
+
+/** A node as the widget draws it: its id as text, the key graphology and every lookup use. */
+export type DrawnNode = GraphNode & { id: string };
+
+/** An edge as the widget draws it: its ends (and id) as text. */
+export type DrawnEdge = GraphEdge & { id?: string; source: string; target: string };
+
+/** A host's node with its id as text; the node itself when it already is (most data), else a copy. */
+export function drawnNode(node: GraphNode): DrawnNode {
+  return typeof node.id === "string" ? (node as DrawnNode) : { ...node, id: String(node.id) };
+}
+
+/** A host's edge with its ends (and id) as text; the edge itself when they already are, else a copy. */
+export function drawnEdge(edge: GraphEdge): DrawnEdge {
+  const idText = edge.id === undefined || edge.id === null || typeof edge.id === "string";
+  if (typeof edge.source === "string" && typeof edge.target === "string" && idText) return edge as DrawnEdge;
+  const copy = { ...edge, source: String(edge.source), target: String(edge.target) } as DrawnEdge;
+  if (edge.id !== undefined && edge.id !== null) copy.id = String(edge.id);
+  return copy;
+}
+
+/** Ids from a host (a selection, pulse_nodes, a removal) as text; anything but a list gives none. */
+export function idTexts(ids: unknown): string[] {
+  return Array.isArray(ids) ? ids.filter((id) => id !== null && id !== undefined).map(String) : [];
 }
 
 /** A side panel (schema, settings, properties, results): the toolbar toggles these. */

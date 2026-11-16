@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from anywidget_graph import Graph
 from tests.e2e.conftest import find_on_canvas
 
@@ -186,6 +188,63 @@ def test_level_chips_show_the_counts_and_switch_the_level(page):
     assert page.errors == []
 
 
+def test_numeric_ids_draw_append_remove_and_show_in_lanes_and_the_tooltip(page):
+    """A host that sends numbers as ids (an engine id, a pandas index): drawn in lanes, merged with the same ids as
+    text on append, removed by number, and the tooltip shows them."""
+    nodes = [{"id": i, "label": f"Item {i}", "lane": "left" if i < 3 else "right"} for i in range(1, 5)]
+    edges = [{"source": 1, "target": 2}, {"source": 2, "target": 3}, {"source": 3, "target": 4}]
+    lanes = [{"id": "left", "label": "Left"}, {"id": "right", "label": "Right"}]
+    index = _mount(page, {"nodes": nodes, "edges": edges, "lanes": lanes, "append_animation": "none"})
+    badge = page.locator(".awg-count-badge").first
+    assert badge.text_content() == "4 nodes · 3 edges"
+    # Node 2 sent again as "2", and node 5: the widget merges them and writes back its lists
+    page.evaluate(
+        """(i) => window.mounts[i].model.set("append_batch", { seq: 1,
+            nodes: [{ id: "2", color: "#ff0000" }, { id: 5, lane: "right" }],
+            edges: [{ source: "1", target: 2 }, { source: 4, target: 5 }] })""",
+        index,
+    )
+    ids = page.evaluate("(i) => window.mounts[i].model.get('nodes').map((n) => String(n.id))", index)
+    assert sorted(ids) == ["1", "2", "3", "4", "5"]
+    assert badge.text_content() == "5 nodes · 4 edges"
+    # Removed by number
+    page.evaluate("(i) => window.mounts[i].model.set('append_batch', { seq: 2, remove: { nodes: [5] } })", index)
+    ids = page.evaluate("(i) => window.mounts[i].model.get('nodes').map((n) => String(n.id))", index)
+    assert sorted(ids) == ["1", "2", "3", "4"]
+    assert badge.text_content() == "4 nodes · 3 edges"
+    # The tooltip of a node with a numeric id
+    assert find_on_canvas(page, 0, lambda text: "Item 3" in text) is not None
+    assert page.errors == []
+
+
+def test_dragging_a_node_moves_it_pins_it_and_leaves_the_view_still(page):
+    """A dragged node follows the pointer and is pinned; the camera does not pan, so the other nodes stay put."""
+    nodes = [
+        {"id": "a", "label": "Alpha", "x": 0, "y": 0},
+        {"id": "b", "label": "Beta", "x": 100, "y": 0},
+        {"id": "c", "label": "Gamma", "x": 50, "y": 80},
+    ]
+    values = {"nodes": nodes, "edges": [{"source": "a", "target": "b"}], "layout": "preset"}
+    index = _mount(page, values, width=480, height=320)
+    alpha = find_on_canvas(page, 0, lambda text: "Alpha" in text, step=10)
+    beta = find_on_canvas(page, 0, lambda text: "Beta" in text, step=10)
+    assert alpha and beta
+    page.mouse.move(*alpha)
+    page.mouse.down()
+    page.mouse.move(alpha[0] + 40, alpha[1] - 60, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    assert page.evaluate("(i) => window.mounts[i].model.get('pinned_nodes')", index) == {"a": True}
+    tip = page.locator(".awg-tooltip").first
+    page.mouse.move(*beta)
+    page.wait_for_timeout(100)
+    assert "Beta" in (tip.text_content() or ""), "the other node is where it was"
+    page.mouse.move(alpha[0] + 40, alpha[1] - 60)
+    page.wait_for_timeout(100)
+    assert "Alpha" in (tip.text_content() or ""), "the dragged node is under the pointer"
+    assert page.errors == []
+
+
 def test_server_mode_query_box_connects_draws_and_explains(page):
     """The first query connects without pressing Connect; a write keeps the drawing with a note; an error shows."""
     node_a = {"_id": 0, "_labels": ["File"], "name": "a.py", "size": {"$decimal": "1.50"}}
@@ -261,6 +320,63 @@ def test_per_item_marks_are_drawn_over_the_canvas(page):
     )
     assert painted[0] == 0
     assert painted[1] > 50
+    assert page.errors == []
+
+
+def test_edge_labels_that_avoid_overlap_are_drawn_on_the_overlay(page):
+    """With edge_label_overlap "avoid" the overlay draws the edge labels (sigma draws none); with "allow" sigma does."""
+    graph = {
+        "nodes": [{"id": "a", "x": 0, "y": 0}, {"id": "b", "x": 300, "y": 0}],
+        "edges": [{"source": "a", "target": "b", "label": "KNOWS"}],
+        "layout": "preset",
+        "show_edge_labels": True,
+        "show_labels": False,
+    }
+    _mount(page, {**graph, "edge_label_overlap": "allow"})
+    avoid = _mount(page, {**graph, "edge_label_overlap": "avoid"})
+    page.wait_for_timeout(300)
+    script = """() => [...document.querySelectorAll('.awg-lanes-overlay')].map((canvas) => {
+        const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let count = 0;
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 0) count++;
+        return count;
+    })"""
+    painted = page.evaluate(script)
+    assert painted[0] == 0
+    assert painted[1] > 50
+    # Turned off: back to sigma's labels, the overlay empty
+    page.evaluate("(i) => window.mounts[i].model.set('edge_label_overlap', 'allow')", avoid)
+    page.wait_for_timeout(300)
+    assert page.evaluate(script)[1] == 0
+    assert page.errors == []
+
+
+LABEL_BOXES = """(i) => {
+    const pane = window.mounts[i].pane;
+    return pane.querySelector('.awg-graph-container').awgLabelBoxes();
+}"""
+
+
+def _overlapping_labels(boxes: list[dict]) -> list[tuple[str, str]]:
+    hit = lambda a, b: a["x0"] < b["x1"] and b["x0"] < a["x1"] and a["y0"] < b["y1"] and b["y0"] < a["y1"]  # noqa: E731
+    return [(a["label"], b["label"]) for i, a in enumerate(boxes) for b in boxes[i + 1 :] if hit(a, b)]
+
+
+@pytest.mark.parametrize("dark", [False, True], ids=["light", "dark"])
+def test_demo_labels_never_cover_each_other_and_the_hubs_keep_theirs(page, dark):
+    """grafeo's Silicon Valley demo at the default zoom: no two drawn node labels intersect, and the most linked
+    nodes (Richard Hendricks, Pied Piper, Erlich Bachman, Hooli) show theirs."""
+    from anywidget_graph.demo import demo_graph
+
+    state = {k: v for k, v in demo_graph(dark_mode=dark).get_state().items() if not k.startswith("_")}
+    state.update({"_theme_explicit": True, "width": 960, "height": 600})
+    index = _mount(page, state, width=960, height=600)
+    page.wait_for_timeout(800)
+    boxes = page.evaluate(LABEL_BOXES, index)
+    assert len(boxes) >= 8, boxes
+    assert _overlapping_labels(boxes) == []
+    shown = {box["label"] for box in boxes}
+    assert {"Richard Hendricks", "Pied Piper", "Erlich Bachman", "Hooli"} <= shown
     assert page.errors == []
 
 

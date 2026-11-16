@@ -164,6 +164,29 @@ test("the host's lists that hold exactly the drawn items are a copy, anything el
   assert.equal(sameItems(drawn, [{ id: "a" }, { id: "b" }], [{ source: "a", target: "b", label: "other" }]), false);
 });
 
+test("numeric ids key as their text: a host's 1 and \"1\" are one node, and lookups by text find them", () => {
+  const drawn = mergeItems(undefined, [{ id: 1, label: "One" }, { id: 2 }], [{ source: 1, target: 2, id: 7 }]);
+  assert.deepEqual([...drawn.nodes.keys()], ["1", "2"]);
+  assert.deepEqual(drawn.nodes.get("1"), { id: "1", label: "One" });
+  assert.deepEqual(drawn.edges, [{ source: "1", target: "2", id: "7" }]);
+  // An append with the other spelling merges into the same node and edge
+  const appended = mergeItems(drawn, [{ id: "1", color: "red" }, { id: 3 }], [{ source: "1", target: 2 }, { source: 2, target: 3 }]);
+  assert.deepEqual([...appended.nodes.keys()], ["1", "2", "3"]);
+  assert.equal(appended.nodes.get("1")!.color, "red");
+  assert.deepEqual(appended.edges.map(edgeKey), ["1|2|", "2|3|"]);
+  // The host's numeric lists are a copy of what is drawn, not new data
+  assert.equal(sameItems(drawn, [{ id: 2 }, { id: 1 }], [{ source: 1, target: 2 }]), true);
+  // Removals and neighbourhoods take either spelling
+  const removed = applyBatchItems(appended, { remove: { nodes: [3] } });
+  assert.deepEqual([...removed.nodes.keys()], ["1", "2"]);
+  assert.deepEqual(removed.edges.map(edgeKey), ["1|2|"]);
+  assert.deepEqual([...neighbourhood([{ source: 1, target: 2 }], "1")].sort(), ["1", "2"]);
+  assert.deepEqual([...neighbourhood([{ source: "1", target: "2" }], 2)].sort(), ["1", "2"]);
+  // Text ids come back as the same objects (no copy)
+  const node = { id: "a" };
+  assert.equal(mergeItems(undefined, [node], []).nodes.get("a"), node);
+});
+
 test("ids that differ only at the end (y1, y2, ...) still spread over the band, instead of landing on one spot", () => {
   // FNV alone puts y0, y1, y2, ... about 0.004 apart; spread numbers are about 1/3 apart on average
   const units = Array.from({ length: 20 }, (_, i) => hashUnit(`y${i}`));

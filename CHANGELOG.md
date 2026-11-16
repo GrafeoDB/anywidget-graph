@@ -2,6 +2,41 @@
 
 All notable changes to anywidget-graph, an interactive graph widget for Python notebooks built on anywidget.
 
+## [1.1.0] - Unreleased
+
+Python 3.13 release: anywidget-graph needs Python 3.13 or later and is marked stable, the 2D view draws with sigma 4, `demo_graph()` shows grafeo's Silicon Valley demo dataset, and the Grafeo backend moves to grafeo 0.6.3 in Python and in the browser. The 2D view needs a browser with WebGL 2, every extra needs the latest release of its packages, and the `demo` extra now installs `grafeo-datasets`. On Python 3.12, or to keep grafeo 0.6.2 or an older backend client, stay on anywidget-graph 1.0.0.
+
+### Added
+
+- **Edge labels can keep clear**: with `edge_label_overlap="avoid"`, each edge label moves along its edge to a spot clear of nodes, node labels and other edge labels, or is left out; thicker edges place their labels first. The default, `"allow"`, keeps every label in the middle of its edge.
+- **The count badge can be hidden**: `show_count=False` leaves the node and edge count out of the toolbar, for a host that writes its own counts; the schema panel keeps its "shown / total".
+
+### Changed
+
+- **Python 3.13 or later is required**: `requires-python` is `>=3.13` (was `>=3.12`), and CI runs the suite on Python 3.13 to 3.15. On Python 3.12, pip and uv keep installing anywidget-graph 1.0.0.
+- **The 2D view draws with sigma 4**: sigma 4.0.6 (was 3.0.3) draws nodes, edges and labels in WebGL 2, with the same rings, fills, colours, label face, label grid, hover card and lane label backing as 1.0.0. A browser without WebGL 2 shows no 2D graph, and node labels sit about 2 px further from their nodes.
+- **Node labels never cover each other**: of the labels sigma's label grid would show, each takes the first position right of, left of, above or below its node that covers no other label and no other node, or is left out; the most linked nodes keep theirs, over a node where nothing else is free. On grafeo's Silicon Valley demo this shows about 13 labels where 1.0.0 drew 19, some of them over each other; hovered, selected and lane labels show as before.
+- **The demo is the Silicon Valley dataset**: `demo_graph()` shows the 64 nodes and 149 relationships of grafeo's Silicon Valley demo dataset (`grafeo-datasets` 0.6.3), coloured by node label, and `demo_nodes()` and `demo_edges()` return them. Run sends the starting query, every node and relationship, to Grafeo WASM, which loads `@grafeo-db/datasets` 0.6.3 from jsDelivr.
+- **Marked stable**: the package's classifier is `Development Status :: 5 - Production/Stable` (was `3 - Alpha`).
+
+### Removed
+
+- **`DEMO_NODES`, `DEMO_EDGES` and `DEMO_INSERT_STATEMENTS`**: the movie graph of the old demo is gone from `anywidget_graph.demo`; `demo_nodes()` and `demo_edges()` return the demo's data.
+
+### Fixed
+
+- **Numeric ids match their text**: node ids and edge ends may be numbers (an engine id, a pandas index), and node `1` and node `"1"` are one node in `append()`, `remove()`, node expansion, selections and `pulse_nodes`. Before, with numeric ids, `append()` and an update that only changed properties laid the whole graph out again, and `append()` with `"1"` added a second node.
+
+### Dependencies
+
+- **grafeo 0.6.3** (requires `>=0.6.3,<0.7`): the `grafeo` extra needs grafeo 0.6.3, and WASM mode loads `@grafeo-db/wasm` 0.6.3 (`GRAFEO_WASM_VERSION` in `ui/grafeo-embed.ts`). A MERGE that races another transaction now fails with grafeo's retryable `GRAFEO-T001`, which the widget shows as the query's error.
+- **grafeo-datasets 0.6.3** (requires `>=0.6.3`): the `demo` extra needs it, and the WASM demo loads `@grafeo-db/datasets` 0.6.3 from jsDelivr (`GRAFEO_DATASETS_VERSION` in `ui/grafeo-embed.ts`).
+- **sigma 4.0.6 and @sigma/node-border 4.0.0** (bundled): replace sigma 3.0.3 and @sigma/node-border 3.0.0.
+- **Three.js 0.187.0**: the bundled Three.js moves from 0.186.1, with `@types/three` 0.187.0.
+- **graphology 0.26.0 and d3-force 3.0.1** (bundled): from 0.25.4 and 3.0.0.
+- **Extras need the latest releases**: `networkx>=3.7.0`, `pandas>=3.1.1`, `neo4j>=6.4.1` (was `>=5`), `python-arango>=8.3.7` and `gremlinpython>=3.8.2`.
+- **Locked versions refreshed**: among them ruff 0.17.5, ty 0.0.104, prek 0.5.11 and numpy 2.5.5.
+
 ## [1.0.0] - 2026-11-14
 
 Shared look release: the widget takes the look of the anywidgets family (graphite chrome, ink nodes, an eight-colour data palette) and, with no size given, fills its cell. No trait, method or CSS variable is removed; to keep a colour, set `type_colors`, a `color` on the item or the `--awg-*` variables, and pass `width=800, height=600` to keep the old frame.
